@@ -121,27 +121,38 @@ async def add_tech_points(
     if kb.status != KBStatus.draft:
         raise VersionNotDraftError(kb_version, kb.status.value)
 
-    inserted = 0
+    # Aggregate dimensions across multiple segments: keep the entry with the
+    # highest extraction_confidence for each (action_type, dimension) pair.
+    # This avoids UniqueViolationError on uq_expert_point_version_action_dim.
+    best: dict[tuple[str, str], object] = {}  # (action_type, dimension) → dim
     for result in extraction_results:
         if result.action_type not in ("forehand_topspin", "backhand_push"):
             logger.debug("Skipping unknown action type: %s", result.action_type)
             continue
-        action_type = ActionType(result.action_type)
-
         for dim in result.dimensions:
-            point = ExpertTechPoint(
-                knowledge_base_version=kb_version,
-                action_type=action_type,
-                dimension=dim.dimension,
-                param_min=dim.param_min,
-                param_max=dim.param_max,
-                param_ideal=dim.param_ideal,
-                unit=dim.unit,
-                extraction_confidence=dim.extraction_confidence,
-                source_video_id=source_task_id,
-            )
-            session.add(point)
-            inserted += 1
+            key = (result.action_type, dim.dimension)
+            existing = best.get(key)
+            if existing is None or dim.extraction_confidence > existing.extraction_confidence:
+                best[key] = dim
+            # Keep a reference to the action_type string alongside the dim
+            dim._action_type_str = result.action_type  # type: ignore[attr-defined]
+
+    inserted = 0
+    for (action_type_str, _), dim in best.items():
+        action_type = ActionType(action_type_str)
+        point = ExpertTechPoint(
+            knowledge_base_version=kb_version,
+            action_type=action_type,
+            dimension=dim.dimension,
+            param_min=dim.param_min,
+            param_max=dim.param_max,
+            param_ideal=dim.param_ideal,
+            unit=dim.unit,
+            extraction_confidence=dim.extraction_confidence,
+            source_video_id=source_task_id,
+        )
+        session.add(point)
+        inserted += 1
 
     # Update point count
     kb.point_count = kb.point_count + inserted

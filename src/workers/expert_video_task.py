@@ -25,13 +25,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shutil
+import subprocess
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import shared_task
 
-from src.db.session import AsyncSessionFactory
+from src.config import get_settings
 from src.models.analysis_task import AnalysisTask, TaskStatus
 from src.services import (
     action_classifier,
@@ -48,10 +50,30 @@ from src.services.video_validator import VideoMeta, VideoQualityRejected
 logger = logging.getLogger(__name__)
 
 
+def _make_session_factory():
+    """Create a fresh async engine + sessionmaker for each Celery task invocation.
+
+    Celery forks new processes, so we must NOT reuse the module-level engine
+    (which is bound to the parent's event loop). Creating a fresh engine here
+    ensures asyncpg connects on the current event loop.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+    settings = get_settings()
+    _engine = create_async_engine(
+        settings.database_url,
+        pool_size=2,
+        max_overflow=2,
+        pool_pre_ping=True,
+    )
+    return async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+
+
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
 async def _set_processing(task_id: uuid.UUID) -> None:
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             task = await session.get(AnalysisTask, task_id)
             if task:
@@ -60,7 +82,8 @@ async def _set_processing(task_id: uuid.UUID) -> None:
 
 
 async def _set_rejected(task_id: uuid.UUID, reason: str) -> None:
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             task = await session.get(AnalysisTask, task_id)
             if task:
@@ -70,7 +93,8 @@ async def _set_rejected(task_id: uuid.UUID, reason: str) -> None:
 
 
 async def _set_failed(task_id: uuid.UUID, error_message: str) -> None:
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             task = await session.get(AnalysisTask, task_id)
             if task:
@@ -88,7 +112,8 @@ async def _persist_success(
 
     Returns the newly created KB version string.
     """
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             # Derive action types covered from extracted results (fall back to v1 defaults)
             action_types = list({r.action_type for r in extraction_results}) or [
@@ -204,6 +229,26 @@ def process_expert_video(
                 "reason": exc.reason,
                 "details": exc.details,
             }
+
+        # ── 4.5 Clip to 60s + downscale to 720p (OOM guard for large videos) ──
+        clipped_path = tmp_path.parent / f"clip_{tmp_path.stem}.mp4"
+        ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
+        clip_cmd = [
+            ffmpeg_bin, "-y", "-t", "60",
+            "-i", str(tmp_path),
+            "-vf", "scale=1280:720",
+            "-c:v", "libx264", "-crf", "23", "-an",
+            str(clipped_path),
+        ]
+        result = subprocess.run(clip_cmd, capture_output=True, timeout=120)
+        if result.returncode == 0 and clipped_path.exists():
+            _cleanup(tmp_path)
+            tmp_path = clipped_path
+            logger.info("Clipped to 60s/720p: %s (%.1f KB, task %s)",
+                        tmp_path, tmp_path.stat().st_size / 1024, task_id)
+        else:
+            logger.warning("ffmpeg clip failed (rc=%d), using original (task %s)",
+                           result.returncode, task_id)
 
         # ── 5. Pose estimation ─────────────────────────────────────────────────
         logger.info("Running pose estimation (task %s)…", task_id)

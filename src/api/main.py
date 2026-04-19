@@ -8,6 +8,8 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from src.api.routers import knowledge_base, tasks
+# Import celery_app so it registers as the default Celery app for @shared_task
+from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
 logger = logging.getLogger(__name__)
 

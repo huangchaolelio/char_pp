@@ -51,6 +51,16 @@ def _get_cos_client():
     return CosS3Client(config), settings.cos_bucket
 
 
+def _get_status_code(exc: Exception) -> int | None:
+    """Extract HTTP status code from a COS SDK exception."""
+    # CosServiceError exposes get_status_code() method
+    getter = getattr(exc, "get_status_code", None)
+    if callable(getter):
+        return getter()
+    # Fallback: plain attribute (other exception types)
+    return getattr(exc, "status_code", None)
+
+
 def object_exists(cos_object_key: str) -> bool:
     """Check whether *cos_object_key* exists in the configured bucket.
 
@@ -64,7 +74,7 @@ def object_exists(cos_object_key: str) -> bool:
         return True
     except Exception as exc:
         # COS SDK raises CosServiceError with status_code 404 for missing objects
-        status = getattr(exc, "status_code", None) or getattr(exc, "get_status_code", lambda: None)()
+        status = _get_status_code(exc)
         if status == 404:
             logger.debug("COS object not found: %s", cos_object_key)
             return False
@@ -106,7 +116,7 @@ def download_to_temp(cos_object_key: str) -> Path:
         )
         return local_path
     except Exception as exc:
-        status = getattr(exc, "status_code", None) or getattr(exc, "get_status_code", lambda: None)()
+        status = _get_status_code(exc)
         # Clean up partial file if it exists
         if local_path.exists():
             local_path.unlink(missing_ok=True)

@@ -126,7 +126,7 @@
 - [x] T053 创建 tests/integration/test_expert_pipeline.py：专家视频端到端集成测试（mock COS SDK；使用测试夹具视频文件；验证 COS 下载 → 质量门控 → 姿态估计 → 提取 → 知识库草稿创建 → 审核激活全链路）
 - [x] T054 创建 tests/integration/test_athlete_pipeline.py：运动员视频端到端集成测试（依赖已激活知识库夹具；上传测试视频；验证偏差分析 → 建议生成全链路，含 low_confidence 片段标注）
 - [x] T055 创建 tests/integration/test_data_retention.py：数据保留与删除集成测试（验证 DELETE /tasks/{id} 软删除后立即返回 404；验证定时清理任务对 deleted_at 记录物理删除）
-- [ ] T056 [P] 按 quickstart.md 验证全部 curl 示例可端到端跑通（含 COS 环境变量设置步骤）
+- [x] T056 [P] 按 quickstart.md 验证全部 curl 示例可端到端跑通（含 COS 环境变量设置步骤）
 
 ---
 

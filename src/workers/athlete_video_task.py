@@ -28,6 +28,8 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
+import shutil
+import subprocess
 import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,7 +37,7 @@ from pathlib import Path
 from celery import shared_task
 from sqlalchemy import select
 
-from src.db.session import AsyncSessionFactory
+from src.config import get_settings
 from src.models.analysis_task import AnalysisTask, TaskStatus
 from src.models.athlete_motion_analysis import AthleteActionType, AthleteMotionAnalysis
 from src.models.deviation_report import DeviationReport
@@ -65,6 +67,22 @@ from src.services.video_validator import VideoMeta, VideoQualityRejected
 logger = logging.getLogger(__name__)
 
 _LOW_CONFIDENCE_THRESHOLD = 0.7
+
+
+def _make_session_factory():
+    """Create a fresh async engine + sessionmaker for each Celery task invocation.
+
+    Avoids 'Future attached to a different loop' errors in forked Celery workers.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    settings = get_settings()
+    _engine = create_async_engine(
+        settings.database_url,
+        pool_size=2,
+        max_overflow=2,
+        pool_pre_ping=True,
+    )
+    return async_sessionmaker(_engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
 
 
 # ── Measured parameter extraction ─────────────────────────────────────────────
@@ -206,7 +224,8 @@ def _extract_measured_params(
 # ── DB helpers ─────────────────────────────────────────────────────────────────
 
 async def _set_processing(task_id: uuid.UUID) -> None:
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             task = await session.get(AnalysisTask, task_id)
             if task:
@@ -215,7 +234,8 @@ async def _set_processing(task_id: uuid.UUID) -> None:
 
 
 async def _set_rejected(task_id: uuid.UUID, reason: str) -> None:
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             task = await session.get(AnalysisTask, task_id)
             if task:
@@ -225,7 +245,8 @@ async def _set_rejected(task_id: uuid.UUID, reason: str) -> None:
 
 
 async def _set_failed(task_id: uuid.UUID, error_message: str) -> None:
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             task = await session.get(AnalysisTask, task_id)
             if task:
@@ -242,7 +263,8 @@ async def _persist_athlete_results(
     all_frames: list[FramePoseResult],
 ) -> None:
     """Persist AthleteMotionAnalysis, DeviationReports, and CoachingAdvice in one transaction."""
-    async with AsyncSessionFactory() as session:
+    factory = _make_session_factory()
+    async with factory() as session:
         async with session.begin():
             # Fetch expert points for this KB version
             ep_result = await session.execute(
@@ -419,7 +441,8 @@ def process_athlete_video(
 
         # ── 3. Resolve KB version ──────────────────────────────────────────────
         async def _get_kb() -> str | None:
-            async with AsyncSessionFactory() as session:
+            factory = _make_session_factory()
+            async with factory() as session:
                 if kb_version:
                     kb = await knowledge_base_svc.get_version(session, kb_version)
                     return kb.version if kb else None
@@ -436,7 +459,22 @@ def process_athlete_video(
                 "error": "KNOWLEDGE_BASE_NOT_READY",
             }
 
-        # ── 4. Pose estimation ─────────────────────────────────────────────────
+        # ── 4. Pose estimation (with ffmpeg pre-clip OOM guard) ───────────────
+        # Clip to 60s + downscale to 720p to avoid OOM on large videos
+        clipped_path = tmp_path.parent / f"clip_{tmp_path.stem}.mp4"
+        ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
+        clip_cmd = [
+            ffmpeg_bin, "-y", "-t", "60",
+            "-i", str(tmp_path),
+            "-vf", "scale=1280:720",
+            "-c:v", "libx264", "-crf", "23", "-an",
+            str(clipped_path),
+        ]
+        clip_result = subprocess.run(clip_cmd, capture_output=True, timeout=120)
+        if clip_result.returncode == 0 and clipped_path.exists():
+            _cleanup(tmp_path)
+            tmp_path = clipped_path
+
         logger.info("Running pose estimation (task %s)…", task_id)
         all_frames = pose_estimator.estimate_pose(tmp_path)
 
@@ -519,8 +557,9 @@ def cleanup_expired_tasks() -> dict:
         settings = get_settings()
         retention_months = settings.data_retention_months
         cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=retention_months * 30)
+        _factory = _make_session_factory()
 
-        async with AsyncSessionFactory() as session:
+        async with _factory() as session:
             async with session.begin():
                 from src.models.analysis_task import AnalysisTask as AT
                 stmt = delete(AT).where(
@@ -535,7 +574,6 @@ def cleanup_expired_tasks() -> dict:
 
         return count
 
-    from src.config import get_settings
     count = asyncio.run(_run_cleanup())
     logger.info("Data retention cleanup: physically deleted %d expired tasks", count)
     return {"deleted_count": count}
