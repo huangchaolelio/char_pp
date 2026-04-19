@@ -1,0 +1,59 @@
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from typing import Optional
+
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        case_sensitive=False,
+        extra="ignore",
+    )
+
+    # Database
+    database_url: str
+
+    # Redis / Celery
+    redis_url: str = "redis://localhost:6379/0"
+
+    # Tencent Cloud COS
+    cos_secret_id: str
+    cos_secret_key: str
+    cos_region: str
+    cos_bucket: str
+
+    # Video processing
+    tmp_dir: Path = Path("/tmp/coaching-advisor")
+
+    # Application
+    app_env: str = "development"
+    log_level: str = "INFO"
+
+    # Algorithm thresholds (from spec clarifications)
+    confidence_threshold: float = 0.7
+    min_video_fps: float = 15.0
+    min_video_width: int = 854
+    min_video_height: int = 480
+    keypoint_visibility_threshold: float = 0.5
+
+    # Deviation stability thresholds
+    stability_min_samples: int = 3
+    stability_min_occurrence_rate: float = 0.70
+
+    # Data retention
+    data_retention_months: int = 12
+
+    # Pose estimation backend
+    pose_backend: str = "auto"           # "auto" | "mediapipe" | "yolov8"
+    pose_batch_size: int = 16            # YOLOv8 batch size (GPU path)
+    mediapipe_model_complexity: int = 1  # MediaPipe model complexity (CPU path)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    return Settings()

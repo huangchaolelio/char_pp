@@ -1,0 +1,68 @@
+{
+  "version": "1.0",
+  "description": "人工标注的运动员偏差基准数据集（SC-002 验证，目标一致率 ≥85%）",
+  "created_at": "2026-04-19",
+  "annotator": "placeholder",
+  "segments": [
+    {
+      "video_id": "seg_athlete_001",
+      "action_type": "forehand_topspin",
+      "expected_deviations": [
+        {
+          "dimension": "elbow_angle",
+          "direction": "above",
+          "notes": "肘部角度偏大，挥拍时伸展过度"
+        },
+        {
+          "dimension": "contact_timing",
+          "direction": "below",
+          "notes": "击球时机偏早"
+        }
+      ]
+    },
+    {
+      "video_id": "seg_athlete_002",
+      "action_type": "forehand_topspin",
+      "expected_deviations": [
+        {
+          "dimension": "weight_transfer",
+          "direction": "below",
+          "notes": "重心转移不足，腿部力量传导差"
+        }
+      ]
+    },
+    {
+      "video_id": "seg_athlete_003",
+      "action_type": "backhand_push",
+      "expected_deviations": [
+        {
+          "dimension": "elbow_angle",
+          "direction": "above",
+          "notes": "肘部角度偏大"
+        },
+        {
+          "dimension": "swing_trajectory",
+          "direction": "above",
+          "notes": "挥拍幅度偏大"
+        }
+      ]
+    },
+    {
+      "video_id": "seg_athlete_004",
+      "action_type": "forehand_topspin",
+      "expected_deviations": [],
+      "notes": "动作标准，无显著偏差"
+    },
+    {
+      "video_id": "seg_athlete_005",
+      "action_type": "backhand_push",
+      "expected_deviations": [
+        {
+          "dimension": "contact_timing",
+          "direction": "above",
+          "notes": "击球时机偏晚"
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "version": "1.0",
+  "description": "人工标注的专家视频技术维度覆盖率基准数据集（SC-001 验证，目标覆盖率 ≥90%）",
+  "created_at": "2026-04-19",
+  "annotator": "placeholder",
+  "segments": [
+    {
+      "video_id": "seg_expert_001",
+      "action_type": "forehand_topspin",
+      "expected_dimensions": ["elbow_angle", "swing_trajectory", "contact_timing", "weight_transfer"],
+      "notes": "标准正手拉球示范，全部 4 个维度均可见"
+    },
+    {
+      "video_id": "seg_expert_002",
+      "action_type": "forehand_topspin",
+      "expected_dimensions": ["elbow_angle", "swing_trajectory", "contact_timing"],
+      "notes": "正手拉球，髋部遮挡，weight_transfer 不可见"
+    },
+    {
+      "video_id": "seg_expert_003",
+      "action_type": "backhand_push",
+      "expected_dimensions": ["elbow_angle", "swing_trajectory", "contact_timing", "weight_transfer"],
+      "notes": "标准反手拨球示范，全部维度可见"
+    },
+    {
+      "video_id": "seg_expert_004",
+      "action_type": "forehand_topspin",
+      "expected_dimensions": ["elbow_angle", "swing_trajectory", "contact_timing", "weight_transfer"],
+      "notes": "高速正手拉球，所有关键点置信度高"
+    },
+    {
+      "video_id": "seg_expert_005",
+      "action_type": "backhand_push",
+      "expected_dimensions": ["elbow_angle", "contact_timing", "weight_transfer"],
+      "notes": "反手拨球，挥拍幅度小，swing_trajectory 可能低置信度"
+    }
+  ]
+}
