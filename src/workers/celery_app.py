@@ -23,9 +23,9 @@ def create_celery_app() -> Celery:
         task_serializer="json",
         result_serializer="json",
         accept_content=["json"],
-        # Timeouts: 8 minutes hard limit, 7.5 minutes soft limit
-        task_time_limit=480,
-        task_soft_time_limit=450,
+        # Timeouts: SC-004 requires ≤5 min; soft=360s (6 min), hard=420s (7 min)
+        task_time_limit=420,
+        task_soft_time_limit=360,
         # Retry policy
         task_max_retries=2,
         task_default_retry_delay=30,
