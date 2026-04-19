@@ -136,9 +136,9 @@ def classify_segment(
     is_open_elbow = (elbow_angle is None) or (elbow_angle > 100.0)
 
     # backhand_push: wrist moves predominantly horizontal/forward
-    # elbow stays bent (< 120°) and close to the body
+    # elbow stays bent (< 140°) and close to the body; treat missing elbow angle as passing
     is_horizontal = abs(mean_dx) > abs(mean_dy) * 0.8
-    is_bent_elbow = (elbow_angle is not None) and (elbow_angle <= 120.0)
+    is_bent_elbow = (elbow_angle is None) or (elbow_angle <= 140.0)
 
     if is_upward and is_open_elbow:
         action_type = "forehand_topspin"
