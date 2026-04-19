@@ -79,13 +79,13 @@
 
 ### 用户故事 2 的实施
 
-- [ ] T031 [P] [US2] 创建 src/models/athlete_motion_analysis.py：AthleteMotionAnalysis ORM 模型（task_id FK、action_type 枚举含 unknown、segment_start_ms/segment_end_ms、measured_params JSONB、overall_confidence、is_low_confidence、knowledge_base_version FK）
-- [ ] T032 [P] [US2] 创建 src/models/deviation_report.py：DeviationReport ORM 模型（analysis_id FK、expert_point_id FK、dimension、measured_value、ideal_value、deviation_value、deviation_direction 枚举 above/below/none、confidence、is_low_confidence、is_stable_deviation NULLABLE、impact_score NULLABLE）
-- [ ] T033 [US2] 实现 src/services/deviation_analyzer.py：偏差计算服务（输入：AthleteMotionAnalysis measured_params + ExpertTechPoint 标准；计算 deviation_value = measured - ideal；deviation_direction：measured > param_max → above，< param_min → below，否则 none；impact_score = abs(deviation_value) / (param_max - param_min)，归一化到 [0,1]；overall_confidence < 0.7 → is_low_confidence=true）
-- [ ] T034 [US2] 在 src/services/deviation_analyzer.py 中添加稳定性聚合计算 compute_stability(task_ids: List[UUID], action_type, dimension)：查询同 athlete 历史分析记录；样本 ≥3 且偏差（deviation_direction ≠ none）出现率 ≥70% → is_stable_deviation=true；样本 < 3 → NULL；否则 false
-- [ ] T035 [US2] 实现 src/workers/athlete_video_task.py：Celery 任务 process_athlete_video（流程：保存上传文件到临时目录；更新 status=processing；validate_video → 失败 status=rejected；get_active_version → None 则 status=failed error=KNOWLEDGE_BASE_NOT_READY；pose_estimate；segment；classify；对每个有效片段（unknown 类型记录但跳过比对）：save AthleteMotionAnalysis；调用 deviation_analyzer 计算并保存 DeviationReport；计算稳定性并更新 is_stable_deviation；cleanup；status=success）
-- [ ] T036 [US2] 实现 POST /tasks/athlete-video 端点完整逻辑（src/api/routers/tasks.py）：接收 multipart（video 文件、knowledge_base_version 可选、target_person_index 可选）；校验参数（无文件 → 400）；创建 AnalysisTask(task_type=athlete_video)；触发 process_athlete_video.delay(task_id, tmp_path, kb_version, target_person_index)；返回 202 含 task_id/status/knowledge_base_version/estimated_completion_seconds=300
-- [ ] T037 [US2] 实现 GET /tasks/{task_id}/result 端点 athlete_video 分支：查询 AthleteMotionAnalysis + DeviationReport；构建 motion_analyses 列表（含 deviation_report 子数组）；计算 summary（total_actions_detected、actions_analyzed、actions_low_confidence、total_deviations、stable_deviations、top_advice_dimension）；CoachingAdvice 字段此阶段返回空数组占位
+- [x] T031 [P] [US2] 创建 src/models/athlete_motion_analysis.py：AthleteMotionAnalysis ORM 模型（task_id FK、action_type 枚举含 unknown、segment_start_ms/segment_end_ms、measured_params JSONB、overall_confidence、is_low_confidence、knowledge_base_version FK）
+- [x] T032 [P] [US2] 创建 src/models/deviation_report.py：DeviationReport ORM 模型（analysis_id FK、expert_point_id FK、dimension、measured_value、ideal_value、deviation_value、deviation_direction 枚举 above/below/none、confidence、is_low_confidence、is_stable_deviation NULLABLE、impact_score NULLABLE）
+- [x] T033 [US2] 实现 src/services/deviation_analyzer.py：偏差计算服务（输入：AthleteMotionAnalysis measured_params + ExpertTechPoint 标准；计算 deviation_value = measured - ideal；deviation_direction：measured > param_max → above，< param_min → below，否则 none；impact_score = abs(deviation_value) / (param_max - param_min)，归一化到 [0,1]；overall_confidence < 0.7 → is_low_confidence=true）
+- [x] T034 [US2] 在 src/services/deviation_analyzer.py 中添加稳定性聚合计算 compute_stability(task_ids: List[UUID], action_type, dimension)：查询同 athlete 历史分析记录；样本 ≥3 且偏差（deviation_direction ≠ none）出现率 ≥70% → is_stable_deviation=true；样本 < 3 → NULL；否则 false
+- [x] T035 [US2] 实现 src/workers/athlete_video_task.py：Celery 任务 process_athlete_video（流程：保存上传文件到临时目录；更新 status=processing；validate_video → 失败 status=rejected；get_active_version → None 则 status=failed error=KNOWLEDGE_BASE_NOT_READY；pose_estimate；segment；classify；对每个有效片段（unknown 类型记录但跳过比对）：save AthleteMotionAnalysis；调用 deviation_analyzer 计算并保存 DeviationReport；计算稳定性并更新 is_stable_deviation；cleanup；status=success）
+- [x] T036 [US2] 实现 POST /tasks/athlete-video 端点完整逻辑（src/api/routers/tasks.py）：接收 multipart（video 文件、knowledge_base_version 可选、target_person_index 可选）；校验参数（无文件 → 400）；创建 AnalysisTask(task_type=athlete_video)；触发 process_athlete_video.delay(task_id, tmp_path, kb_version, target_person_index)；返回 202 含 task_id/status/knowledge_base_version/estimated_completion_seconds=300
+- [x] T037 [US2] 实现 GET /tasks/{task_id}/result 端点 athlete_video 分支：查询 AthleteMotionAnalysis + DeviationReport；构建 motion_analyses 列表（含 deviation_report 子数组）；计算 summary（total_actions_detected、actions_analyzed、actions_low_confidence、total_deviations、stable_deviations、top_advice_dimension）；CoachingAdvice 字段此阶段返回空数组占位
 
 **检查点**: US2 可独立测试 — 上传运动员视频后 GET /result 可获取 deviation_report，偏差维度、方向、置信度字段完整；US1 功能不受影响
 
@@ -99,10 +99,10 @@
 
 ### 用户故事 3 的实施
 
-- [ ] T038 [P] [US3] 创建 src/models/coaching_advice.py：CoachingAdvice ORM 模型（deviation_id FK、task_id FK、deviation_description、improvement_target、improvement_method、impact_score、reliability_level 枚举 high/low、reliability_note NULLABLE、created_at）
-- [ ] T039 [US3] 实现 src/services/advice_generator.py：指导建议生成服务（输入：DeviationReport 列表 + 对应 ExpertTechPoint；对每条偏差（deviation_direction ≠ none）生成 CoachingAdvice：deviation_description 含维度名称和偏差量（如"正手拉球肘部角度偏大 32.5°"）；improvement_target 引用 ExpertTechPoint.param_min/ideal/param_max；improvement_method 为可操作的文字训练建议；reliability_level：confidence ≥ 0.7 → high；< 0.7 → low 并填写 reliability_note；impact_score 继承 DeviationReport.impact_score；按 impact_score DESC 排序输出）
-- [ ] T040 [US3] 在 src/workers/athlete_video_task.py 的 process_athlete_video 任务中，偏差计算完成后调用 advice_generator.generate(deviation_reports) 并保存 CoachingAdvice 记录
-- [ ] T041 [US3] 更新 GET /tasks/{task_id}/result 端点 athlete_video 分支（src/api/routers/tasks.py）：填充 coaching_advice 数组（替换阶段 4 中的空数组占位），含 advice_id/dimension/deviation_description/improvement_target/improvement_method/impact_score/reliability_level/reliability_note；summary.top_advice_dimension 指向 impact_score 最高的维度
+- [x] T038 [P] [US3] 创建 src/models/coaching_advice.py：CoachingAdvice ORM 模型（deviation_id FK、task_id FK、deviation_description、improvement_target、improvement_method、impact_score、reliability_level 枚举 high/low、reliability_note NULLABLE、created_at）
+- [x] T039 [US3] 实现 src/services/advice_generator.py：指导建议生成服务（输入：DeviationReport 列表 + 对应 ExpertTechPoint；对每条偏差（deviation_direction ≠ none）生成 CoachingAdvice：deviation_description 含维度名称和偏差量（如"正手拉球肘部角度偏大 32.5°"）；improvement_target 引用 ExpertTechPoint.param_min/ideal/param_max；improvement_method 为可操作的文字训练建议；reliability_level：confidence ≥ 0.7 → high；< 0.7 → low 并填写 reliability_note；impact_score 继承 DeviationReport.impact_score；按 impact_score DESC 排序输出）
+- [x] T040 [US3] 在 src/workers/athlete_video_task.py 的 process_athlete_video 任务中，偏差计算完成后调用 advice_generator.generate(deviation_reports) 并保存 CoachingAdvice 记录
+- [x] T041 [US3] 更新 GET /tasks/{task_id}/result 端点 athlete_video 分支（src/api/routers/tasks.py）：填充 coaching_advice 数组（替换阶段 4 中的空数组占位），含 advice_id/dimension/deviation_description/improvement_target/improvement_method/impact_score/reliability_level/reliability_note；summary.top_advice_dimension 指向 impact_score 最高的维度
 
 **检查点**: 完整流程可通 — 上传运动员视频，GET /result 返回含 coaching_advice 的完整响应，建议按 impact_score 降序排列，低置信度建议有说明
 
@@ -112,20 +112,20 @@
 
 **目的**: 数据保留、精准度基准、可观测性、安全加固
 
-- [ ] T042 实现定时任务（src/workers/celery_app.py 中配置 Celery Beat 调度）：每日扫描 analysis_tasks，物理删除 deleted_at IS NOT NULL 或 completed_at < NOW() - interval '12 months' 的记录及关联数据（CASCADE）；日志记录清理数量
-- [ ] T043 [P] 在 src/models/analysis_task.py 中为 video_storage_uri 字段添加应用层加密（使用 SQLAlchemy TypeDecorator 封装 AES-256-GCM 加解密，密钥通过 config.py 环境变量注入）
-- [ ] T044 [P] 创建 docs/benchmarks/README.md：说明基准数据集格式、来源、版本管理规范（Git LFS）
-- [ ] T045 [P] 创建 docs/benchmarks/expert_annotation_v1.json：人工标注的技术维度覆盖率基准数据集（格式：视频片段 ID → 期望维度列表），用于 SC-001（维度覆盖率 ≥90%）验证
-- [ ] T046 [P] 创建 docs/benchmarks/deviation_annotation_v1.json：人工标注的偏差基准数据集（格式：视频片段 ID → 期望偏差列表含 dimension/direction），用于 SC-002（一致率 ≥85%）验证
-- [ ] T047 创建 tests/benchmarks/test_accuracy_benchmarks.py：精准度基准测试（加载 expert_annotation_v1.json 运行 SC-001；加载 deviation_annotation_v1.json 运行 SC-002；测试失败时阻止合并）
-- [ ] T048 [P] 创建 tests/unit/test_cos_client.py：COS 客户端单元测试（mock cos-python-sdk-v5；测试 object_exists 返回 True/False；测试 download_to_temp 成功路径；测试 CosObjectNotFoundError / CosDownloadError 异常路径）
-- [ ] T049 [P] 创建 tests/unit/test_video_validator.py：视频质量门控单元测试（mock cv2.VideoCapture；测试 fps 不足/分辨率不足/无法读取三种拒绝场景；测试正常视频通过）
-- [ ] T050 [P] 创建 tests/unit/test_deviation_analyzer.py：偏差计算单元测试（已知输入验证 deviation_value/direction/impact_score 计算正确；验证 confidence < 0.7 时 is_low_confidence=true；验证稳定性聚合逻辑在样本不足时返回 NULL）
-- [ ] T051 [P] 创建 tests/unit/test_advice_generator.py：建议生成单元测试（给定 mock DeviationReport 列表，验证每条偏差生成一条建议；验证 reliability_level 高/低分支；验证按 impact_score 降序排列）
-- [ ] T052 创建 tests/contract/test_api_contracts.py：API 接口契约测试（用 httpx.AsyncClient 对运行中的 FastAPI 测试所有 8 个端点的请求/响应结构；验证错误码格式；验证 202/200/404/422 状态码）
-- [ ] T053 创建 tests/integration/test_expert_pipeline.py：专家视频端到端集成测试（mock COS SDK；使用测试夹具视频文件；验证 COS 下载 → 质量门控 → 姿态估计 → 提取 → 知识库草稿创建 → 审核激活全链路）
-- [ ] T054 创建 tests/integration/test_athlete_pipeline.py：运动员视频端到端集成测试（依赖已激活知识库夹具；上传测试视频；验证偏差分析 → 建议生成全链路，含 low_confidence 片段标注）
-- [ ] T055 创建 tests/integration/test_data_retention.py：数据保留与删除集成测试（验证 DELETE /tasks/{id} 软删除后立即返回 404；验证定时清理任务对 deleted_at 记录物理删除）
+- [x] T042 实现定时任务（src/workers/celery_app.py 中配置 Celery Beat 调度）：每日扫描 analysis_tasks，物理删除 deleted_at IS NOT NULL 或 completed_at < NOW() - interval '12 months' 的记录及关联数据（CASCADE）；日志记录清理数量
+- [x] T043 [P] 在 src/models/analysis_task.py 中为 video_storage_uri 字段添加应用层加密（使用 SQLAlchemy TypeDecorator 封装 AES-256-GCM 加解密，密钥通过 config.py 环境变量注入）
+- [x] T044 [P] 创建 docs/benchmarks/README.md：说明基准数据集格式、来源、版本管理规范（Git LFS）
+- [x] T045 [P] 创建 docs/benchmarks/expert_annotation_v1.json：人工标注的技术维度覆盖率基准数据集（格式：视频片段 ID → 期望维度列表），用于 SC-001（维度覆盖率 ≥90%）验证
+- [x] T046 [P] 创建 docs/benchmarks/deviation_annotation_v1.json：人工标注的偏差基准数据集（格式：视频片段 ID → 期望偏差列表含 dimension/direction），用于 SC-002（一致率 ≥85%）验证
+- [x] T047 创建 tests/benchmarks/test_accuracy_benchmarks.py：精准度基准测试（加载 expert_annotation_v1.json 运行 SC-001；加载 deviation_annotation_v1.json 运行 SC-002；测试失败时阻止合并）
+- [x] T048 [P] 创建 tests/unit/test_cos_client.py：COS 客户端单元测试（mock cos-python-sdk-v5；测试 object_exists 返回 True/False；测试 download_to_temp 成功路径；测试 CosObjectNotFoundError / CosDownloadError 异常路径）
+- [x] T049 [P] 创建 tests/unit/test_video_validator.py：视频质量门控单元测试（mock cv2.VideoCapture；测试 fps 不足/分辨率不足/无法读取三种拒绝场景；测试正常视频通过）
+- [x] T050 [P] 创建 tests/unit/test_deviation_analyzer.py：偏差计算单元测试（已知输入验证 deviation_value/direction/impact_score 计算正确；验证 confidence < 0.7 时 is_low_confidence=true；验证稳定性聚合逻辑在样本不足时返回 NULL）
+- [x] T051 [P] 创建 tests/unit/test_advice_generator.py：建议生成单元测试（给定 mock DeviationReport 列表，验证每条偏差生成一条建议；验证 reliability_level 高/低分支；验证按 impact_score 降序排列）
+- [x] T052 创建 tests/contract/test_api_contracts.py：API 接口契约测试（用 httpx.AsyncClient 对运行中的 FastAPI 测试所有 8 个端点的请求/响应结构；验证错误码格式；验证 202/200/404/422 状态码）
+- [x] T053 创建 tests/integration/test_expert_pipeline.py：专家视频端到端集成测试（mock COS SDK；使用测试夹具视频文件；验证 COS 下载 → 质量门控 → 姿态估计 → 提取 → 知识库草稿创建 → 审核激活全链路）
+- [x] T054 创建 tests/integration/test_athlete_pipeline.py：运动员视频端到端集成测试（依赖已激活知识库夹具；上传测试视频；验证偏差分析 → 建议生成全链路，含 low_confidence 片段标注）
+- [x] T055 创建 tests/integration/test_data_retention.py：数据保留与删除集成测试（验证 DELETE /tasks/{id} 软删除后立即返回 404；验证定时清理任务对 deleted_at 记录物理删除）
 - [ ] T056 [P] 按 quickstart.md 验证全部 curl 示例可端到端跑通（含 COS 环境变量设置步骤）
 
 ---
