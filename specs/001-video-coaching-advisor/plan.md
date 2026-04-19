@@ -83,6 +83,8 @@
 | II. 契约测试 | contracts/api.md 定义所有 8 个 API 端点，T052 契约测试覆盖 | ✅ 通过 |
 | VI. 模型可解释性 | API 响应包含 confidence/reliability_level/deviation_direction 等可解释字段 | ✅ 通过 |
 | VII. 数据隐私 | 运动员视频不持久化存储，仅临时目录处理后即清除；视频路径列加密 | ✅ 通过 |
+| FR-009 审计 | spec.md 明确 10 个必填审计字段，与 AnalysisTask ORM 对齐 | ✅ 通过 |
+| 拒绝码规范 | spec.md 附录 B 汇总 6 个错误码及 HTTP 状态码， API 响应体包含 error_code + message | ✅ 通过 |
 
 **章程检查结论：所有门控条件通过，无严重违规，可进入实施阶段。**
 
@@ -202,7 +204,7 @@ docs/
 |----------|------|-----------|---------|------|
 | SC-001 | 技术维度覆盖率 ≥ 90% | docs/benchmarks/expert_annotation_v1.json | T047（tests/benchmarks/test_accuracy_benchmarks.py） | ⚠️ 数据集待填充（需人工标注视频） |
 | SC-002 | 偏差一致率 ≥ 85% | docs/benchmarks/deviation_annotation_v1.json | T047 | ⚠️ 数据集待填充（需标注偏差视频） |
-| SC-004 | 单视频处理 ≤ 5 分钟 | 端到端实测 | quickstart.md 手工验证 | ⚠️ 无自动化测试，需手工验证 |
+| SC-004 | 单视频处理 ≤ 5 分钟 | 端到端实测 | quickstart.md 手工验证；Celery soft_time_limit=360s 可防止任务超时（无法 CI 自动化，需真实 GPU 环境） | ⚠️ 需手工验证 |
 | SC-005 | 拒绝率 ≥ 99% | unit test 逻辑验证 | T049（test_video_validator.py） | ✅ 逻辑路径已覆盖 |
 
 **注**: SC-001/SC-002 benchmark 测试（T047）因无标注视频数据而被 skip（`@pytest.mark.benchmark`），
