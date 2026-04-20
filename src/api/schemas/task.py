@@ -58,6 +58,8 @@ class TaskStatusResponse(BaseModel):
     processed_segments: Optional[int] = None
     total_segments: Optional[int] = None
     audio_fallback_reason: Optional[str] = None
+    # Incremental KB draft: populated as soon as the first segment writes results
+    knowledge_base_version: Optional[str] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────

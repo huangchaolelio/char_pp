@@ -65,7 +65,7 @@ class Settings(BaseSettings):
     audio_priority_window_s: float = 3.0        # seconds around keyword hit to mark as priority
     audio_snr_threshold_db: float = 10.0        # below this SNR → quality_flag=low_snr
     audio_conflict_threshold_pct: float = 0.15  # param diff ratio > this → conflict_flag
-    long_video_segment_duration_s: int = 300    # 5-minute chunks for long video processing
+    long_video_segment_duration_s: int = 180    # 3-minute chunks for long video processing
     max_video_duration_s: int = 5400            # 90 minutes hard limit
 
 

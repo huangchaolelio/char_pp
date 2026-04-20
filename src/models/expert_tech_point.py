@@ -33,8 +33,20 @@ from src.db.session import Base
 
 
 class ActionType(str, enum.Enum):
-    forehand_topspin = "forehand_topspin"
-    backhand_push = "backhand_push"
+    # ── Forehand techniques ────────────────────────────────────────────────────
+    forehand_attack = "forehand_attack"            # 正手攻球
+    forehand_topspin = "forehand_topspin"          # 正手拉球 / 连续拉 / 发力拉 / 广式正手
+    forehand_chop_long = "forehand_chop_long"      # 正手劈长
+    forehand_counter = "forehand_counter"          # 正手快带
+    forehand_loop_underspin = "forehand_loop_underspin"  # 正手起下旋
+    forehand_flick = "forehand_flick"              # 正手挑打 / 挑球
+    forehand_position = "forehand_position"        # 正手跑位 / 两点 / 不定点（综合训练）
+    forehand_general = "forehand_general"          # 正手通用（兜底）
+    # ── Backhand techniques ───────────────────────────────────────────────────
+    backhand_push = "backhand_push"                # 反手推挡（原有）
+    backhand_topspin = "backhand_topspin"          # 反手拉球
+    backhand_flick = "backhand_flick"              # 反手弹打 / 拨球 / 反拉
+    backhand_general = "backhand_general"          # 反手通用（兜底）
 
 
 class ExpertTechPoint(Base):

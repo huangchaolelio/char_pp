@@ -299,6 +299,7 @@ async def get_task_status(
         processed_segments=task.processed_segments,
         total_segments=task.total_segments,
         audio_fallback_reason=task.audio_fallback_reason,
+        knowledge_base_version=task.knowledge_base_version,
     )
 
 

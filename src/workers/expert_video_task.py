@@ -375,6 +375,45 @@ def _get_video_duration_ffprobe(video_path: Path) -> float | None:
     return None
 
 
+def _pre_split_video(
+    src: Path,
+    segment_duration_s: int,
+    total_segments: int,
+) -> list[Path | None]:
+    """Pre-split *src* into *total_segments* clips of *segment_duration_s* seconds each.
+
+    Returns a list of length *total_segments* where each element is either:
+    - A Path to the successfully created clip file, or
+    - None if the FFmpeg clip command failed.
+
+    Each successful clip file must be deleted by the caller after processing.
+    """
+    ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
+    seg_paths: list[Path | None] = []
+    for i in range(total_segments):
+        seg_path = src.parent / f"seg_{i:04d}_{src.stem}.mp4"
+        cmd = [
+            ffmpeg_bin, "-y",
+            "-ss", str(i * segment_duration_s),
+            "-t", str(segment_duration_s),
+            "-i", str(src),
+            "-vf", "scale=1280:720",
+            "-c:v", "libx264", "-crf", "23", "-an",
+            str(seg_path),
+        ]
+        result = subprocess.run(cmd, capture_output=True, timeout=120)
+        if result.returncode == 0 and seg_path.exists():
+            seg_paths.append(seg_path)
+        else:
+            logger.warning("Pre-split failed for segment %d/%d (task src=%s)", i, total_segments, src.name)
+            seg_paths.append(None)
+    logger.info(
+        "Pre-split complete: %d/%d segments OK (src=%s)",
+        sum(1 for p in seg_paths if p is not None), total_segments, src.name,
+    )
+    return seg_paths
+
+
 async def _update_progress(
     task_id: uuid.UUID,
     processed: int,
@@ -389,6 +428,88 @@ async def _update_progress(
             if task:
                 task.processed_segments = processed
                 task.progress_pct = pct
+
+
+async def _persist_incremental_points(
+    task_id: uuid.UUID,
+    seg_idx: int,
+    visual_points: list,
+    action_type_hint: str | None,
+    kb_version_holder: list[str],
+) -> None:
+    """Write per-segment visual tech points to the KB draft immediately after extraction.
+
+    On the very first call (kb_version_holder is empty) a new draft KB is created.
+    Subsequent calls upsert into the same KB version.
+
+    Args:
+        task_id: The AnalysisTask UUID.
+        seg_idx: 0-based segment index (for logging only).
+        visual_points: MergedTechPoint list from visual-only merge for this segment.
+        action_type_hint: Used to seed action_types when no points carry one.
+        kb_version_holder: Single-element mutable list that holds the KB version
+            string across calls.  Modified in-place on first call.
+    """
+    factory = _make_session_factory()
+    async with factory() as session:
+        async with session.begin():
+            if not kb_version_holder:
+                # First segment with results: create KB draft now
+                action_types = list({p.action_type for p in visual_points if p.action_type})
+                if not action_types:
+                    action_types = [action_type_hint] if action_type_hint else ["forehand_topspin"]
+                kb = await knowledge_base_svc.create_draft_version(
+                    session,
+                    action_types=action_types,
+                    notes=f"Auto-extracted from task {task_id}",
+                )
+                kb_version_holder.append(kb.version)
+                logger.info(
+                    "Created KB draft %s after segment %d (task %s)",
+                    kb.version, seg_idx, task_id,
+                )
+
+            if visual_points and kb_version_holder:
+                count = await knowledge_base_svc.add_tech_points(
+                    session,
+                    kb_version=kb_version_holder[0],
+                    source_task_id=task_id,
+                    extraction_results=visual_points,
+                )
+                logger.info(
+                    "Segment %d: persisted %d points → KB %s (task %s)",
+                    seg_idx, count, kb_version_holder[0], task_id,
+                )
+
+
+async def _finalize_task(
+    task_id: uuid.UUID,
+    video_meta: VideoMeta,
+    kb_version: str,
+    audio_fallback_reason: str | None,
+    final_status: TaskStatus,
+    failed_segment_indices: list[int],
+) -> None:
+    """Mark the AnalysisTask as complete and record metadata.
+
+    Called after all segments and audio have been processed.
+    The KB draft already exists and has been incrementally populated.
+    """
+    factory = _make_session_factory()
+    async with factory() as session:
+        async with session.begin():
+            task = await session.get(AnalysisTask, task_id)
+            if task:
+                task.status = final_status
+                task.completed_at = datetime.now(tz=timezone.utc)
+                task.video_fps = video_meta.fps
+                task.video_resolution = video_meta.resolution_str
+                task.video_duration_seconds = video_meta.duration_seconds
+                task.knowledge_base_version = kb_version
+                task.audio_fallback_reason = audio_fallback_reason
+                if failed_segment_indices:
+                    import json as _json
+                    task.error_message = _json.dumps({"failed_segments": failed_segment_indices})
 
 
 def _cleanup(tmp_path: Path | None) -> None:
@@ -512,37 +633,43 @@ def process_expert_video(
             total_duration_s, total_segments, segment_duration_s, task_id,
         )
 
-        # ── 6–8. Segmented processing loop (US3) ──────────────────────────────
-        all_extraction_results: list = []
-        failed_segment_indices: list[int] = []
+        # ── 5.5 Pre-split all segments up front ───────────────────────────────
+        seg_paths = _pre_split_video(tmp_path, segment_duration_s, total_segments)
+        failed_segment_indices: list[int] = [
+            i for i, p in enumerate(seg_paths) if p is None
+        ]
 
-        for seg_idx in range(total_segments):
-            seg_start_s = seg_idx * segment_duration_s
+        # ── 8.5 Audio-enhanced extraction (Feature 002) — runs on full video ──
+        # Run BEFORE the segment loop so audio results are available immediately.
+        audio_segments, priority_windows, audio_fallback_reason = _run_audio_pipeline(
+            tmp_path, task_id, enable_audio=enable_audio_analysis, language=audio_language
+        )
+        if audio_fallback_reason:
             logger.info(
-                "Processing segment %d/%d (start=%.0fs, task %s)",
-                seg_idx + 1, total_segments, seg_start_s, task_id,
+                "Audio pipeline fallback for task %s: %s", task_id, audio_fallback_reason
+            )
+        if priority_windows:
+            logger.info(
+                "%d keyword priority windows identified (task %s)", len(priority_windows), task_id
+            )
+
+        # ── 6–8. Segmented processing loop (US3) ──────────────────────────────
+        # Each segment is processed independently; results are written to KB as
+        # soon as extraction completes so partial results are visible immediately.
+        all_visual_dicts: list = []
+        kb_version_holder: list[str] = []  # mutable ref: populated on first successful segment
+
+        for seg_idx, seg_path in enumerate(seg_paths):
+            if seg_path is None:
+                # Pre-split failed for this segment — already counted as failed above
+                asyncio.run(_update_progress(task_id, seg_idx + 1, total_segments))
+                continue
+
+            logger.info(
+                "Processing segment %d/%d (task %s)",
+                seg_idx + 1, total_segments, task_id,
             )
             try:
-                # Clip segment
-                seg_path = tmp_path.parent / f"seg_{seg_idx:04d}_{tmp_path.stem}.mp4"
-                ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
-                clip_cmd = [
-                    ffmpeg_bin, "-y",
-                    "-ss", str(seg_start_s), "-t", str(segment_duration_s),
-                    "-i", str(tmp_path),
-                    "-vf", "scale=1280:720",
-                    "-c:v", "libx264", "-crf", "23", "-an",
-                    str(seg_path),
-                ]
-                clip_result = subprocess.run(clip_cmd, capture_output=True, timeout=120)
-                if clip_result.returncode != 0 or not seg_path.exists():
-                    logger.warning(
-                        "ffmpeg clip failed for segment %d (task %s)", seg_idx, task_id
-                    )
-                    failed_segment_indices.append(seg_idx)
-                    asyncio.run(_update_progress(task_id, seg_idx + 1, total_segments))
-                    continue
-
                 # Pose estimation on this segment
                 seg_frames = pose_estimator.estimate_pose(seg_path)
                 if not seg_frames:
@@ -562,10 +689,7 @@ def process_expert_video(
 
                 known_segs = [cs for cs in classified_segs if cs.action_type != "unknown"]
 
-                # Filter by action_type_hint when provided: only keep segments
-                # that match the hint type. This ensures a forehand training video
-                # only contributes forehand tech points even if the classifier
-                # misclassifies some segments as backhand.
+                # Filter by action_type_hint when provided
                 if action_type_hint and known_segs:
                     filtered = [cs for cs in known_segs if cs.action_type == action_type_hint]
                     if filtered:
@@ -579,11 +703,39 @@ def process_expert_video(
                         )
                         known_segs = []
 
-                # Extract tech dimensions
+                # Extract tech dimensions for this segment
+                seg_extraction_results = []
                 for cs in known_segs:
                     res = tech_extractor.extract_tech_points(cs, seg_frames)
                     if res.dimensions:
-                        all_extraction_results.append(res)
+                        seg_extraction_results.append(res)
+
+                # Build visual dicts for this segment only
+                seg_visual_dicts = [
+                    {
+                        "dimension": dim.dimension,
+                        "param_min": dim.param_min,
+                        "param_max": dim.param_max,
+                        "param_ideal": dim.param_ideal,
+                        "unit": dim.unit,
+                        "extraction_confidence": dim.extraction_confidence,
+                        "action_type": res.action_type,
+                    }
+                    for res in seg_extraction_results
+                    for dim in res.dimensions
+                ]
+                all_visual_dicts.extend(seg_visual_dicts)
+
+                # Merge visual-only (no audio here — audio merged globally after loop)
+                # and write to KB immediately so results are visible right away.
+                if seg_visual_dicts:
+                    merger = KbMerger(conflict_threshold_pct=settings.audio_conflict_threshold_pct)
+                    seg_merged = merger.merge(seg_visual_dicts, [])
+                    asyncio.run(
+                        _persist_incremental_points(
+                            task_id, seg_idx, seg_merged, action_type_hint, kb_version_holder
+                        )
+                    )
 
                 _cleanup(seg_path)
 
@@ -592,49 +744,20 @@ def process_expert_video(
                     "Segment %d failed (task %s): %s", seg_idx, task_id, seg_exc
                 )
                 failed_segment_indices.append(seg_idx)
-                if seg_path.exists():
-                    _cleanup(seg_path)
+                _cleanup(seg_path)
 
             asyncio.run(_update_progress(task_id, seg_idx + 1, total_segments))
 
         logger.info(
-            "Segmented processing done: %d segments, %d failed, %d extraction results (task %s)",
-            total_segments, len(failed_segment_indices), len(all_extraction_results), task_id,
+            "Segmented processing done: %d segments, %d failed, %d visual dims (task %s)",
+            total_segments, len(failed_segment_indices), len(all_visual_dicts), task_id,
         )
-        extraction_results = all_extraction_results
 
-        # ── 8.5 Audio-enhanced extraction (Feature 002) — runs on full video ──
-        audio_segments, priority_windows, audio_fallback_reason = _run_audio_pipeline(
-            tmp_path, task_id, enable_audio=enable_audio_analysis, language=audio_language
-        )
-        if audio_fallback_reason:
-            logger.info(
-                "Audio pipeline fallback for task %s: %s", task_id, audio_fallback_reason
-            )
-
-        # US2: prioritise classified segments that fall inside keyword windows
-        # (applied retrospectively to inform log/metrics; extraction already done above)
-        if priority_windows:
-            logger.info(
-                "%d keyword priority windows identified (task %s)", len(priority_windows), task_id
-            )
-
-        # Merge visual and audio tech points
-        visual_dicts = [
-            {
-                "dimension": dim.dimension,
-                "param_min": dim.param_min,
-                "param_max": dim.param_max,
-                "param_ideal": dim.param_ideal,
-                "unit": dim.unit,
-                "extraction_confidence": dim.extraction_confidence,
-                "action_type": res.action_type,
-            }
-            for res in extraction_results
-            for dim in res.dimensions
-        ]
+        # ── 9. Final merge: combine all visual dims with audio and upsert ─────
+        # Perform the full visual+audio merge and upsert the enriched/audio-only
+        # points into the KB that was incrementally built above.
         merger = KbMerger(conflict_threshold_pct=settings.audio_conflict_threshold_pct)
-        merged_points = merger.merge(visual_dicts, audio_segments)
+        merged_points = merger.merge(all_visual_dicts, audio_segments)
 
         # For audio-only points (no visual counterpart), action_type is None.
         # Assign action_type_hint so they are persisted with a meaningful action type.
@@ -644,34 +767,58 @@ def process_expert_video(
                     pt.action_type = action_type_hint
 
         logger.info(
-            "Merged: %d visual dims + %d audio segs → %d merged (%d conflicts) (task %s)",
-            len(visual_dicts), len(audio_segments), len(merged_points),
+            "Final merge: %d visual dims + %d audio segs → %d merged (%d conflicts) (task %s)",
+            len(all_visual_dicts), len(audio_segments), len(merged_points),
             sum(1 for p in merged_points if p.conflict_flag), task_id,
         )
 
-        # ── 9. Persist to DB ───────────────────────────────────────────────────
-        # Determine final status: partial_success if any segment failed
+        # Ensure KB draft exists (handles case where no visual segments yielded results)
+        if not kb_version_holder:
+            async def _create_empty_kb() -> None:
+                factory2 = _make_session_factory()
+                async with factory2() as session:
+                    async with session.begin():
+                        action_types = [action_type_hint] if action_type_hint else ["forehand_topspin"]
+                        kb = await knowledge_base_svc.create_draft_version(
+                            session,
+                            action_types=action_types,
+                            notes=f"Auto-extracted from task {task_id}",
+                        )
+                        kb_version_holder.append(kb.version)
+            asyncio.run(_create_empty_kb())
+
+        # Upsert the fully merged points (audio enrichment + audio-only points)
+        if merged_points:
+            async def _upsert_final(kb_ver: str) -> None:
+                factory2 = _make_session_factory()
+                async with factory2() as session:
+                    async with session.begin():
+                        count = await knowledge_base_svc.add_tech_points(
+                            session,
+                            kb_version=kb_ver,
+                            source_task_id=task_id,
+                            extraction_results=merged_points,
+                        )
+                        logger.info(
+                            "Final upsert: %d points → KB %s (task %s)",
+                            count, kb_ver, task_id,
+                        )
+            asyncio.run(_upsert_final(kb_version_holder[0]))
+
+        kb_version = kb_version_holder[0]
+
+        # ── 10. Finalize task ─────────────────────────────────────────────────
         final_status = (
             TaskStatus.partial_success if failed_segment_indices else TaskStatus.success
         )
-        kb_version = asyncio.run(
-            _persist_success(task_id, video_meta, merged_points, audio_fallback_reason, action_type_hint)
+        asyncio.run(
+            _finalize_task(
+                task_id, video_meta, kb_version, audio_fallback_reason,
+                final_status, failed_segment_indices,
+            )
         )
-        # Patch status to partial_success if needed (persist_success sets success by default)
-        if final_status == TaskStatus.partial_success:
-            async def _set_partial(vid: uuid.UUID, failed: list) -> None:
-                async with factory() as session:
-                    async with session.begin():
-                        task_obj = await session.get(AnalysisTask, vid)
-                        if task_obj:
-                            task_obj.status = TaskStatus.partial_success
-                            import json as _json
-                            task_obj.error_message = _json.dumps(
-                                {"failed_segments": failed}
-                            )
-            asyncio.run(_set_partial(task_id, failed_segment_indices))
 
-        # ── 10. Clean up temp file ─────────────────────────────────────────────
+        # ── 11. Clean up temp file ─────────────────────────────────────────────
         _cleanup(tmp_path)
         tmp_path = None
 
