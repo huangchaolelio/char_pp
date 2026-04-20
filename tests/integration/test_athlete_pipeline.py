@@ -77,6 +77,9 @@ class TestAthletePipeline:
 
         session = AsyncMock()
         session.flush = AsyncMock()
+        _tips_result = MagicMock()
+        _tips_result.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=_tips_result)
         task_id = uuid.uuid4()
 
         deviation = MagicMock(spec=DeviationReport)
@@ -114,6 +117,9 @@ class TestAthletePipeline:
 
         session = AsyncMock()
         session.flush = AsyncMock()
+        _tips_result = MagicMock()
+        _tips_result.scalars.return_value.all.return_value = []
+        session.execute = AsyncMock(return_value=_tips_result)
         task_id = uuid.uuid4()
 
         deviation = MagicMock(spec=DeviationReport)

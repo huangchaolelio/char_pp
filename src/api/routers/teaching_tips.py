@@ -106,7 +106,7 @@ async def update_teaching_tip(
 
 # ── DELETE /teaching-tips/{id} ────────────────────────────────────────────────
 
-@router.delete("/teaching-tips/{tip_id}", status_code=204)
+@router.delete("/teaching-tips/{tip_id}", status_code=204, response_model=None)
 async def delete_teaching_tip(
     tip_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
