@@ -122,7 +122,7 @@ class SpeechRecognizer:
 
             logger.info("Transcribing %s (language=%s)...", wav_path, language)
             result = model.transcribe(
-                wav_path,
+                str(wav_path),
                 language=language,
                 word_timestamps=False,
                 verbose=False,
