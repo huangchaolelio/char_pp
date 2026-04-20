@@ -19,10 +19,10 @@
 
 **目的**: 安装新依赖、初始化关键词词表配置、确认 Whisper 模型可用
 
-- [ ] T001 在 `pyproject.toml` 中添加 `openai-whisper==20231117` 和 `jieba==0.42.1` 依赖，运行 `pip install` 确认安装成功
-- [ ] T002 [P] 创建 `config/keywords/tech_hint_keywords.json`，填入乒乓球教学关键词词表初版（示范、注意看、标准动作、这一拍、关键点、击球瞬间、重心、转腰等约 30 条）
-- [ ] T003 [P] 在 `docs/models/whisper-small-zh.md` 创建模型登记文件，记录模型名称（whisper-small）、版本（20231117）、语言支持（zh）、推理延迟基准（CPU 4×实时）
-- [ ] T004 在 `src/config.py` 中新增 Whisper 相关配置项：`WHISPER_MODEL`（默认 small）、`WHISPER_DEVICE`（默认 cpu）、`AUDIO_KEYWORD_FILE`、`AUDIO_PRIORITY_WINDOW_S`（默认 3.0）、`AUDIO_SNR_THRESHOLD_DB`（默认 10.0）、`AUDIO_CONFLICT_THRESHOLD_PCT`（默认 0.15）、`LONG_VIDEO_SEGMENT_DURATION_S`（默认 300）、`MAX_VIDEO_DURATION_S`（默认 5400，即 90 分钟）
+- [x] T001 在 `pyproject.toml` 中添加 `openai-whisper==20231117` 和 `jieba==0.42.1` 依赖，运行 `pip install` 确认安装成功
+- [x] T002 [P] 创建 `config/keywords/tech_hint_keywords.json`，填入乒乓球教学关键词词表初版（示范、注意看、标准动作、这一拍、关键点、击球瞬间、重心、转腰等约 30 条）
+- [x] T003 [P] 在 `docs/models/whisper-small-zh.md` 创建模型登记文件，记录模型名称（whisper-small）、版本（20231117）、语言支持（zh）、推理延迟基准（CPU 4×实时）
+- [x] T004 在 `src/config.py` 中新增 Whisper 相关配置项：`WHISPER_MODEL`（默认 small）、`WHISPER_DEVICE`（默认 cpu）、`AUDIO_KEYWORD_FILE`、`AUDIO_PRIORITY_WINDOW_S`（默认 3.0）、`AUDIO_SNR_THRESHOLD_DB`（默认 10.0）、`AUDIO_CONFLICT_THRESHOLD_PCT`（默认 0.15）、`LONG_VIDEO_SEGMENT_DURATION_S`（默认 300）、`MAX_VIDEO_DURATION_S`（默认 5400，即 90 分钟）
 
 ---
 
@@ -32,12 +32,12 @@
 
 **⚠️ 关键**: 在此阶段完成之前，无法开始任何用户故事工作
 
-- [ ] T005 在 `src/models/audio_transcript.py` 中创建 `AudioTranscript` ORM 模型，字段：`id`(UUID PK)、`task_id`(FK)、`language`、`model_version`、`total_duration_s`、`snr_db`、`quality_flag`（ok/low_snr/unsupported_language/silent）、`fallback_reason`、`sentences`(JSONB)、`created_at`
-- [ ] T006 [P] 在 `src/models/tech_semantic_segment.py` 中创建 `TechSemanticSegment` ORM 模型，字段：`id`(UUID PK)、`transcript_id`(FK)、`task_id`(FK)、`start_ms`、`end_ms`、`priority_window_start_ms`、`priority_window_end_ms`、`trigger_keyword`、`source_sentence`、`dimension`、`param_min`、`param_max`、`param_ideal`、`unit`、`parse_confidence`、`created_at`
-- [ ] T007 在 `src/models/expert_tech_point.py` 中为现有 `ExpertTechPoint` 模型新增字段：`source_type`(visual/audio/visual+audio，默认 visual)、`transcript_segment_id`(FK，可为 NULL)、`conflict_flag`(BOOLEAN，默认 false)、`conflict_detail`(JSONB，可为 NULL)
-- [ ] T008 [P] 在 `src/models/analysis_task.py` 中为现有 `AnalysisTask` 模型新增字段：`total_segments`(INTEGER，可为 NULL)、`processed_segments`(INTEGER，可为 NULL)、`progress_pct`(FLOAT，可为 NULL)、`audio_fallback_reason`(TEXT，可为 NULL)
-- [ ] T009 创建 Alembic migration 文件，包含：新建 `audio_transcripts` 表、新建 `tech_semantic_segments` 表、在 `expert_tech_points` 追加 4 个字段、在 `analysis_tasks` 追加 4 个字段；运行 `alembic upgrade head` 验证迁移成功
-- [ ] T010 在 `src/models/__init__.py` 中导出两个新模型，确保 SQLAlchemy metadata 注册正确
+- [x] T005 在 `src/models/audio_transcript.py` 中创建 `AudioTranscript` ORM 模型，字段：`id`(UUID PK)、`task_id`(FK)、`language`、`model_version`、`total_duration_s`、`snr_db`、`quality_flag`（ok/low_snr/unsupported_language/silent）、`fallback_reason`、`sentences`(JSONB)、`created_at`
+- [x] T006 [P] 在 `src/models/tech_semantic_segment.py` 中创建 `TechSemanticSegment` ORM 模型，字段：`id`(UUID PK)、`transcript_id`(FK)、`task_id`(FK)、`start_ms`、`end_ms`、`priority_window_start_ms`、`priority_window_end_ms`、`trigger_keyword`、`source_sentence`、`dimension`、`param_min`、`param_max`、`param_ideal`、`unit`、`parse_confidence`、`created_at`
+- [x] T007 在 `src/models/expert_tech_point.py` 中为现有 `ExpertTechPoint` 模型新增字段：`source_type`(visual/audio/visual+audio，默认 visual)、`transcript_segment_id`(FK，可为 NULL)、`conflict_flag`(BOOLEAN，默认 false)、`conflict_detail`(JSONB，可为 NULL)
+- [x] T008 [P] 在 `src/models/analysis_task.py` 中为现有 `AnalysisTask` 模型新增字段：`total_segments`(INTEGER，可为 NULL)、`processed_segments`(INTEGER，可为 NULL)、`progress_pct`(FLOAT，可为 NULL)、`audio_fallback_reason`(TEXT，可为 NULL)
+- [x] T009 创建 Alembic migration 文件，包含：新建 `audio_transcripts` 表、新建 `tech_semantic_segments` 表、在 `expert_tech_points` 追加 4 个字段、在 `analysis_tasks` 追加 4 个字段；运行 `alembic upgrade head` 验证迁移成功
+- [x] T010 在 `src/models/__init__.py` 中导出两个新模型，确保 SQLAlchemy metadata 注册正确
 
 **检查点**: 数据库迁移完成，所有模型可用 — 可开始用户故事实现
 
@@ -53,21 +53,21 @@
 
 > **注意: 先编写这些测试，确保在实现前它们失败**
 
-- [ ] T011 [P] [US1] 在 `tests/unit/test_transcript_tech_parser.py` 中编写单元测试：覆盖数值区间提取（"90°-120°"→min=90,max=120）、单值提取（"保持 90 度"→ideal=90）、无数值文本返回空（"重心要前移"→None）、BODY_PART_MAP 维度映射正确
-- [ ] T012 [P] [US1] 在 `tests/unit/test_kb_merger.py` 中编写单元测试：覆盖同维度无冲突自动合并（差值≤15%→source_type="visual+audio"）、有冲突标注（差值>15%→conflict_flag=True）、纯视觉条目不修改、纯音频条目写入
-- [ ] T013 [P] [US1] 在`tests/integration/test_audio_enhanced_kb_extraction.py` 中编写集成测试：端到端验证含语音视频 → 知识库含音频来源条目；回退测试：静音视频 → 所有条目 source_type="visual"、audio_fallback_reason 非空
+- [x] T011 [P] [US1] 在 `tests/unit/test_transcript_tech_parser.py` 中编写单元测试：覆盖数值区间提取（"90°-120°"→min=90,max=120）、单值提取（"保持 90 度"→ideal=90）、无数值文本返回空（"重心要前移"→None）、BODY_PART_MAP 维度映射正确
+- [x] T012 [P] [US1] 在 `tests/unit/test_kb_merger.py` 中编写单元测试：覆盖同维度无冲突自动合并（差值≤15%→source_type="visual+audio"）、有冲突标注（差值>15%→conflict_flag=True）、纯视觉条目不修改、纯音频条目写入
+- [x] T013 [P] [US1] 在`tests/integration/test_audio_enhanced_kb_extraction.py` 中编写集成测试：端到端验证含语音视频 → 知识库含音频来源条目；回退测试：静音视频 → 所有条目 source_type="visual"、audio_fallback_reason 非空
 
 ### 用户故事 1 的实现
 
-- [ ] T014 [P] [US1] 在 `src/services/audio_extractor.py` 中实现 `AudioExtractor` 类：`extract_wav(video_path, output_path)` 调用 ffmpeg 提取 16kHz 单声道 WAV；`estimate_snr(wav_path) -> float` 估算信噪比；WAV 提取失败时抛出 `AudioExtractionError`
-- [ ] T015 [P] [US1] 在 `src/services/speech_recognizer.py` 中实现 `SpeechRecognizer` 类：`__init__` 加载 Whisper 模型（懒加载，首次调用时初始化）；`recognize(wav_path, language="zh") -> AudioTranscript` 返回带时间戳句列表；SNR 低于阈值时设置 `quality_flag="low_snr"`；不支持语言时设置 `quality_flag="unsupported_language"`；静音时设置 `quality_flag="silent"`
-- [ ] T016 [US1] 在 `src/services/transcript_tech_parser.py` 中实现 `TranscriptTechParser` 类：`parse(sentences: list[dict]) -> list[TechSemanticSegment]` 对每句话执行 BODY_PART_MAP 关键词匹配和数值区间正则提取；仅含数值参数的句子生成 `TechSemanticSegment`（`parse_confidence` 根据匹配质量赋值）；纯文字描述句子存为 `dimension=None`（参考注释，不写入 KB）（依赖 T006）
-- [ ] T017 [US1] 在 `src/services/kb_merger.py` 中实现 `KbMerger` 类：`merge(visual_points: list[ExtractionResult], audio_segments: list[TechSemanticSegment]) -> list[MergedTechPoint]`；同维度参数差≤15% 自动合并（`source_type="visual+audio"`，`param_ideal` 取均值）；差>15% 设置 `conflict_flag=True`、填充 `conflict_detail`；纯视觉条目 `source_type="visual"`；纯音频条目 `source_type="audio"`（依赖 T016）
-- [ ] T018 [US1] 修改 `src/workers/expert_video_task.py`：在现有姿态提取步骤后插入音频增强分支（`enable_audio_analysis=True` 时）：调用 `AudioExtractor` → `SpeechRecognizer` → `TranscriptTechParser` → `KbMerger`；音频不可用时调用纯视觉路径并设置 `audio_fallback_reason`；WAV 临时文件处理后立即删除（依赖 T014、T015、T016、T017）
-- [ ] T019 [US1] 修改 `src/api/routers/tasks.py`：在 `POST /tasks/expert-video` 请求体 schema 中新增可选字段 `enable_audio_analysis`（默认 true）和 `audio_language`（默认 "zh"）；更新 `GET /tasks/{task_id}/result` 响应 schema：新增 `audio_analysis` 对象和 `conflicts` 数组（依赖 T018）
-- [ ] T020 [US1] 修改 `src/api/schemas/` 中对应的 Pydantic schema 文件：在 `ExpertTechPointResponse` 中新增 `source_type`、`conflict_flag`、`conflict_detail` 字段；新增 `AudioAnalysisInfo` 和 `ConflictDetail` schema；更新 `ExpertVideoResultResponse` 包含 `audio_analysis` 和 `conflicts`
-- [ ] T021 [US1] 修改 `src/services/knowledge_base_svc.py`：在 KB approve 前检查该版本是否存在 `conflict_flag=True` 的 `ExpertTechPoint`；若存在则拒绝 approve 并返回冲突条目列表（`CONFLICT_UNRESOLVED` 错误）；在 `POST /knowledge-base/{version}/approve` 响应中说明需要先处理的冲突数量（依赖 T017）
-- [ ] T022 [US1] 为 `contracts/api-changes.md` 中定义的新增错误码 `AUDIO_EXTRACTION_FAILED`、`UNSUPPORTED_AUDIO_LANGUAGE`、`CONFLICT_UNRESOLVED` 在现有错误处理模块中注册，确保返回格式一致
+- [x] T014 [P] [US1] 在 `src/services/audio_extractor.py` 中实现 `AudioExtractor` 类：`extract_wav(video_path, output_path)` 调用 ffmpeg 提取 16kHz 单声道 WAV；`estimate_snr(wav_path) -> float` 估算信噪比；WAV 提取失败时抛出 `AudioExtractionError`
+- [x] T015 [P] [US1] 在 `src/services/speech_recognizer.py` 中实现 `SpeechRecognizer` 类：`__init__` 加载 Whisper 模型（懒加载，首次调用时初始化）；`recognize(wav_path, language="zh") -> AudioTranscript` 返回带时间戳句列表；SNR 低于阈值时设置 `quality_flag="low_snr"`；不支持语言时设置 `quality_flag="unsupported_language"`；静音时设置 `quality_flag="silent"`
+- [x] T016 [US1] 在 `src/services/transcript_tech_parser.py` 中实现 `TranscriptTechParser` 类：`parse(sentences: list[dict]) -> list[TechSemanticSegment]` 对每句话执行 BODY_PART_MAP 关键词匹配和数值区间正则提取；仅含数值参数的句子生成 `TechSemanticSegment`（`parse_confidence` 根据匹配质量赋值）；纯文字描述句子存为 `dimension=None`（参考注释，不写入 KB）（依赖 T006）
+- [x] T017 [US1] 在 `src/services/kb_merger.py` 中实现 `KbMerger` 类：`merge(visual_points: list[ExtractionResult], audio_segments: list[TechSemanticSegment]) -> list[MergedTechPoint]`；同维度参数差≤15% 自动合并（`source_type="visual+audio"`，`param_ideal` 取均值）；差>15% 设置 `conflict_flag=True`、填充 `conflict_detail`；纯视觉条目 `source_type="visual"`；纯音频条目 `source_type="audio"`（依赖 T016）
+- [x] T018 [US1] 修改 `src/workers/expert_video_task.py`：在现有姿态提取步骤后插入音频增强分支（`enable_audio_analysis=True` 时）：调用 `AudioExtractor` → `SpeechRecognizer` → `TranscriptTechParser` → `KbMerger`；音频不可用时调用纯视觉路径并设置 `audio_fallback_reason`；WAV 临时文件处理后立即删除（依赖 T014、T015、T016、T017）
+- [x] T019 [US1] 修改 `src/api/routers/tasks.py`：在 `POST /tasks/expert-video` 请求体 schema 中新增可选字段 `enable_audio_analysis`（默认 true）和 `audio_language`（默认 "zh"）；更新 `GET /tasks/{task_id}/result` 响应 schema：新增 `audio_analysis` 对象和 `conflicts` 数组（依赖 T018）
+- [x] T020 [US1] 修改 `src/api/schemas/` 中对应的 Pydantic schema 文件：在 `ExpertTechPointResponse` 中新增 `source_type`、`conflict_flag`、`conflict_detail` 字段；新增 `AudioAnalysisInfo` 和 `ConflictDetail` schema；更新 `ExpertVideoResultResponse` 包含 `audio_analysis` 和 `conflicts`
+- [x] T021 [US1] 修改 `src/services/knowledge_base_svc.py`：在 KB approve 前检查该版本是否存在 `conflict_flag=True` 的 `ExpertTechPoint`；若存在则拒绝 approve 并返回冲突条目列表（`CONFLICT_UNRESOLVED` 错误）；在 `POST /knowledge-base/{version}/approve` 响应中说明需要先处理的冲突数量（依赖 T017）
+- [x] T022 [US1] 为 `contracts/api-changes.md` 中定义的新增错误码 `AUDIO_EXTRACTION_FAILED`、`UNSUPPORTED_AUDIO_LANGUAGE`、`CONFLICT_UNRESOLVED` 在现有错误处理模块中注册，确保返回格式一致
 
 **检查点**: US1 完整可测试 — 音频提取 → 转录 → 技术解析 → 合并 → 知识库（含冲突阻塞审批）
 
@@ -83,13 +83,13 @@
 
 > **注意: 先编写这些测试，确保在实现前它们失败**
 
-- [ ] T023 [P] [US2] 在 `tests/unit/test_keyword_locator.py` 中编写单元测试：关键词命中 → 返回正确时间窗口（关键词时间 ±3s）；多个关键词命中 → 区间合并；无关键词命中 → 返回空列表；窗口边界不越界（start_ms ≥ 0，end_ms ≤ video_duration）
+- [x] T023 [P] [US2] 在 `tests/unit/test_keyword_locator.py` 中编写单元测试：关键词命中 → 返回正确时间窗口（关键词时间 ±3s）；多个关键词命中 → 区间合并；无关键词命中 → 返回空列表；窗口边界不越界（start_ms ≥ 0，end_ms ≤ video_duration）
 
 ### 用户故事 2 的实现
 
-- [ ] T024 [US2] 在 `src/services/keyword_locator.py` 中实现 `KeywordLocator` 类：`__init__(keyword_file_path)` 加载词表 JSON；`locate(sentences: list[dict]) -> list[PriorityWindow]` 遍历句子，命中词表中任意词时生成 `PriorityWindow(start_ms, end_ms, trigger_keyword)`；重叠区间合并；返回排序后的优先窗口列表（依赖 T002）
-- [ ] T025 [US2] 修改 `src/workers/expert_video_task.py`：音频处理后将 `KeywordLocator` 结果传入 action segmenter；高优先级窗口内的动作片段优先排在分析队列前；非窗口内的片段仍处理但标记为低优先级；音频回退（`quality_flag != "ok"`）时全部片段按现有视觉逻辑处理（依赖 T024，在 T018 已有音频分支基础上扩展）
-- [ ] T026 [US2] 在 `src/workers/expert_video_task.py` 中完善音频不可用时的结构化回退：在 `AnalysisTask.audio_fallback_reason` 中写入具体原因字符串（静音/低信噪比/语言不支持/无音频流）；在任务结果的 `audio_analysis.quality_flag` 中反映回退状态；回退不影响任务最终状态（status 仍为 success）
+- [x] T024 [US2] 在 `src/services/keyword_locator.py` 中实现 `KeywordLocator` 类：`__init__(keyword_file_path)` 加载词表 JSON；`locate(sentences: list[dict]) -> list[PriorityWindow]` 遍历句子，命中词表中任意词时生成 `PriorityWindow(start_ms, end_ms, trigger_keyword)`；重叠区间合并；返回排序后的优先窗口列表（依赖 T002）
+- [x] T025 [US2] 修改 `src/workers/expert_video_task.py`：音频处理后将 `KeywordLocator` 结果传入 action segmenter；高优先级窗口内的动作片段优先排在分析队列前；非窗口内的片段仍处理但标记为低优先级；音频回退（`quality_flag != "ok"`）时全部片段按现有视觉逻辑处理（依赖 T024，在 T018 已有音频分支基础上扩展）
+- [x] T026 [US2] 在 `src/workers/expert_video_task.py` 中完善音频不可用时的结构化回退：在 `AnalysisTask.audio_fallback_reason` 中写入具体原因字符串（静音/低信噪比/语言不支持/无音频流）；在任务结果的 `audio_analysis.quality_flag` 中反映回退状态；回退不影响任务最终状态（status 仍为 success）
 
 **检查点**: US2 完整可测试 — 关键词命中 → 优先窗口 → 片段优先分析 → 回退正常工作
 
@@ -105,15 +105,15 @@
 
 > **注意: 先编写这些测试，确保在实现前它们失败**
 
-- [ ] T027 [P] [US3] 在 `tests/unit/test_long_video_task.py` 中编写单元测试：视频时长 ≤ 90 分钟 → 正常接受；视频时长 > 90 分钟 → 返回 `VIDEO_TOO_LONG`；进度计算公式：`processed_segments / total_segments × 100` 正确；分段失败时任务状态变为 `partial_success` 而非 `failed`
-- [ ] T028 [P] [US3] 在 `tests/integration/test_long_video_progress.py` 中编写集成测试：任务处理中调用进度接口返回 `progress_pct` 和 `processed_segments`；`progress_pct` 在每段完成后更新（验证更新间隔 ≤ 30s）
+- [x] T027 [P] [US3] 在 `tests/unit/test_long_video_task.py` 中编写单元测试：视频时长 ≤ 90 分钟 → 正常接受；视频时长 > 90 分钟 → 返回 `VIDEO_TOO_LONG`；进度计算公式：`processed_segments / total_segments × 100` 正确；分段失败时任务状态变为 `partial_success` 而非 `failed`
+- [x] T028 [P] [US3] 在 `tests/integration/test_long_video_progress.py` 中编写集成测试：任务处理中调用进度接口返回 `progress_pct` 和 `processed_segments`；`progress_pct` 在每段完成后更新（验证更新间隔 ≤ 30s）
 
 ### 用户故事 3 的实现
 
-- [ ] T029 [US3] 修改 `src/api/routers/tasks.py`：在 `POST /tasks/expert-video` 处理逻辑中，提交前用 ffprobe 获取视频时长；若时长 > `MAX_VIDEO_DURATION_S`（5400s=90min）则立即返回 `422 VIDEO_TOO_LONG` 错误，不创建任务；在 `GET /tasks/{task_id}` 响应 schema 中新增 `progress_pct`、`processed_segments`、`total_segments` 字段（依赖 T008）
-- [ ] T030 [US3] 修改 `src/workers/expert_video_task.py`：将现有单次处理逻辑重构为分段循环（每段 `LONG_VIDEO_SEGMENT_DURATION_S` 秒）；任务开始时计算 `total_segments` 并写入 DB；每段处理完成后更新 `processed_segments` 和 `progress_pct`；每段独立捕获异常，失败时记录失败分段编号到 `error_message`（JSON 数组格式），继续处理下一段；全部分段完成后：若有失败分段则任务 status 设为 `partial_success`，否则 `success`（依赖 T029）
-- [ ] T031 [US3] 在 `src/models/analysis_task.py` 中为 `TaskStatus` 枚举新增 `partial_success` 值，确保 API 响应和数据库存储一致
-- [ ] T032 [US3] 更新 `src/api/schemas/` 中 `TaskStatusResponse`，在响应中暴露 `progress_pct`、`processed_segments`、`total_segments`（当 status 为 processing 或 partial_success 时有值）
+- [x] T029 [US3] 修改 `src/api/routers/tasks.py`：在 `POST /tasks/expert-video` 处理逻辑中，提交前用 ffprobe 获取视频时长；若时长 > `MAX_VIDEO_DURATION_S`（5400s=90min）则立即返回 `422 VIDEO_TOO_LONG` 错误，不创建任务；在 `GET /tasks/{task_id}` 响应 schema 中新增 `progress_pct`、`processed_segments`、`total_segments` 字段（依赖 T008）
+- [x] T030 [US3] 修改 `src/workers/expert_video_task.py`：将现有单次处理逻辑重构为分段循环（每段 `LONG_VIDEO_SEGMENT_DURATION_S` 秒）；任务开始时计算 `total_segments` 并写入 DB；每段处理完成后更新 `processed_segments` 和 `progress_pct`；每段独立捕获异常，失败时记录失败分段编号到 `error_message`（JSON 数组格式），继续处理下一段；全部分段完成后：若有失败分段则任务 status 设为 `partial_success`，否则 `success`（依赖 T029）
+- [x] T031 [US3] 在 `src/models/analysis_task.py` 中为 `TaskStatus` 枚举新增 `partial_success` 值，确保 API 响应和数据库存储一致
+- [x] T032 [US3] 更新 `src/api/schemas/` 中 `TaskStatusResponse`，在响应中暴露 `progress_pct`、`processed_segments`、`total_segments`（当 status 为 processing 或 partial_success 时有值）
 
 **检查点**: US3 完整可测试 — 90min 上传限制 + 分段进度更新 + 失败分段保留
 
@@ -123,11 +123,11 @@
 
 **目的**: 完善测试覆盖、结构化日志、文档和验收确认
 
-- [ ] T033 [P] 在所有新增服务（`audio_extractor.py`、`speech_recognizer.py`、`keyword_locator.py`、`transcript_tech_parser.py`、`kb_merger.py`）中补充结构化日志：记录音频提取成功/失败、SNR 值、转录句数、关键词命中数、合并结果统计、冲突数量
-- [ ] T034 [P] 在 `tests/contract/test_expert_video_api_v2.py` 中补充 API 契约测试：验证 `POST /tasks/expert-video` 新增字段的 schema；验证 `GET /tasks/{id}` progress 字段结构；验证 `GET /tasks/{id}/result` `audio_analysis` 和 `conflicts` 字段
-- [ ] T035 更新 `specs/002-audio-enhanced-kb-extraction/plan.md` 精准度基准表：添加验证结果列（T001-T005 各测试用例的实测数据）
-- [ ] T036 [P] 按 `specs/002-audio-enhanced-kb-extraction/quickstart.md` 执行端到端手工验证：安装依赖 → 运行迁移 → 提交含语音视频 → 验证知识库含音频来源条目 → 验证 90min+ 视频被拒绝 → 验证冲突阻塞 KB approve
-- [ ] T037 [P] 在 `src/workers/expert_video_task.py` 中为音频临时文件（WAV）添加 `finally` 块确保删除，验证任何失败路径下均不残留音频文件（数据隐私合规）
+- [x] T033 [P] 在所有新增服务（`audio_extractor.py`、`speech_recognizer.py`、`keyword_locator.py`、`transcript_tech_parser.py`、`kb_merger.py`）中补充结构化日志：记录音频提取成功/失败、SNR 值、转录句数、关键词命中数、合并结果统计、冲突数量
+- [x] T034 [P] 在 `tests/contract/test_expert_video_api_v2.py` 中补充 API 契约测试：验证 `POST /tasks/expert-video` 新增字段的 schema；验证 `GET /tasks/{id}` progress 字段结构；验证 `GET /tasks/{id}/result` `audio_analysis` 和 `conflicts` 字段
+- [x] T035 更新 `specs/002-audio-enhanced-kb-extraction/plan.md` 精准度基准表：添加验证结果列（T001-T005 各测试用例的实测数据）
+- [x] T036 [P] 按 `specs/002-audio-enhanced-kb-extraction/quickstart.md` 执行端到端手工验证：安装依赖 → 运行迁移 → 提交含语音视频 → 验证知识库含音频来源条目 → 验证 90min+ 视频被拒绝 → 验证冲突阻塞 KB approve
+- [x] T037 [P] 在 `src/workers/expert_video_task.py` 中为音频临时文件（WAV）添加 `finally` 块确保删除，验证任何失败路径下均不残留音频文件（数据隐私合规）
 
 ---
 
