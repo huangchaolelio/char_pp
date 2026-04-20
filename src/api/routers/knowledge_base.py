@@ -15,7 +15,11 @@ from src.api.schemas.knowledge_base import (
 )
 from src.db.session import get_db
 from src.services import knowledge_base_svc
-from src.services.knowledge_base_svc import VersionNotDraftError, VersionNotFoundError
+from src.services.knowledge_base_svc import (
+    ConflictUnresolvedError,
+    VersionNotDraftError,
+    VersionNotFoundError,
+)
 
 router = APIRouter(tags=["knowledge-base"])
 
@@ -118,6 +122,16 @@ async def approve_kb_version(
                 "code": "KB_VERSION_NOT_DRAFT",
                 "message": f"版本 {version} 当前状态为 {exc.args[0]}，只有 draft 版本可审核通过",
                 "details": {"version": version},
+            },
+        )
+    except ConflictUnresolvedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "code": "CONFLICT_UNRESOLVED",
+                "message": f"版本 {version} 存在 {exc.conflict_count} 个未解决的视觉/音频参数冲突，"
+                           "请先解决冲突或覆盖后再审核通过",
+                "details": {"version": version, "conflict_count": exc.conflict_count},
             },
         )
 

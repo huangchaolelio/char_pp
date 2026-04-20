@@ -88,7 +88,7 @@ pytest -v
 ```bash
 # 新增配置项（现有 .env 无需修改即可运行，以下为可选覆盖）
 WHISPER_MODEL=small                    # tiny/base/small/medium（默认 small）
-WHISPER_DEVICE=cpu                     # cpu/cuda（默认 cpu）
+WHISPER_DEVICE=auto                    # auto/cpu/cuda（默认 auto：有 GPU 自动用 cuda，否则 cpu）
 AUDIO_KEYWORD_FILE=config/keywords/tech_hint_keywords.json  # 关键词词表路径
 AUDIO_PRIORITY_WINDOW_S=3.0            # 关键词前后优先窗口（秒，默认 3.0）
 AUDIO_SNR_THRESHOLD_DB=10.0            # 低于此值触发音频质量不足回退

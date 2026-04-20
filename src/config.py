@@ -53,6 +53,16 @@ class Settings(BaseSettings):
     pose_batch_size: int = 16            # YOLOv8 batch size (GPU path)
     mediapipe_model_complexity: int = 1  # MediaPipe model complexity (CPU path)
 
+    # Audio analysis — Feature 002
+    whisper_model: str = "small"         # tiny | base | small | medium
+    whisper_device: str = "auto"         # auto | cpu | cuda  (auto→cuda if available, else cpu)
+    audio_keyword_file: str = "config/keywords/tech_hint_keywords.json"
+    audio_priority_window_s: float = 3.0        # seconds around keyword hit to mark as priority
+    audio_snr_threshold_db: float = 10.0        # below this SNR → quality_flag=low_snr
+    audio_conflict_threshold_pct: float = 0.15  # param diff ratio > this → conflict_flag
+    long_video_segment_duration_s: int = 300    # 5-minute chunks for long video processing
+    max_video_duration_s: int = 5400            # 90 minutes hard limit
+
 
 @lru_cache
 def get_settings() -> Settings:

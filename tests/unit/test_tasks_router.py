@@ -119,8 +119,12 @@ class TestGetTaskResult:
         kb_result = MagicMock()
         kb_result.scalar_one_or_none.return_value = kb
 
+        # Feature 002: 4th execute call → AudioTranscript lookup (returns None)
+        audio_result = MagicMock()
+        audio_result.scalar_one_or_none.return_value = None
+
         override_db.execute = AsyncMock(
-            side_effect=[task_result, points_result, kb_result]
+            side_effect=[task_result, points_result, kb_result, audio_result]
         )
 
         resp = await client.get(f"/api/v1/tasks/{TASK_ID}/result")

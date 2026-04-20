@@ -45,6 +45,18 @@ class VersionNotDraftError(KnowledgeBaseError):
         self.version = version
 
 
+class ConflictUnresolvedError(KnowledgeBaseError):
+    """Raised when a KB version has unresolved visual/audio parameter conflicts."""
+
+    def __init__(self, version: str, conflict_count: int) -> None:
+        super().__init__(
+            f"KB version {version} has {conflict_count} unresolved conflict(s) — "
+            "resolve or override before approving"
+        )
+        self.version = version
+        self.conflict_count = conflict_count
+
+
 # ── Version helpers ───────────────────────────────────────────────────────────
 
 def _next_minor_version(current: str) -> str:
@@ -182,6 +194,17 @@ async def approve_version(
         raise VersionNotFoundError(version)
     if kb.status != KBStatus.draft:
         raise VersionNotDraftError(version, kb.status.value)
+
+    # Feature 002: block approval if any tech points have unresolved conflicts
+    conflict_result = await session.execute(
+        select(ExpertTechPoint).where(
+            ExpertTechPoint.knowledge_base_version == version,
+            ExpertTechPoint.conflict_flag.is_(True),
+        )
+    )
+    conflict_points = conflict_result.scalars().all()
+    if conflict_points:
+        raise ConflictUnresolvedError(version, len(conflict_points))
 
     # Archive any currently active version
     result = await session.execute(

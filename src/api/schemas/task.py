@@ -21,6 +21,13 @@ class ExpertVideoRequest(BaseModel):
         examples=["coach-videos/forehand_lesson_001.mp4"],
     )
     notes: Optional[str] = Field(None, description="视频备注说明")
+    # Feature 002: audio analysis options
+    enable_audio_analysis: bool = Field(True, description="是否启用音频分析（Whisper）")
+    audio_language: str = Field("zh", description="音频语言代码，默认 zh（普通话）")
+    # US3: optional pre-declared duration for early rejection before download
+    video_duration_seconds: Optional[float] = Field(
+        None, description="视频时长（秒），由客户端提供时用于提前校验 90 分钟上限"
+    )
 
 
 # AthleteVideoRequest uses multipart/form-data — parsed in the endpoint directly
@@ -38,6 +45,11 @@ class TaskStatusResponse(BaseModel):
     video_duration_seconds: Optional[float] = None
     video_fps: Optional[float] = None
     video_resolution: Optional[str] = None
+    # Feature 002: long video progress fields
+    progress_pct: Optional[float] = None
+    processed_segments: Optional[int] = None
+    total_segments: Optional[int] = None
+    audio_fallback_reason: Optional[str] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────
@@ -50,6 +62,24 @@ class ExtractedTechPoint(BaseModel):
     param_ideal: float
     unit: str
     extraction_confidence: float
+    # Feature 002: source annotation and conflict fields
+    source_type: str = "visual"
+    conflict_flag: bool = False
+    conflict_detail: Optional[dict] = None
+
+
+class AudioAnalysisInfo(BaseModel):
+    enabled: bool
+    quality_flag: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    transcript_sentence_count: Optional[int] = None
+
+
+class ConflictDetail(BaseModel):
+    dimension: str
+    visual_ideal: float
+    audio_ideal: float
+    diff_pct: float
 
 
 class TaskResultExpertResponse(BaseModel):
@@ -58,6 +88,9 @@ class TaskResultExpertResponse(BaseModel):
     extracted_points_count: int
     extracted_points: list[ExtractedTechPoint]
     pending_approval: bool
+    # Feature 002: audio analysis summary and conflicts
+    audio_analysis: Optional[AudioAnalysisInfo] = None
+    conflicts: list[ConflictDetail] = []
 
 
 # ── Athlete video result ─────────────────────────────────────────────────────

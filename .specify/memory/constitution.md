@@ -2,34 +2,27 @@
 同步影响报告
 ============
 
-版本更改: 1.1.0 → 1.2.0
+版本更改: 1.2.0 → 1.2.1
 
-递增理由: MINOR — 用户明确将项目范围收窄至"后端算法精准度"，前端开发排除在外。
-  新增原则 VIII（后端算法精准度）属于实质性指导扩展；路径约定、测试要求、
-  章程检查等相关条款同步更新以反映此范围约束。
+递增理由: PATCH — 在附加约束 → 工具链与 Python 环境部分新增一条具体操作约定：
+  所有功能必须使用统一的项目 Python 环境（pyproject.toml 管理），禁止使用系统 Python。
+  属于对现有工具链约束的澄清扩充，无新原则，无不兼容治理变更。
 
 修改的原则:
-  - II. 测试优先（不可协商）— 集成测试场景更新，移除前端相关描述
-  - IV. 简洁性与 YAGNI — 明确后端范围限定
-  - V. 可观测性与可调试性 — 移除 CLI/stderr 前端混淆说明
+  - 无
 
-新增原则:
-  - VIII. 后端算法精准度（不可妥协）
-
-修改的部分:
-  - 附加约束 → 路径约定：收窄为后端服务结构，移除前端/移动端路径
-  - 附加约束 → 新增"范围边界"条款，明确排除前端实现
-  - 开发工作流 → 章程检查：新增精准度验收要求
+新增条款:
+  - 附加约束 → 工具链：新增"Python 环境隔离"约定
 
 删除的部分:
   - 无
 
 模板同步状态:
-  ✅ .specify/templates/plan-template.md — 项目结构部分已有后端选项，与新约束兼容
-  ✅ .specify/templates/spec-template.md — 用户故事结构与后端场景兼容，无需修改
-  ✅ .specify/templates/tasks-template.md — 单一项目路径约定(`src/`, `tests/`)与后端结构一致
+  ✅ .specify/templates/plan-template.md — 无需修改
+  ✅ .specify/templates/spec-template.md — 无需修改
+  ✅ .specify/templates/tasks-template.md — 路径约定保持 `src/`, `tests/`，与本约定兼容
   ✅ .codebuddy/commands/speckit.constitution.md — 无过时引用
-  ✅ .codebuddy/commands/speckit.plan.md — 章程检查引用有效
+  ✅ .codebuddy/commands/speckit.plan.md — 无需修改
   ✅ .codebuddy/commands/speckit.specify.md — 无需修改
   ✅ .codebuddy/commands/speckit.tasks.md — 无需修改
   ✅ .codebuddy/commands/speckit.implement.md — 无需修改
@@ -155,6 +148,11 @@ MUST 与训练集严格隔离，禁止数据泄漏。精准度基准数据集 MU
 **工具链**: 使用 speckit v0.5.0 提供的 9 个标准命令(`/speckit.specify`、`/speckit.plan`、
 `/speckit.tasks`、`/speckit.implement` 等)驱动开发流程；禁止绕过规范工作流直接进入实现。
 
+**Python 环境隔离**: 项目内所有功能 MUST 使用同一个由 `pyproject.toml` 管理的 Python 虚拟环境
+（如 `uv venv` 或 `poetry env`）；禁止使用系统 Python 或 Conda 全局环境运行任何项目代码、
+测试或构建步骤。新依赖 MUST 通过 `pyproject.toml` 声明并锁定版本，不允许直接 `pip install`
+到系统环境。CI/CD 流水线 MUST 从 `pyproject.toml` 重建隔离环境，确保可复现性。
+
 **技术栈**: 语言与框架在功能规划阶段(`plan.md` 技术背景部分)确定；AI 推理框架选型 MUST
 在章程检查时提供精度基准、延迟与资源占用的综合评估依据，精度权重高于速度权重。
 
@@ -192,4 +190,4 @@ PATCH 版本用于澄清、措辞或拼写修正。
 **运行时指导**: AI 代理开发指导文件(如存在)由 `.specify/scripts/bash/update-agent-context.sh`
 自动从活跃功能计划中生成；以该文件为运行时开发的权威参考。
 
-**版本**: 1.2.0 | **批准日期**: 2026-04-17 | **最后修订**: 2026-04-17
+**版本**: 1.2.1 | **批准日期**: 2026-04-17 | **最后修订**: 2026-04-20

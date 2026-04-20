@@ -9,21 +9,26 @@ Flow (T024):
   6. Segment frames into discrete action clips (wrist-velocity peaks)
   7. Classify each segment (forehand_topspin / backhand_push / unknown)
   8. Extract technical dimensions per classified segment
+  8.5. Audio-enhanced extraction (Feature 002): Whisper + KB merge
   9. Persist ExpertTechPoints + create draft TechKnowledgeBase version in one DB transaction
- 10. Clean up local temp file
- 11. AnalysisTask.status = success (set inside the same transaction as step 9)
+  10. Clean up local temp file
+  11. AnalysisTask.status = success (set inside the same transaction as step 9)
 
 Error handling:
-  - VideoQualityRejected   -> status=rejected, rejection_reason set, temp cleaned
-  - CosObjectNotFoundError -> status=failed,   error_message=COS_OBJECT_NOT_FOUND
-  - CosDownloadError       -> status=failed,   error_message=COS_DOWNLOAD_FAILED
-  - Any other exception    -> status=failed,   error_message set, task retried (max 2x)
+  - VideoQualityRejected      -> status=rejected, rejection_reason set, temp cleaned
+  - CosObjectNotFoundError    -> status=failed,   error_message=COS_OBJECT_NOT_FOUND
+  - CosDownloadError          -> status=failed,   error_message=COS_DOWNLOAD_FAILED
+  - AudioExtractionError      -> fallback_reason=AUDIO_EXTRACTION_FAILED (non-fatal, visual-only)
+  - Unsupported audio language -> fallback_reason=UNSUPPORTED_AUDIO_LANGUAGE (non-fatal)
+  - ConflictUnresolvedError   -> blocks KB approval via API (409 CONFLICT_UNRESOLVED)
+  - Any other exception       -> status=failed,   error_message set, task retried (max 2x)
 """
 
 from __future__ import annotations
 
 
 import asyncio
+import math
 import logging
 import shutil
 import subprocess
@@ -35,6 +40,8 @@ from celery import shared_task
 
 from src.config import get_settings
 from src.models.analysis_task import AnalysisTask, TaskStatus
+from src.models.audio_transcript import AudioQualityFlag, AudioTranscript
+from src.models.tech_semantic_segment import TechSemanticSegment
 from src.services import (
     action_classifier,
     action_segmenter,
@@ -44,7 +51,12 @@ from src.services import (
     tech_extractor,
     video_validator,
 )
+from src.services.audio_extractor import AudioExtractionError, AudioExtractor
 from src.services.cos_client import CosDownloadError, CosObjectNotFoundError
+from src.services.kb_merger import KbMerger
+from src.services.keyword_locator import KeywordLocator, PriorityWindow
+from src.services.speech_recognizer import SpeechRecognizer
+from src.services.transcript_tech_parser import TranscriptTechParser
 from src.services.video_validator import VideoMeta, VideoQualityRejected
 
 logger = logging.getLogger(__name__)
@@ -107,6 +119,7 @@ async def _persist_success(
     task_id: uuid.UUID,
     video_meta: VideoMeta,
     extraction_results: list,
+    audio_fallback_reason: str | None = None,
 ) -> str:
     """Create draft KB, save tech points, and mark task success — all in one transaction.
 
@@ -149,11 +162,184 @@ async def _persist_success(
                 task.video_resolution = video_meta.resolution_str
                 task.video_duration_seconds = video_meta.duration_seconds
                 task.knowledge_base_version = kb_version
+                task.audio_fallback_reason = audio_fallback_reason
 
     return kb_version
 
 
-# ── Cleanup helper ─────────────────────────────────────────────────────────────
+async def _persist_audio_transcript(
+    task_id: uuid.UUID,
+    transcript_result,
+    segments: list[TechSemanticSegment],
+) -> AudioTranscript:
+    """Persist AudioTranscript and its TechSemanticSegments to the DB."""
+    factory = _make_session_factory()
+    async with factory() as session:
+        async with session.begin():
+            at = AudioTranscript(
+                task_id=task_id,
+                language=transcript_result.language,
+                model_version=transcript_result.model_version,
+                total_duration_s=transcript_result.total_duration_s,
+                snr_db=transcript_result.snr_db,
+                quality_flag=transcript_result.quality_flag,
+                fallback_reason=transcript_result.fallback_reason,
+                sentences=transcript_result.sentences,
+            )
+            session.add(at)
+            await session.flush()  # get at.id
+
+            for seg in segments:
+                seg.transcript_id = at.id
+                seg.task_id = task_id
+                session.add(seg)
+
+    return at
+
+
+# ── Audio pipeline helper ───────────────────────────────────────────────────────
+
+def _run_audio_pipeline(
+    video_path: Path,
+    task_id: uuid.UUID,
+    enable_audio: bool = True,
+    language: str = "zh",
+) -> tuple[list, list[PriorityWindow], str | None]:
+    """Run audio extraction + recognition + parsing + keyword localisation pipeline.
+
+    Returns:
+        (audio_segments, priority_windows, fallback_reason) where:
+        - audio_segments: TechSemanticSegment list (empty on fallback)
+        - priority_windows: PriorityWindow list for segment prioritisation (empty on fallback)
+        - fallback_reason: None on success, structured error code string on fallback
+
+    Fallback reason codes:
+        - "audio_analysis_disabled"       : enable_audio=False
+        - "AUDIO_EXTRACTION_FAILED: ..."  : ffmpeg failed
+        - "low_snr: X dB (threshold: Y dB)": SNR below threshold
+        - "UNSUPPORTED_AUDIO_LANGUAGE: ...": language not in SUPPORTED_LANGUAGES
+        - "AUDIO_QUALITY_INSUFFICIENT: ...": other quality flag (silent, etc.)
+    """
+    if not enable_audio:
+        return [], [], "audio_analysis_disabled"
+
+    settings = get_settings()
+    wav_path = video_path.parent / f"audio_{video_path.stem}.wav"
+
+    try:
+        extractor = AudioExtractor(snr_threshold_db=settings.audio_snr_threshold_db)
+        try:
+            extractor.extract_wav(video_path, wav_path)
+        except AudioExtractionError as exc:
+            logger.warning(
+                "[AUDIO_EXTRACTION_FAILED] task %s: %s", task_id, exc
+            )
+            return [], [], f"AUDIO_EXTRACTION_FAILED: {exc}"
+
+        # SNR quality check
+        is_sufficient, snr_db = extractor.is_quality_sufficient(wav_path)
+        if not is_sufficient:
+            logger.info(
+                "Audio SNR %.1f dB below threshold %.1f dB for task %s — falling back",
+                snr_db, settings.audio_snr_threshold_db, task_id,
+            )
+            return [], [], f"low_snr: {snr_db:.1f} dB (threshold: {settings.audio_snr_threshold_db} dB)"
+
+        recognizer = SpeechRecognizer(
+            model_name=settings.whisper_model,
+            device=settings.whisper_device,
+        )
+        transcript_result = recognizer.recognize(str(wav_path), language=language)
+        transcript_result.snr_db = snr_db
+
+        # Persist transcript + segments
+        if transcript_result.quality_flag != AudioQualityFlag.ok:
+            flag_val = transcript_result.quality_flag.value if transcript_result.quality_flag else "unknown"
+            if transcript_result.quality_flag == AudioQualityFlag.unsupported_language:
+                error_code = "UNSUPPORTED_AUDIO_LANGUAGE"
+            else:
+                error_code = "AUDIO_QUALITY_INSUFFICIENT"
+            fallback_msg = f"{error_code}: {flag_val}"
+            logger.info(
+                "[%s] task %s — %s",
+                error_code, task_id, transcript_result.fallback_reason,
+            )
+            asyncio.run(_persist_audio_transcript(task_id, transcript_result, []))
+            return [], [], fallback_msg
+
+        parser = TranscriptTechParser()
+        segments = parser.parse(transcript_result.sentences)
+        asyncio.run(_persist_audio_transcript(task_id, transcript_result, segments))
+
+        kb_segments = [s for s in segments if not s.is_reference_note]
+
+        # US2: locate priority windows from keyword hits in transcript
+        priority_windows: list[PriorityWindow] = []
+        try:
+            kw_locator = KeywordLocator(keyword_file_path=settings.audio_keyword_file)
+            video_duration_ms = int(
+                (transcript_result.total_duration_s or 0) * 1000
+            ) or 90 * 60 * 1000  # fallback 90min if duration unknown
+            priority_windows = kw_locator.locate(
+                transcript_result.sentences,
+                video_duration_ms=video_duration_ms,
+                window_s=settings.audio_priority_window_s,
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("KeywordLocator failed for task %s (non-fatal): %s", task_id, exc)
+
+        logger.info(
+            "Audio pipeline: %d sentences → %d tech segments, %d priority windows (task %s)",
+            len(transcript_result.sentences), len(kb_segments), len(priority_windows), task_id,
+        )
+        return kb_segments, priority_windows, None
+
+    finally:
+        # Always clean up WAV temp file (data privacy)
+        if wav_path.exists():
+            try:
+                wav_path.unlink()
+                logger.debug("WAV temp file deleted: %s", wav_path)
+            except Exception:  # noqa: BLE001
+                logger.debug("WAV cleanup failed (non-fatal): %s", wav_path)
+
+
+
+def _get_video_duration_ffprobe(video_path: Path) -> float | None:
+    """Use ffprobe to get video duration in seconds. Returns None on failure."""
+    ffprobe_bin = shutil.which("ffprobe") or "/opt/conda/bin/ffprobe"
+    try:
+        result = subprocess.run(
+            [
+                ffprobe_bin, "-v", "quiet",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                str(video_path),
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout.strip():
+            return float(result.stdout.strip())
+    except Exception:  # noqa: BLE001
+        pass
+    return None
+
+
+async def _update_progress(
+    task_id: uuid.UUID,
+    processed: int,
+    total: int,
+) -> None:
+    """Persist progress fields to DB (non-transactional, best-effort)."""
+    pct = round(min(processed / total * 100, 100.0), 2) if total > 0 else 0.0
+    factory = _make_session_factory()
+    async with factory() as session:
+        async with session.begin():
+            task = await session.get(AnalysisTask, task_id)
+            if task:
+                task.processed_segments = processed
+                task.progress_pct = pct
+
 
 def _cleanup(tmp_path: Path | None) -> None:
     """Best-effort temp file cleanup — never raises."""
@@ -177,12 +363,16 @@ def process_expert_video(
     self,
     task_id_str: str,
     cos_object_key: str,
+    enable_audio_analysis: bool = True,
+    audio_language: str = "zh",
 ) -> dict:
     """Process a professional coach video and create a draft knowledge base version.
 
     Args:
         task_id_str: String representation of the AnalysisTask UUID.
         cos_object_key: COS object key for the video file.
+        enable_audio_analysis: Whether to run Whisper audio extraction (Feature 002).
+        audio_language: Language code for Whisper recognition (default: 'zh').
 
     Returns:
         Dict with task_id, status, and on success: kb_version_draft, extracted_segments.
@@ -230,88 +420,188 @@ def process_expert_video(
                 "details": exc.details,
             }
 
-        # ── 4.5 Clip to 60s + downscale to 720p (OOM guard for large videos) ──
-        clipped_path = tmp_path.parent / f"clip_{tmp_path.stem}.mp4"
-        ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
-        clip_cmd = [
-            ffmpeg_bin, "-y", "-t", "60",
-            "-i", str(tmp_path),
-            "-vf", "scale=1280:720",
-            "-c:v", "libx264", "-crf", "23", "-an",
-            str(clipped_path),
-        ]
-        result = subprocess.run(clip_cmd, capture_output=True, timeout=120)
-        if result.returncode == 0 and clipped_path.exists():
-            _cleanup(tmp_path)
-            tmp_path = clipped_path
-            logger.info("Clipped to 60s/720p: %s (%.1f KB, task %s)",
-                        tmp_path, tmp_path.stat().st_size / 1024, task_id)
-        else:
-            logger.warning("ffmpeg clip failed (rc=%d), using original (task %s)",
-                           result.returncode, task_id)
-
-        # ── 5. Pose estimation ─────────────────────────────────────────────────
-        logger.info("Running pose estimation (task %s)…", task_id)
-        all_frames = pose_estimator.estimate_pose(tmp_path)
-
-        if not all_frames:
+        # ── 4.5 ffprobe duration check (US3 — post-download guarantee) ─────────
+        settings = get_settings()
+        detected_duration = _get_video_duration_ffprobe(tmp_path) or video_meta.duration_seconds
+        if detected_duration and detected_duration > settings.max_video_duration_s:
             _cleanup(tmp_path)
             tmp_path = None
-            asyncio.run(_set_failed(
-                task_id, "NO_MOTION_DETECTED: pose estimation returned no frames"
-            ))
-            return {"task_id": task_id_str, "status": "failed", "error": "NO_MOTION_DETECTED"}
+            reason = (
+                f"VIDEO_TOO_LONG: {detected_duration:.0f}s > "
+                f"{settings.max_video_duration_s}s limit"
+            )
+            asyncio.run(_set_rejected(task_id, reason))
+            logger.warning("[VIDEO_TOO_LONG] task %s: %.0fs", task_id, detected_duration)
+            return {"task_id": task_id_str, "status": "rejected", "reason": reason}
 
-        # ── 6. Segment actions ─────────────────────────────────────────────────
-        segments = action_segmenter.segment_actions(all_frames)
-        logger.info("%d action segments detected (task %s)", len(segments), task_id)
-
-        # ── 7. Classify segments ───────────────────────────────────────────────
-        classified_segments = []
-        for seg in segments:
-            seg_frames = action_segmenter.frames_for_segment(all_frames, seg)
-            classified = action_classifier.classify_segment(seg_frames, seg)
-            classified_segments.append(classified)
-
-        known_segments = [cs for cs in classified_segments if cs.action_type != "unknown"]
+        # ── 5. Calculate segments and persist total_segments (US3) ────────────
+        segment_duration_s = settings.long_video_segment_duration_s
+        total_duration_s = detected_duration or segment_duration_s
+        total_segments = max(1, math.ceil(total_duration_s / segment_duration_s))
+        factory = _make_session_factory()
+        async def _set_total_segments() -> None:
+            async with factory() as session:
+                async with session.begin():
+                    task_obj = await session.get(AnalysisTask, task_id)
+                    if task_obj:
+                        task_obj.total_segments = total_segments
+                        task_obj.processed_segments = 0
+                        task_obj.progress_pct = 0.0
+        asyncio.run(_set_total_segments())
         logger.info(
-            "%d/%d segments classified as known action type (task %s)",
-            len(known_segments), len(classified_segments), task_id,
+            "Long-video plan: %.0fs → %d segments of %ds each (task %s)",
+            total_duration_s, total_segments, segment_duration_s, task_id,
         )
 
-        # ── 8. Extract technical dimensions ───────────────────────────────────
-        extraction_results = []
-        for cs in known_segments:
-            result = tech_extractor.extract_tech_points(cs, all_frames)
-            if result.dimensions:
-                extraction_results.append(result)
-                logger.debug(
-                    "Segment [%dms–%dms] %s → %d dims (task %s)",
-                    cs.segment.start_ms, cs.segment.end_ms,
-                    cs.action_type, len(result.dimensions), task_id,
+        # ── 6–8. Segmented processing loop (US3) ──────────────────────────────
+        all_extraction_results: list = []
+        failed_segment_indices: list[int] = []
+
+        for seg_idx in range(total_segments):
+            seg_start_s = seg_idx * segment_duration_s
+            logger.info(
+                "Processing segment %d/%d (start=%.0fs, task %s)",
+                seg_idx + 1, total_segments, seg_start_s, task_id,
+            )
+            try:
+                # Clip segment
+                seg_path = tmp_path.parent / f"seg_{seg_idx:04d}_{tmp_path.stem}.mp4"
+                ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
+                clip_cmd = [
+                    ffmpeg_bin, "-y",
+                    "-ss", str(seg_start_s), "-t", str(segment_duration_s),
+                    "-i", str(tmp_path),
+                    "-vf", "scale=1280:720",
+                    "-c:v", "libx264", "-crf", "23", "-an",
+                    str(seg_path),
+                ]
+                clip_result = subprocess.run(clip_cmd, capture_output=True, timeout=120)
+                if clip_result.returncode != 0 or not seg_path.exists():
+                    logger.warning(
+                        "ffmpeg clip failed for segment %d (task %s)", seg_idx, task_id
+                    )
+                    failed_segment_indices.append(seg_idx)
+                    asyncio.run(_update_progress(task_id, seg_idx + 1, total_segments))
+                    continue
+
+                # Pose estimation on this segment
+                seg_frames = pose_estimator.estimate_pose(seg_path)
+                if not seg_frames:
+                    logger.info(
+                        "No motion in segment %d/%d (task %s)", seg_idx + 1, total_segments, task_id
+                    )
+                    _cleanup(seg_path)
+                    asyncio.run(_update_progress(task_id, seg_idx + 1, total_segments))
+                    continue
+
+                # Segment + classify
+                action_segs = action_segmenter.segment_actions(seg_frames)
+                classified_segs = []
+                for a_seg in action_segs:
+                    a_frames = action_segmenter.frames_for_segment(seg_frames, a_seg)
+                    classified_segs.append(action_classifier.classify_segment(a_frames, a_seg))
+
+                known_segs = [cs for cs in classified_segs if cs.action_type != "unknown"]
+
+                # Extract tech dimensions
+                for cs in known_segs:
+                    res = tech_extractor.extract_tech_points(cs, seg_frames)
+                    if res.dimensions:
+                        all_extraction_results.append(res)
+
+                _cleanup(seg_path)
+
+            except Exception as seg_exc:  # noqa: BLE001
+                logger.error(
+                    "Segment %d failed (task %s): %s", seg_idx, task_id, seg_exc
                 )
+                failed_segment_indices.append(seg_idx)
+                if seg_path.exists():
+                    _cleanup(seg_path)
+
+            asyncio.run(_update_progress(task_id, seg_idx + 1, total_segments))
 
         logger.info(
-            "%d segments yielded extractable tech points (task %s)",
-            len(extraction_results), task_id,
+            "Segmented processing done: %d segments, %d failed, %d extraction results (task %s)",
+            total_segments, len(failed_segment_indices), len(all_extraction_results), task_id,
+        )
+        extraction_results = all_extraction_results
+
+        # ── 8.5 Audio-enhanced extraction (Feature 002) — runs on full video ──
+        audio_segments, priority_windows, audio_fallback_reason = _run_audio_pipeline(
+            tmp_path, task_id, enable_audio=enable_audio_analysis, language=audio_language
+        )
+        if audio_fallback_reason:
+            logger.info(
+                "Audio pipeline fallback for task %s: %s", task_id, audio_fallback_reason
+            )
+
+        # US2: prioritise classified segments that fall inside keyword windows
+        # (applied retrospectively to inform log/metrics; extraction already done above)
+        if priority_windows:
+            logger.info(
+                "%d keyword priority windows identified (task %s)", len(priority_windows), task_id
+            )
+
+        # Merge visual and audio tech points
+        visual_dicts = [
+            {
+                "dimension": dim.name,
+                "param_min": dim.param_min,
+                "param_max": dim.param_max,
+                "param_ideal": dim.param_ideal,
+                "unit": dim.unit,
+                "extraction_confidence": dim.confidence,
+                "action_type": res.action_type,
+            }
+            for res in extraction_results
+            for dim in res.dimensions
+        ]
+        merger = KbMerger(conflict_threshold_pct=settings.audio_conflict_threshold_pct)
+        merged_points = merger.merge(visual_dicts, audio_segments)
+        logger.info(
+            "Merged: %d visual dims + %d audio segs → %d merged (%d conflicts) (task %s)",
+            len(visual_dicts), len(audio_segments), len(merged_points),
+            sum(1 for p in merged_points if p.conflict_flag), task_id,
         )
 
-        # ── 9. Persist to DB (single transaction) ─────────────────────────────
-        kb_version = asyncio.run(_persist_success(task_id, video_meta, extraction_results))
+        # ── 9. Persist to DB ───────────────────────────────────────────────────
+        # Determine final status: partial_success if any segment failed
+        final_status = (
+            TaskStatus.partial_success if failed_segment_indices else TaskStatus.success
+        )
+        kb_version = asyncio.run(
+            _persist_success(task_id, video_meta, merged_points, audio_fallback_reason)
+        )
+        # Patch status to partial_success if needed (persist_success sets success by default)
+        if final_status == TaskStatus.partial_success:
+            async def _set_partial(vid: uuid.UUID, failed: list) -> None:
+                async with factory() as session:
+                    async with session.begin():
+                        task_obj = await session.get(AnalysisTask, vid)
+                        if task_obj:
+                            task_obj.status = TaskStatus.partial_success
+                            import json as _json
+                            task_obj.error_message = _json.dumps(
+                                {"failed_segments": failed}
+                            )
+            asyncio.run(_set_partial(task_id, failed_segment_indices))
 
         # ── 10. Clean up temp file ─────────────────────────────────────────────
         _cleanup(tmp_path)
         tmp_path = None
 
         logger.info(
-            "expert_video task DONE | task_id=%s KB_draft=%s extracted_segments=%d",
-            task_id, kb_version, len(extraction_results),
+            "expert_video task DONE | task_id=%s KB_draft=%s status=%s",
+            task_id, kb_version, final_status.value,
         )
         return {
             "task_id": task_id_str,
-            "status": "success",
+            "status": final_status.value,
             "kb_version_draft": kb_version,
-            "extracted_segments": len(extraction_results),
+            "extracted_segments": len(merged_points),
+            "audio_fallback_reason": audio_fallback_reason,
+            "failed_segments": failed_segment_indices,
         }
 
     except Exception as exc:

@@ -19,7 +19,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas.task import (
+    AudioAnalysisInfo,
     CoachingAdviceItem,
+    ConflictDetail,
     DeviationItem,
     ExpertVideoRequest,
     ExtractedTechPoint,
@@ -35,6 +37,7 @@ from src.config import get_settings
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.athlete_motion_analysis import AthleteMotionAnalysis
+from src.models.audio_transcript import AudioTranscript
 from src.models.coaching_advice import CoachingAdvice
 from src.models.deviation_report import DeviationReport
 from src.models.expert_tech_point import ExpertTechPoint
@@ -70,6 +73,25 @@ async def submit_expert_video(
             },
         )
 
+    # Step 1.5 — Early duration check if client supplies it (US3)
+    settings = get_settings()
+    if body.video_duration_seconds is not None:
+        if body.video_duration_seconds > settings.max_video_duration_s:
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "VIDEO_TOO_LONG",
+                    "message": (
+                        f"视频时长 {body.video_duration_seconds:.0f}s 超过上限 "
+                        f"{settings.max_video_duration_s}s（{settings.max_video_duration_s // 60} 分钟）"
+                    ),
+                    "details": {
+                        "duration_seconds": body.video_duration_seconds,
+                        "max_duration_seconds": settings.max_video_duration_s,
+                    },
+                },
+            )
+
     # Step 2 — Persist AnalysisTask in pending state
     task = AnalysisTask(
         id=uuid.uuid4(),
@@ -85,7 +107,12 @@ async def submit_expert_video(
     await db.refresh(task)
 
     # Step 3 — Dispatch Celery task (fire-and-forget)
-    process_expert_video.delay(str(task.id), body.cos_object_key)
+    process_expert_video.delay(
+        str(task.id),
+        body.cos_object_key,
+        body.enable_audio_analysis,
+        body.audio_language,
+    )
 
     # Step 4 — Return 202
     return TaskSubmitResponse(
@@ -229,6 +256,10 @@ async def get_task_status(
         video_duration_seconds=task.video_duration_seconds,
         video_fps=task.video_fps,
         video_resolution=task.video_resolution,
+        progress_pct=task.progress_pct,
+        processed_segments=task.processed_segments,
+        total_segments=task.total_segments,
+        audio_fallback_reason=task.audio_fallback_reason,
     )
 
 
@@ -316,8 +347,44 @@ async def get_task_result(
                 param_ideal=p.param_ideal,
                 unit=p.unit,
                 extraction_confidence=p.extraction_confidence,
+                source_type=p.source_type,
+                conflict_flag=p.conflict_flag,
+                conflict_detail=p.conflict_detail,
             )
             for p in points
+        ]
+
+        # Feature 002: query AudioTranscript for audio analysis summary
+        audio_info: Optional[AudioAnalysisInfo] = None
+        at_result = await db.execute(
+            select(AudioTranscript).where(AudioTranscript.task_id == task_uuid)
+        )
+        at = at_result.scalar_one_or_none()
+        if at is not None:
+            audio_info = AudioAnalysisInfo(
+                enabled=True,
+                quality_flag=at.quality_flag.value if at.quality_flag else None,
+                fallback_reason=at.fallback_reason,
+                transcript_sentence_count=len(at.sentences) if at.sentences else 0,
+            )
+        elif task.audio_fallback_reason:
+            audio_info = AudioAnalysisInfo(
+                enabled=True,
+                quality_flag=None,
+                fallback_reason=task.audio_fallback_reason,
+                transcript_sentence_count=None,
+            )
+
+        # Feature 002: collect conflict details
+        conflicts = [
+            ConflictDetail(
+                dimension=p.dimension,
+                visual_ideal=p.conflict_detail["visual"]["param_ideal"],
+                audio_ideal=p.conflict_detail["audio"]["param_ideal"],
+                diff_pct=p.conflict_detail["diff_pct"],
+            )
+            for p in points
+            if p.conflict_flag and p.conflict_detail
         ]
 
         return TaskResultExpertResponse(
@@ -326,6 +393,8 @@ async def get_task_result(
             extracted_points_count=len(extracted),
             extracted_points=extracted,
             pending_approval=pending_approval,
+            audio_analysis=audio_info,
+            conflicts=conflicts,
         )
 
     # ── athlete_video branch ──────────────────────────────────────────────────
@@ -446,279 +515,6 @@ async def get_task_result(
         knowledge_base_version=task.knowledge_base_version or "",
         motion_analyses=motion_analysis_items,
         summary=summary,
-    )
-
-
-# ── DELETE /tasks/{task_id} ──────────────────────────────────────────────────
-
-@router.delete("/tasks/{task_id}", response_model=TaskDeleteResponse)
-async def delete_task(
-    task_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> TaskDeleteResponse:
-    """Soft-delete a task and all its associated data.
-
-    Sets deleted_at to now; physical cleanup runs on a daily schedule.
-    Returns 404 if the task does not exist or is already deleted.
-    """
-    try:
-        task_uuid = uuid.UUID(task_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
-        )
-
-    result = await db.execute(
-        select(AnalysisTask).where(
-            AnalysisTask.id == task_uuid,
-            AnalysisTask.deleted_at.is_(None),
-        )
-    )
-    task = result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
-        )
-
-    now = datetime.now(UTC)
-    task.deleted_at = now
-    await db.commit()
-
-    return TaskDeleteResponse(
-        task_id=task.id,
-        deleted_at=now,
-        message="任务及关联数据已标记删除，将在 24 小时内物理清除",
-    )
-
-
-
-# ── POST /tasks/expert-video ─────────────────────────────────────────────────
-
-@router.post("/tasks/expert-video", status_code=202, response_model=TaskSubmitResponse)
-async def submit_expert_video(
-    body: ExpertVideoRequest,
-    db: AsyncSession = Depends(get_db),
-) -> TaskSubmitResponse:
-    """Submit an expert coaching video for knowledge extraction.
-
-    1. Verify the COS object exists (sync check, fast).
-    2. Persist a pending AnalysisTask.
-    3. Dispatch the Celery worker.
-    4. Return 202 with task_id.
-    """
-    # Step 1 — COS existence pre-check (avoids queuing tasks that will fail immediately)
-    if not cos_client.object_exists(body.cos_object_key):
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "COS_OBJECT_NOT_FOUND",
-                "message": "指定的 COS 对象不存在或无访问权限",
-                "details": {"cos_object_key": body.cos_object_key},
-            },
-        )
-
-    # Step 2 — Persist AnalysisTask in pending state
-    task = AnalysisTask(
-        id=uuid.uuid4(),
-        task_type=TaskType.expert_video,
-        status=TaskStatus.pending,
-        # Use the COS key as the logical filename; size unknown until download
-        video_filename=body.cos_object_key,
-        video_size_bytes=0,
-        video_storage_uri=body.cos_object_key,
-    )
-    db.add(task)
-    await db.commit()
-    await db.refresh(task)
-
-    # Step 3 — Dispatch Celery task (fire-and-forget)
-    process_expert_video.delay(str(task.id), body.cos_object_key)
-
-    # Step 4 — Return 202
-    return TaskSubmitResponse(
-        task_id=task.id,
-        status=task.status.value,
-        cos_object_key=body.cos_object_key,
-        estimated_completion_seconds=300,
-    )
-
-
-# ── POST /tasks/athlete-video ────────────────────────────────────────────────
-
-@router.post("/tasks/athlete-video", status_code=501)
-async def submit_athlete_video():
-    raise HTTPException(
-        status_code=501,
-        detail={"code": "NOT_IMPLEMENTED", "message": "US2 实施中", "details": {}},
-    )
-
-
-# ── GET /tasks/{task_id} ─────────────────────────────────────────────────────
-
-@router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
-async def get_task_status(
-    task_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> TaskStatusResponse:
-    """Return current status and metadata for a task.
-
-    Returns 404 if the task does not exist or has been soft-deleted.
-    """
-    # Validate UUID format before hitting the DB
-    try:
-        task_uuid = uuid.UUID(task_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
-        )
-
-    result = await db.execute(
-        select(AnalysisTask).where(
-            AnalysisTask.id == task_uuid,
-            AnalysisTask.deleted_at.is_(None),
-        )
-    )
-    task = result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
-        )
-
-    return TaskStatusResponse(
-        task_id=task.id,
-        task_type=task.task_type.value,
-        status=task.status.value,
-        created_at=task.created_at,
-        started_at=task.started_at,
-        completed_at=task.completed_at,
-        video_duration_seconds=task.video_duration_seconds,
-        video_fps=task.video_fps,
-        video_resolution=task.video_resolution,
-    )
-
-
-# ── GET /tasks/{task_id}/result ──────────────────────────────────────────────
-
-@router.get("/tasks/{task_id}/result")
-async def get_task_result(
-    task_id: str,
-    db: AsyncSession = Depends(get_db),
-) -> Union[TaskResultExpertResponse, dict]:
-    """Return the full analysis result for a completed task.
-
-    - expert_video: returns KB draft version + extracted tech points list.
-    - athlete_video: US2 (not yet implemented).
-
-    Returns 404 if the task does not exist or has been soft-deleted.
-    Returns 409 if the task has not yet reached status=success.
-    """
-    try:
-        task_uuid = uuid.UUID(task_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
-        )
-
-    result = await db.execute(
-        select(AnalysisTask).where(
-            AnalysisTask.id == task_uuid,
-            AnalysisTask.deleted_at.is_(None),
-        )
-    )
-    task = result.scalar_one_or_none()
-
-    if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
-        )
-
-    if task.status != TaskStatus.success:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "TASK_NOT_READY",
-                "message": f"任务尚未完成，当前状态: {task.status.value}",
-                "details": {"task_id": task_id, "status": task.status.value},
-            },
-        )
-
-    # ── expert_video branch ───────────────────────────────────────────────────
-    if task.task_type == TaskType.expert_video:
-        # Load all tech points linked to this task's KB draft version
-        points_result = await db.execute(
-            select(ExpertTechPoint).where(
-                ExpertTechPoint.source_video_id == task_uuid,
-                ExpertTechPoint.knowledge_base_version == task.knowledge_base_version,
-            )
-        )
-        points = points_result.scalars().all()
-
-        # Determine whether the KB version is still pending approval (draft)
-        kb_result = await db.execute(
-            select(TechKnowledgeBase).where(
-                TechKnowledgeBase.version == task.knowledge_base_version
-            )
-        )
-        kb = kb_result.scalar_one_or_none()
-        pending_approval = (kb is not None and kb.status == KBStatus.draft)
-
-        extracted = [
-            ExtractedTechPoint(
-                action_type=p.action_type.value,
-                dimension=p.dimension,
-                param_min=p.param_min,
-                param_max=p.param_max,
-                param_ideal=p.param_ideal,
-                unit=p.unit,
-                extraction_confidence=p.extraction_confidence,
-            )
-            for p in points
-        ]
-
-        return TaskResultExpertResponse(
-            task_id=task.id,
-            knowledge_base_version_draft=task.knowledge_base_version,
-            extracted_points_count=len(extracted),
-            extracted_points=extracted,
-            pending_approval=pending_approval,
-        )
-
-    # ── athlete_video branch (US2) ────────────────────────────────────────────
-    raise HTTPException(
-        status_code=501,
-        detail={"code": "NOT_IMPLEMENTED", "message": "US2 实施中", "details": {}},
     )
 
 

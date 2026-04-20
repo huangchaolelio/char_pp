@@ -15,15 +15,17 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Enum,
     Float,
     ForeignKey,
     String,
+    Text,
     TIMESTAMP,
     UniqueConstraint,
 )
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -63,6 +65,22 @@ class ExpertTechPoint(Base):
         ForeignKey("analysis_tasks.id", ondelete="CASCADE"),
         nullable=False,
     )
+    # Feature 002: audio-enhanced extraction fields
+    # Source of this tech point: visual / audio / visual+audio
+    source_type: Mapped[str] = mapped_column(
+        String(20), nullable=False, default="visual"
+    )
+    # FK to the TechSemanticSegment that contributed this point (audio/subtitle source)
+    transcript_segment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tech_semantic_segments.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # True when visual and audio sources disagree beyond threshold (param diff > 15%)
+    conflict_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # JSONB detail when conflict_flag=True: {"visual": {...}, "audio": {...}, "diff_pct": 0.18}
+    conflict_detail: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
@@ -75,6 +93,10 @@ class ExpertTechPoint(Base):
         "AnalysisTask",
         foreign_keys=[source_video_id],
         back_populates="expert_tech_points",
+    )
+    transcript_segment: Mapped[Optional["TechSemanticSegment"]] = relationship(  # noqa: F821
+        "TechSemanticSegment",
+        foreign_keys=[transcript_segment_id],
     )
 
     __table_args__ = (
