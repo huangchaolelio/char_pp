@@ -22,23 +22,74 @@ $ARGUMENTS
 
 ---
 
-## 执行前检查
+## 执行前检查（含自动 Bootstrap）
 
-1. 读取 `specs/003-skill-kb-to-reference-video/spec.md` 确认功能规范存在。
-2. 读取 `specs/003-skill-kb-to-reference-video/plan.md` 确认技术计划存在。
-3. 检查 `specs/003-skill-kb-to-reference-video/tasks.md` 是否存在，如不存在则提示用户先运行 `/speckit.tasks`。
-4. 读取 `specs/003-skill-kb-to-reference-video/contracts/api-changes.md` 获取 API 契约（9 个新端点的请求/响应结构）。
-5. 读取以下现有代码以了解集成点：
-   - `src/models/__init__.py` — 确认当前已注册的 ORM 模型
-   - `src/workers/celery_app.py` — 确认 Celery include 列表
-   - `src/api/main.py` — 确认已注册的 router
-   - `src/services/knowledge_base_svc.py` — 了解现有 KB 服务的函数签名和异常类
-   - `src/models/expert_tech_point.py` — 了解 `ExpertTechPoint` 字段（dimension, param_min/max, extraction_confidence, conflict_flag 等）
-   - `src/workers/expert_video_task.py` — 了解现有 Celery 任务的执行模式（用于复用）
+依次检查以下文件是否存在，**缺少任何一个则自动生成，不退出**：
+
+### 步骤 1：确认 spec.md 存在
+
+检查 `specs/003-skill-kb-to-reference-video/spec.md`：
+
+- 若**存在**：读取并继续下一步。
+- 若**不存在**：
+  1. 通知用户："Feature-003 规范文件缺失，正在自动生成…"
+  2. 执行 `/speckit.specify` 命令，传入描述：
+     ```
+     Feature-003: Skill KB 到参考视频
+     将"专业教学视频 → 专业知识库"提炼流程封装为可重复执行的 Skill，
+     完成提炼后自动生成标准参考视频供管理员审核。
+     功能目录: specs/003-skill-kb-to-reference-video
+     ```
+  3. 等待 speckit.specify 完成后，读取生成的 spec.md，然后继续。
+
+### 步骤 2：确认 plan.md 存在
+
+检查 `specs/003-skill-kb-to-reference-video/plan.md`：
+
+- 若**存在**：读取并继续下一步。
+- 若**不存在**：
+  1. 通知用户："Feature-003 技术计划缺失，正在自动生成…"
+  2. 执行 `/speckit.plan specs/003-skill-kb-to-reference-video`
+  3. 等待完成后，读取生成的 plan.md，然后继续。
+
+### 步骤 3：确认 contracts/api-changes.md 存在
+
+检查 `specs/003-skill-kb-to-reference-video/contracts/api-changes.md`：
+
+- 若**存在**：读取全文（包含 9 个端点的请求/响应结构），然后继续。
+- 若**不存在**：
+  1. 通知用户："API 契约文件缺失，将基于 spec.md 和 plan.md 自动推导并生成。"
+  2. 基于已读取的 spec.md 和 plan.md，按照下方**阶段 B4** 的路径定义，生成 `contracts/api-changes.md` 文件，包含 9 个端点的完整请求/响应 JSON 示例。
+  3. 继续。
+
+### 步骤 4：确认 tasks.md 存在
+
+检查 `specs/003-skill-kb-to-reference-video/tasks.md`：
+
+- 若**存在**：读取并继续。
+- 若**不存在**：
+  1. 通知用户："Feature-003 任务列表缺失，正在自动生成…"
+  2. 执行 `/speckit.tasks specs/003-skill-kb-to-reference-video`
+  3. 等待完成后继续。
+
+### 步骤 5：读取集成点（以下文件必须存在，若不存在则报错停止）
+
+- `src/models/__init__.py` — 确认当前已注册的 ORM 模型
+- `src/workers/celery_app.py` — 确认 Celery include 列表
+- `src/api/main.py` — 确认已注册的 router
+- `src/services/knowledge_base_svc.py` — 了解现有 KB 服务的函数签名和异常类
+- `src/models/expert_tech_point.py` — 了解 `ExpertTechPoint` 字段（dimension, param_min/max, extraction_confidence, conflict_flag 等）
+- `src/workers/expert_video_task.py` — 了解现有 Celery 任务的执行模式（用于复用）
+
+若用户输入为 `--check`，完成上述检查后输出现状报告（各文件是否存在、集成点是否就绪），**不执行任何代码生成**，结束。
 
 ---
 
 ## 实现大纲
+
+若用户输入指定了 `phase <A|B|C|D>`，只执行对应阶段；否则按 A → B → C → D 顺序全部执行。
+
+---
 
 ### 阶段 A：数据模型与迁移
 

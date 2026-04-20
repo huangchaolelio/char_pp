@@ -53,6 +53,11 @@ class Settings(BaseSettings):
     pose_batch_size: int = 16            # YOLOv8 batch size (GPU path)
     mediapipe_model_complexity: int = 1  # MediaPipe model complexity (CPU path)
 
+    # COS video selection — forehand / backhand keywords (comma-separated)
+    cos_video_prefix: str = "charhuang/tt_video/乒乓球合集【较新】/《知行合一》孙浩泓专业乒乓球全套教学课程120集/"
+    forehand_video_keywords: str = "正手"   # comma-separated substrings matched against filename
+    backhand_video_keywords: str = "反手"   # comma-separated substrings matched against filename
+
     # Audio analysis — Feature 002
     whisper_model: str = "small"         # tiny | base | small | medium
     whisper_device: str = "auto"         # auto | cpu | cuda  (auto→cuda if available, else cpu)

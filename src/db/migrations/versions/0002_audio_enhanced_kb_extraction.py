@@ -28,7 +28,14 @@ depends_on: str | Sequence[str] | None = None
 
 def upgrade() -> None:
     # ── audio_quality_flag_enum ──────────────────────────────────────────────
-    op.execute("CREATE TYPE audio_quality_flag_enum AS ENUM ('ok', 'low_snr', 'unsupported_language', 'silent')")
+    # Use DO block to skip if already exists (idempotent for repeated runs)
+    op.execute("""
+        DO $$ BEGIN
+            CREATE TYPE audio_quality_flag_enum AS ENUM ('ok', 'low_snr', 'unsupported_language', 'silent');
+        EXCEPTION
+            WHEN duplicate_object THEN null;
+        END $$;
+    """)
 
     # ── audio_transcripts ────────────────────────────────────────────────────
     op.create_table(
@@ -46,7 +53,7 @@ def upgrade() -> None:
         sa.Column("snr_db", sa.Float, nullable=True),
         sa.Column(
             "quality_flag",
-            sa.Enum(
+            postgresql.ENUM(
                 "ok", "low_snr", "unsupported_language", "silent",
                 name="audio_quality_flag_enum",
                 create_type=False,

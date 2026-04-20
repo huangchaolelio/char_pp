@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.models.expert_tech_point import ActionType, ExpertTechPoint
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.services.tech_extractor import ExtractionResult
+from src.services.kb_merger import MergedTechPoint
 
 logger = logging.getLogger(__name__)
 
@@ -111,14 +112,14 @@ async def add_tech_points(
     session: AsyncSession,
     kb_version: str,
     source_task_id: uuid.UUID,
-    extraction_results: list[ExtractionResult],
+    extraction_results: list[MergedTechPoint],
 ) -> int:
-    """Add extracted tech points to a draft KB version.
+    """Add merged tech points to a draft KB version.
 
     Args:
         kb_version: The draft version string to add points to.
         source_task_id: The AnalysisTask.id of the expert video that produced these points.
-        extraction_results: List of ExtractionResult from tech_extractor.
+        extraction_results: List of MergedTechPoint from KbMerger (Feature-002 path).
 
     Returns:
         Number of TechPoints actually inserted.
@@ -133,37 +134,38 @@ async def add_tech_points(
     if kb.status != KBStatus.draft:
         raise VersionNotDraftError(kb_version, kb.status.value)
 
-    # Aggregate dimensions across multiple segments: keep the entry with the
-    # highest extraction_confidence for each (action_type, dimension) pair.
+    # De-duplicate: keep highest extraction_confidence per (action_type, dimension).
     # This avoids UniqueViolationError on uq_expert_point_version_action_dim.
-    best: dict[tuple[str, str], object] = {}  # (action_type, dimension) → dim
-    for result in extraction_results:
-        if result.action_type not in ("forehand_topspin", "backhand_push"):
-            logger.debug("Skipping unknown action type: %s", result.action_type)
+    best: dict[tuple[str, str], MergedTechPoint] = {}
+    for point in extraction_results:
+        action_type_str = point.action_type or ""
+        if action_type_str not in ("forehand_topspin", "backhand_push"):
+            logger.debug("Skipping unknown action type: %s", action_type_str)
             continue
-        for dim in result.dimensions:
-            key = (result.action_type, dim.dimension)
-            existing = best.get(key)
-            if existing is None or dim.extraction_confidence > existing.extraction_confidence:
-                best[key] = dim
-            # Keep a reference to the action_type string alongside the dim
-            dim._action_type_str = result.action_type  # type: ignore[attr-defined]
+        key = (action_type_str, point.dimension)
+        existing = best.get(key)
+        if existing is None or point.extraction_confidence > existing.extraction_confidence:
+            best[key] = point
 
     inserted = 0
-    for (action_type_str, _), dim in best.items():
+    for (action_type_str, _), point in best.items():
         action_type = ActionType(action_type_str)
-        point = ExpertTechPoint(
+        tech_point = ExpertTechPoint(
             knowledge_base_version=kb_version,
             action_type=action_type,
-            dimension=dim.dimension,
-            param_min=dim.param_min,
-            param_max=dim.param_max,
-            param_ideal=dim.param_ideal,
-            unit=dim.unit,
-            extraction_confidence=dim.extraction_confidence,
+            dimension=point.dimension,
+            param_min=point.param_min,
+            param_max=point.param_max,
+            param_ideal=point.param_ideal,
+            unit=point.unit,
+            extraction_confidence=point.extraction_confidence,
             source_video_id=source_task_id,
+            source_type=point.source_type,
+            conflict_flag=point.conflict_flag,
+            conflict_detail=point.conflict_detail,
+            transcript_segment_id=point.transcript_segment_id,
         )
-        session.add(point)
+        session.add(tech_point)
         inserted += 1
 
     # Update point count

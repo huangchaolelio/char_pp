@@ -6,6 +6,8 @@ Encapsulates all COS SDK interactions so that:
 - Credentials are always sourced from config.py (never hardcoded)
 """
 
+from __future__ import annotations
+
 import logging
 import uuid
 from pathlib import Path
@@ -123,6 +125,103 @@ def download_to_temp(cos_object_key: str) -> Path:
         if status == 404:
             raise CosObjectNotFoundError(cos_object_key) from exc
         raise CosDownloadError(cos_object_key, reason=str(exc)) from exc
+
+
+def list_videos(action_type: str = "all") -> list[dict]:
+    """List COS video objects filtered by action type.
+
+    Args:
+        action_type: "forehand" | "backhand" | "all"
+            - "forehand": files whose name contains any forehand keyword
+            - "backhand": files whose name contains any backhand keyword
+            - "all":      all video files under cos_video_prefix
+
+    Returns:
+        List of dicts with keys: cos_object_key, filename, size_bytes, action_type
+        Sorted by filename ascending.
+    """
+    settings = get_settings()
+    client, bucket = _get_cos_client()
+
+    # Build keyword sets from comma-separated config strings
+    forehand_kws = [k.strip() for k in settings.forehand_video_keywords.split(",") if k.strip()]
+    backhand_kws = [k.strip() for k in settings.backhand_video_keywords.split(",") if k.strip()]
+
+    results = []
+    marker = ""
+    while True:
+        kwargs = dict(Bucket=bucket, Prefix=settings.cos_video_prefix, MaxKeys=200)
+        if marker:
+            kwargs["Marker"] = marker
+        response = client.list_objects(**kwargs)
+
+        for obj in response.get("Contents", []):
+            size = int(obj["Size"])
+            if size == 0:
+                continue  # skip directory placeholders
+            key = obj["Key"]
+            filename = key.split("/")[-1]
+            if not filename.lower().endswith((".mp4", ".mov", ".avi", ".mkv")):
+                continue
+
+            # Determine action type from filename
+            is_forehand = any(kw in filename for kw in forehand_kws)
+            is_backhand = any(kw in filename for kw in backhand_kws)
+
+            if action_type == "forehand" and not is_forehand:
+                continue
+            if action_type == "backhand" and not is_backhand:
+                continue
+
+            detected = (
+                "forehand" if is_forehand and not is_backhand
+                else "backhand" if is_backhand and not is_forehand
+                else "forehand+backhand" if is_forehand and is_backhand
+                else "other"
+            )
+            results.append({
+                "cos_object_key": key,
+                "filename": filename,
+                "size_bytes": size,
+                "action_type": detected,
+            })
+
+        if response.get("IsTruncated") == "true":
+            marker = response["NextMarker"]
+        else:
+            break
+
+    results.sort(key=lambda x: x["filename"])
+    logger.info(
+        "list_videos(action_type=%s): found %d videos under prefix %s",
+        action_type, len(results), settings.cos_video_prefix,
+    )
+    return results
+
+
+def infer_action_type_hint(cos_object_key: str) -> str | None:
+    """Infer the action type hint from a COS object key filename.
+
+    Uses the same forehand/backhand keyword config as list_videos.
+
+    Returns:
+        "forehand_topspin" if filename matches forehand keywords only
+        "backhand_push"    if filename matches backhand keywords only
+        None               if both or neither keyword group matches (no filter)
+    """
+    settings = get_settings()
+    forehand_kws = [k.strip() for k in settings.forehand_video_keywords.split(",") if k.strip()]
+    backhand_kws = [k.strip() for k in settings.backhand_video_keywords.split(",") if k.strip()]
+
+    filename = cos_object_key.split("/")[-1]
+    is_forehand = any(kw in filename for kw in forehand_kws)
+    is_backhand = any(kw in filename for kw in backhand_kws)
+
+    if is_forehand and not is_backhand:
+        return "forehand_topspin"
+    if is_backhand and not is_forehand:
+        return "backhand_push"
+    return None  # ambiguous or untagged — no filtering
 
 
 def cleanup_temp_file(path: Path) -> None:

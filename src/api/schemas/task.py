@@ -28,6 +28,14 @@ class ExpertVideoRequest(BaseModel):
     video_duration_seconds: Optional[float] = Field(
         None, description="视频时长（秒），由客户端提供时用于提前校验 90 分钟上限"
     )
+    # Action type hint: when set, only keep extracted segments matching this type.
+    # Auto-inferred from cos_object_key filename keywords if not provided.
+    # Values: "forehand_topspin" | "backhand_push" | None (no filter)
+    action_type_hint: Optional[str] = Field(
+        None,
+        description="动作类型提示，用于过滤提取结果。可选值: forehand_topspin / backhand_push。"
+                    "不传时由系统根据视频文件名关键词自动推断。",
+    )
 
 
 # AthleteVideoRequest uses multipart/form-data — parsed in the endpoint directly
@@ -164,3 +172,18 @@ class TaskDeleteResponse(BaseModel):
     task_id: UUID
     deleted_at: datetime
     message: str
+
+
+# ── COS video list ────────────────────────────────────────────────────────────
+
+class CosVideoItem(BaseModel):
+    cos_object_key: str
+    filename: str
+    size_bytes: int
+    action_type: str  # "forehand" | "backhand" | "forehand+backhand" | "other"
+
+
+class CosVideoListResponse(BaseModel):
+    action_type_filter: str
+    total: int
+    videos: list[CosVideoItem]

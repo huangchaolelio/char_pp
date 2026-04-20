@@ -22,6 +22,8 @@ from src.api.schemas.task import (
     AudioAnalysisInfo,
     CoachingAdviceItem,
     ConflictDetail,
+    CosVideoItem,
+    CosVideoListResponse,
     DeviationItem,
     ExpertVideoRequest,
     ExtractedTechPoint,
@@ -47,6 +49,36 @@ from src.services import cos_client
 from src.workers.expert_video_task import process_expert_video
 
 router = APIRouter(tags=["tasks"])
+
+
+# ── GET /tasks/cos-videos ────────────────────────────────────────────────────
+
+@router.get("/tasks/cos-videos", response_model=CosVideoListResponse)
+def list_cos_videos(
+    action_type: str = "all",
+) -> CosVideoListResponse:
+    """List available COS videos filtered by action type.
+
+    Query params:
+        action_type: "forehand" | "backhand" | "all" (default: "all")
+
+    Returns video list with cos_object_key ready to submit to POST /tasks/expert-video.
+    """
+    if action_type not in ("forehand", "backhand", "all"):
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "code": "INVALID_ACTION_TYPE",
+                "message": "action_type must be one of: forehand, backhand, all",
+            },
+        )
+    videos = cos_client.list_videos(action_type=action_type)
+    return CosVideoListResponse(
+        action_type_filter=action_type,
+        total=len(videos),
+        videos=[CosVideoItem(**v) for v in videos],
+    )
 
 
 # ── POST /tasks/expert-video ─────────────────────────────────────────────────
@@ -108,11 +140,17 @@ async def submit_expert_video(
     await db.refresh(task)
 
     # Step 3 — Dispatch Celery task (fire-and-forget)
+    # Auto-infer action_type_hint from filename keywords if not explicitly provided
+    action_type_hint = body.action_type_hint
+    if action_type_hint is None:
+        action_type_hint = cos_client.infer_action_type_hint(body.cos_object_key)
+
     process_expert_video.delay(
         str(task.id),
         body.cos_object_key,
         body.enable_audio_analysis,
         body.audio_language,
+        action_type_hint,
     )
 
     # Step 4 — Return 202

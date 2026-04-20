@@ -1,6 +1,6 @@
 # API 变更契约: 音频增强型教练视频技术知识库提取
 
-**分支**: `002-audio-enhanced-kb-extraction` | **日期**: 2026-04-19
+**分支**: `002-audio-enhanced-kb-extraction` | **日期**: 2026-04-19（最后更新: 2026-04-20）
 
 ## 变更原则
 
@@ -26,13 +26,15 @@
   "video_cos_key": "string",
   "notes": "string (optional)",
   "enable_audio_analysis": "boolean (optional, default: true)",
-  "audio_language": "string (optional, default: 'zh', enum: ['zh', 'en', 'auto'])"
+  "audio_language": "string (optional, default: 'zh', enum: ['zh', 'en', 'auto'])",
+  "action_type_hint": "string (optional, default: null, enum: ['forehand_topspin', 'backhand_push', null])"
 }
 ```
 
 **说明**:
 - `enable_audio_analysis`: false 时跳过音频提取，直接使用纯视觉模式
 - `audio_language`: 指定音频语言；`auto` = Whisper 自动检测（精度略低）
+- `action_type_hint`: 可选动作类型提示。**不传时**，系统将自动根据 `cos_object_key` 文件名中的关键词推断（含"正手"且不含"反手"→`forehand_topspin`；含"反手"且不含"正手"→`backhand_push`；其他→`null`）。**传入时**，以显式指定值为准。设置后，视觉分类不符的动作段被丢弃，音频来源要点自动继承该 action_type。
 
 ---
 
@@ -120,7 +122,39 @@
 
 ---
 
-## 4. 错误码扩展（新增）
+## 4. GET /api/v1/tasks/cos-videos（新弹端点）
+
+**变更类型**: 新增端点（向后兼容，属 Feature-002 增强）
+
+### 请求
+```
+GET /api/v1/tasks/cos-videos?action_type=forehand|backhand|all
+```
+
+**查询参数**:
+- `action_type` （可选，默认 `all`）: 按动作类型过滤 COS 视频列表
+
+### 响应体
+```json
+{
+  "action_type_filter": "forehand | backhand | all",
+  "total": "integer",
+  "videos": [
+    {
+      "cos_object_key": "string",
+      "filename": "string",
+      "size_bytes": "integer",
+      "action_type": "forehand | backhand | forehand+backhand | other"
+    }
+  ]
+}
+```
+
+**说明**: 列出 COS 指定前缀下的所有视频对象，根据文件名关键词（`FOREHAND_VIDEO_KEYWORDS` / `BACKHAND_VIDEO_KEYWORDS`）进行分类。返回的 `cos_object_key` 可直接用于 `POST /tasks/expert-video` 提交。
+
+---
+
+## 5. 错误码扩展（新增）
 
 在现有附录 B 错误码基础上新增：
 
@@ -128,6 +162,7 @@
 |--------|-----------|------|
 | `AUDIO_EXTRACTION_FAILED` | 422 | ffmpeg 无法提取音频轨道（视频无音频流），系统已回退视觉模式并写入 fallback_reason |
 | `UNSUPPORTED_AUDIO_LANGUAGE` | 422 | 检测到音频语言不在支持列表，已回退视觉模式 |
+| `INVALID_ACTION_TYPE` | 400 | `GET /tasks/cos-videos` 的 `action_type` 参数非法（非 `forehand`/`backhand`/`all`） |
 
 **注**: 这两个错误码对应的场景不会导致任务失败（status=failed），而是降级为纯视觉模式，任务仍然成功完成，错误码仅在 `audio_analysis.quality_flag` 中体现。
 

@@ -121,6 +121,7 @@ async def _persist_success(
     video_meta: VideoMeta,
     extraction_results: list,
     audio_fallback_reason: str | None = None,
+    action_type_hint: str | None = None,
 ) -> str:
     """Create draft KB, save tech points, and mark task success — all in one transaction.
 
@@ -129,11 +130,14 @@ async def _persist_success(
     factory = _make_session_factory()
     async with factory() as session:
         async with session.begin():
-            # Derive action types covered from extracted results (fall back to v1 defaults)
-            action_types = list({r.action_type for r in extraction_results}) or [
-                "forehand_topspin",
-                "backhand_push",
-            ]
+            # Derive action types covered from extracted results
+            action_types = list({r.action_type for r in extraction_results if r.action_type})
+            if not action_types:
+                # Fallback: use hint if available, otherwise the two standard types
+                action_types = [action_type_hint] if action_type_hint else [
+                    "forehand_topspin",
+                    "backhand_push",
+                ]
 
             kb = await knowledge_base_svc.create_draft_version(
                 session,
@@ -411,6 +415,7 @@ def process_expert_video(
     cos_object_key: str,
     enable_audio_analysis: bool = True,
     audio_language: str = "zh",
+    action_type_hint: str | None = None,
 ) -> dict:
     """Process a professional coach video and create a draft knowledge base version.
 
@@ -419,6 +424,11 @@ def process_expert_video(
         cos_object_key: COS object key for the video file.
         enable_audio_analysis: Whether to run Whisper audio extraction (Feature 002).
         audio_language: Language code for Whisper recognition (default: 'zh').
+        action_type_hint: Optional action type filter inferred from video filename.
+            When set to "forehand_topspin" or "backhand_push", only segments that
+            match this type are kept for KB extraction. This prevents a forehand
+            training video from generating backhand tech points due to classifier
+            heuristic errors. Audio-only points inherit this hint as their action_type.
 
     Returns:
         Dict with task_id, status, and on success: kb_version_draft, extracted_segments.
@@ -426,7 +436,10 @@ def process_expert_video(
     task_id = uuid.UUID(task_id_str)
     tmp_path: Path | None = None
 
-    logger.info("expert_video task started | task_id=%s cos_key=%s", task_id, cos_object_key)
+    logger.info(
+        "expert_video task started | task_id=%s cos_key=%s action_type_hint=%s",
+        task_id, cos_object_key, action_type_hint,
+    )
 
     try:
         # ── 1. Mark as processing ──────────────────────────────────────────────
@@ -549,6 +562,23 @@ def process_expert_video(
 
                 known_segs = [cs for cs in classified_segs if cs.action_type != "unknown"]
 
+                # Filter by action_type_hint when provided: only keep segments
+                # that match the hint type. This ensures a forehand training video
+                # only contributes forehand tech points even if the classifier
+                # misclassifies some segments as backhand.
+                if action_type_hint and known_segs:
+                    filtered = [cs for cs in known_segs if cs.action_type == action_type_hint]
+                    if filtered:
+                        known_segs = filtered
+                    else:
+                        logger.info(
+                            "action_type_hint=%s: no segments matched in segment %d/%d "
+                            "(had: %s) — skipping segment (task %s)",
+                            action_type_hint, seg_idx + 1, total_segments,
+                            [cs.action_type for cs in known_segs], task_id,
+                        )
+                        known_segs = []
+
                 # Extract tech dimensions
                 for cs in known_segs:
                     res = tech_extractor.extract_tech_points(cs, seg_frames)
@@ -592,12 +622,12 @@ def process_expert_video(
         # Merge visual and audio tech points
         visual_dicts = [
             {
-                "dimension": dim.name,
+                "dimension": dim.dimension,
                 "param_min": dim.param_min,
                 "param_max": dim.param_max,
                 "param_ideal": dim.param_ideal,
                 "unit": dim.unit,
-                "extraction_confidence": dim.confidence,
+                "extraction_confidence": dim.extraction_confidence,
                 "action_type": res.action_type,
             }
             for res in extraction_results
@@ -605,6 +635,14 @@ def process_expert_video(
         ]
         merger = KbMerger(conflict_threshold_pct=settings.audio_conflict_threshold_pct)
         merged_points = merger.merge(visual_dicts, audio_segments)
+
+        # For audio-only points (no visual counterpart), action_type is None.
+        # Assign action_type_hint so they are persisted with a meaningful action type.
+        if action_type_hint:
+            for pt in merged_points:
+                if pt.action_type is None:
+                    pt.action_type = action_type_hint
+
         logger.info(
             "Merged: %d visual dims + %d audio segs → %d merged (%d conflicts) (task %s)",
             len(visual_dicts), len(audio_segments), len(merged_points),
@@ -617,7 +655,7 @@ def process_expert_video(
             TaskStatus.partial_success if failed_segment_indices else TaskStatus.success
         )
         kb_version = asyncio.run(
-            _persist_success(task_id, video_meta, merged_points, audio_fallback_reason)
+            _persist_success(task_id, video_meta, merged_points, audio_fallback_reason, action_type_hint)
         )
         # Patch status to partial_success if needed (persist_success sets success by default)
         if final_status == TaskStatus.partial_success:
