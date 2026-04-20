@@ -57,6 +57,7 @@ from src.services.kb_merger import KbMerger
 from src.services.keyword_locator import KeywordLocator, PriorityWindow
 from src.services.speech_recognizer import SpeechRecognizer
 from src.services.transcript_tech_parser import TranscriptTechParser
+from src.services.subtitle_validator import SubtitleValidator
 from src.services.video_validator import VideoMeta, VideoQualityRejected
 
 logger = logging.getLogger(__name__)
@@ -207,24 +208,32 @@ def _run_audio_pipeline(
 ) -> tuple[list, list[PriorityWindow], str | None]:
     """Run audio extraction + recognition + parsing + keyword localisation pipeline.
 
+    Also performs subtitle sync validation (T038): if the video has embedded
+    subtitles, their timestamps are cross-validated against the Whisper transcript.
+    A desync > 2s is recorded as a suffix in the returned fallback_reason.
+
     Returns:
         (audio_segments, priority_windows, fallback_reason) where:
         - audio_segments: TechSemanticSegment list (empty on fallback)
         - priority_windows: PriorityWindow list for segment prioritisation (empty on fallback)
         - fallback_reason: None on success, structured error code string on fallback
 
-    Fallback reason codes:
+    Fallback reason codes (audio):
         - "audio_analysis_disabled"       : enable_audio=False
         - "AUDIO_EXTRACTION_FAILED: ..."  : ffmpeg failed
         - "low_snr: X dB (threshold: Y dB)": SNR below threshold
         - "UNSUPPORTED_AUDIO_LANGUAGE: ...": language not in SUPPORTED_LANGUAGES
         - "AUDIO_QUALITY_INSUFFICIENT: ...": other quality flag (silent, etc.)
+    Appended subtitle suffixes (separated by "; "):
+        - "subtitle_out_of_sync: X.Xs"   : subtitle timestamps desynced
+        - "subtitle_unsupported_format: not_srt": embedded subtitles not SRT
     """
     if not enable_audio:
         return [], [], "audio_analysis_disabled"
 
     settings = get_settings()
     wav_path = video_path.parent / f"audio_{video_path.stem}.wav"
+    srt_path = video_path.parent / f"subtitle_{video_path.stem}.srt"
 
     try:
         extractor = AudioExtractor(snr_threshold_db=settings.audio_snr_threshold_db)
@@ -288,20 +297,57 @@ def _run_audio_pipeline(
         except Exception as exc:  # noqa: BLE001
             logger.warning("KeywordLocator failed for task %s (non-fatal): %s", task_id, exc)
 
+        # T038: Subtitle sync validation — cross-validate embedded subtitles vs transcript
+        subtitle_suffix: str | None = None
+        try:
+            sub_validator = SubtitleValidator()
+            extracted = SubtitleValidator.extract_embedded_srt(video_path, srt_path)
+            if extracted:
+                srt_sentences = SubtitleValidator.parse_srt(srt_path)
+                if not srt_sentences:
+                    # File extracted but no valid SRT timecodes → unsupported format
+                    subtitle_suffix = SubtitleValidator.unsupported_format_suffix()
+                    logger.info(
+                        "Subtitle format not supported for task %s — %s",
+                        task_id, subtitle_suffix,
+                    )
+                else:
+                    sync_result = sub_validator.validate(
+                        transcript_result.sentences, srt_sentences
+                    )
+                    if not sync_result.is_valid:
+                        subtitle_suffix = sync_result.fallback_suffix
+                        logger.info(
+                            "Subtitle out of sync for task %s — %s",
+                            task_id, subtitle_suffix,
+                        )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Subtitle validation failed for task %s (non-fatal): %s", task_id, exc)
+
         logger.info(
             "Audio pipeline: %d sentences → %d tech segments, %d priority windows (task %s)",
             len(transcript_result.sentences), len(kb_segments), len(priority_windows), task_id,
         )
-        return kb_segments, priority_windows, None
+
+        # Combine audio reason (None = ok) with optional subtitle suffix
+        audio_reason = None  # success path: no audio fallback
+        final_reason = "; ".join(filter(None, [audio_reason, subtitle_suffix])) or None
+        return kb_segments, priority_windows, final_reason
 
     finally:
-        # Always clean up WAV temp file (data privacy)
+        # Always clean up WAV and SRT temp files (data privacy)
         if wav_path.exists():
             try:
                 wav_path.unlink()
                 logger.debug("WAV temp file deleted: %s", wav_path)
             except Exception:  # noqa: BLE001
                 logger.debug("WAV cleanup failed (non-fatal): %s", wav_path)
+        if srt_path.exists():
+            try:
+                srt_path.unlink()
+                logger.debug("SRT temp file deleted: %s", srt_path)
+            except Exception:  # noqa: BLE001
+                logger.debug("SRT cleanup failed (non-fatal): %s", srt_path)
 
 
 

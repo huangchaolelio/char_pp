@@ -126,6 +126,7 @@
 - [x] T033 [P] 在所有新增服务（`audio_extractor.py`、`speech_recognizer.py`、`keyword_locator.py`、`transcript_tech_parser.py`、`kb_merger.py`）中补充结构化日志：记录音频提取成功/失败、SNR 值、转录句数、关键词命中数、合并结果统计、冲突数量
 - [x] T034 [P] 在 `tests/contract/test_expert_video_api_v2.py` 中补充 API 契约测试：验证 `POST /tasks/expert-video` 新增字段的 schema；验证 `GET /tasks/{id}` progress 字段结构；验证 `GET /tasks/{id}/result` `audio_analysis` 和 `conflicts` 字段
 - [x] T035 更新 `specs/002-audio-enhanced-kb-extraction/plan.md` 精准度基准表：添加验证结果列（T001-T005 各测试用例的实测数据）
+- [x] T038 [P] 在 `src/services/audio_extractor.py`（或新增 `src/services/subtitle_validator.py`）中实现字幕时间轴同步校验：解析 SRT/内嵌字幕流，计算字幕时间戳与视频时长的对齐偏差；若最大偏差 > 2 秒则设置 `subtitle_fallback_reason="subtitle_out_of_sync"`，忽略字幕并继续纯音频/视觉处理；在 `AnalysisTask.audio_fallback_reason` 中记录原因；不支持的字幕格式（非 SRT/内嵌流）同样记录 `subtitle_fallback_reason="unsupported_subtitle_format"`（对应 spec.md 边界情况行2 + FR-007）
 - [x] T036 [P] 按 `specs/002-audio-enhanced-kb-extraction/quickstart.md` 执行端到端手工验证：安装依赖 → 运行迁移 → 提交含语音视频 → 验证知识库含音频来源条目 → 验证 90min+ 视频被拒绝 → 验证冲突阻塞 KB approve
 - [x] T037 [P] 在 `src/workers/expert_video_task.py` 中为音频临时文件（WAV）添加 `finally` 块确保删除，验证任何失败路径下均不残留音频文件（数据隐私合规）
 
