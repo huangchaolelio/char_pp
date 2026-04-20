@@ -111,7 +111,8 @@ categories:
     tech_category: 正手技术
     tech_sub_category: 正手攻球
     tech_detail: 正手攻球
-    action_type: forehand_attack
+    # 姿态估计模型无法区分攻球与弧圈，统一映射到 forehand_topspin 以匹配 Worker 过滤逻辑
+    action_type: forehand_topspin
     require_keywords: ["正手"]
     match_keywords: ["攻球"]
     exclude_keywords: ["正反手", "正反"]
