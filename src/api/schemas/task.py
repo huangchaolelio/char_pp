@@ -129,6 +129,12 @@ class CoachingAdviceItem(BaseModel):
     impact_score: float
     reliability_level: str
     reliability_note: Optional[str] = None
+    # Feature 005: teaching tips attached to this advice item
+    teaching_tips: list["TeachingTipRef"] = []
+
+
+# TeachingTipRef is defined in teaching_tip.py; import here for forward ref
+from src.api.schemas.teaching_tip import TeachingTipRef  # noqa: E402
 
 
 class MotionAnalysisItem(BaseModel):

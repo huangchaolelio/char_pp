@@ -68,6 +68,12 @@ class Settings(BaseSettings):
     long_video_segment_duration_s: int = 180    # 3-minute chunks for long video processing
     max_video_duration_s: int = 5400            # 90 minutes hard limit
 
+    # LLM — Feature 005: teaching tip extraction
+    openai_api_key: Optional[str] = None        # required for TeachingTipExtractor
+    openai_model: str = "gpt-4o-mini"           # model used for tip extraction
+    openai_timeout_s: int = 30                  # LLM call timeout in seconds
+    max_teaching_tips: int = 3                  # max tips attached per coaching advice item
+
 
 @lru_cache
 def get_settings() -> Settings:

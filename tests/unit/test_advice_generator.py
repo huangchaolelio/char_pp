@@ -45,12 +45,24 @@ def _make_expert_point(dimension: str) -> ExpertTechPoint:
     return ep
 
 
+def _make_session_with_empty_tips() -> AsyncMock:
+    """Create a mock session that returns an empty TeachingTip result."""
+    session = AsyncMock()
+    session.flush = AsyncMock()
+    session.add = MagicMock()
+
+    # Mock execute to return an empty scalars result for TeachingTip query
+    mock_execute_result = MagicMock()
+    mock_execute_result.scalars.return_value.all.return_value = []
+    session.execute = AsyncMock(return_value=mock_execute_result)
+    return session
+
+
 @pytest.mark.unit
 @pytest.mark.asyncio
 class TestGenerateAdvice:
     async def test_generates_advice_for_each_deviation(self):
-        session = AsyncMock()
-        session.flush = AsyncMock()
+        session = _make_session_with_empty_tips()
         task_id = uuid.uuid4()
 
         elbow_ep = _make_expert_point("elbow_angle")
@@ -71,8 +83,7 @@ class TestGenerateAdvice:
         assert len(advice) == 2
 
     async def test_skips_none_direction(self):
-        session = AsyncMock()
-        session.flush = AsyncMock()
+        session = _make_session_with_empty_tips()
         task_id = uuid.uuid4()
 
         ep = _make_expert_point("elbow_angle")
@@ -85,8 +96,7 @@ class TestGenerateAdvice:
         assert len(advice) == 0
 
     async def test_high_reliability_for_high_confidence(self):
-        session = AsyncMock()
-        session.flush = AsyncMock()
+        session = _make_session_with_empty_tips()
         task_id = uuid.uuid4()
 
         ep = _make_expert_point("elbow_angle")
@@ -98,8 +108,7 @@ class TestGenerateAdvice:
         assert advice[0].reliability_note is None
 
     async def test_low_reliability_for_low_confidence(self):
-        session = AsyncMock()
-        session.flush = AsyncMock()
+        session = _make_session_with_empty_tips()
         task_id = uuid.uuid4()
 
         ep = _make_expert_point("elbow_angle")
@@ -112,8 +121,7 @@ class TestGenerateAdvice:
         assert len(advice[0].reliability_note) > 0
 
     async def test_sorted_by_impact_score_desc(self):
-        session = AsyncMock()
-        session.flush = AsyncMock()
+        session = _make_session_with_empty_tips()
         task_id = uuid.uuid4()
 
         ep1 = _make_expert_point("elbow_angle")
@@ -134,3 +142,4 @@ class TestGenerateAdvice:
         )
         assert len(advice) == 2
         assert advice[0].impact_score >= advice[1].impact_score
+

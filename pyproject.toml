@@ -32,6 +32,8 @@ dependencies = [
     # Audio analysis (Feature 002)
     "openai-whisper==20231117",
     "jieba>=0.42.1",
+    # LLM API (Feature 005)
+    "openai>=1.0.0",
 ]
 
 [project.optional-dependencies]

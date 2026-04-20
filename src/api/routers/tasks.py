@@ -35,6 +35,7 @@ from src.api.schemas.task import (
     TaskStatusResponse,
     TaskSubmitResponse,
 )
+from src.api.schemas.teaching_tip import TeachingTipRef
 from src.config import get_settings
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
@@ -43,6 +44,7 @@ from src.models.audio_transcript import AudioTranscript
 from src.models.coaching_advice import CoachingAdvice
 from src.models.deviation_report import DeviationReport
 from src.models.expert_tech_point import ExpertTechPoint
+from src.models.teaching_tip import TeachingTip
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_semantic_segment import TechSemanticSegment
 from src.services import cos_client
@@ -481,6 +483,27 @@ async def get_task_result(
     )
     analyses = analyses_result.scalars().all()
 
+    # Feature 005: pre-load teaching tips keyed by action_type for fast lookup
+    settings = get_settings()
+    tips_result = await db.execute(
+        select(TeachingTip).order_by(
+            TeachingTip.source_type.desc(),  # 'human' > 'auto'
+            TeachingTip.confidence.desc(),
+        )
+    )
+    all_teaching_tips = tips_result.scalars().all()
+
+    def _get_tips_for_action(action_type_val: str) -> list[TeachingTipRef]:
+        matched = [t for t in all_teaching_tips if t.action_type == action_type_val]
+        return [
+            TeachingTipRef(
+                tip_text=t.tip_text,
+                tech_phase=t.tech_phase,
+                source_type=t.source_type,
+            )
+            for t in matched[: settings.max_teaching_tips]
+        ]
+
     # Build response for each motion analysis
     motion_analysis_items: list[MotionAnalysisItem] = []
     total_deviations = 0
@@ -547,6 +570,7 @@ async def get_task_result(
                 impact_score=a.impact_score,
                 reliability_level=a.reliability_level.value,
                 reliability_note=a.reliability_note,
+                teaching_tips=_get_tips_for_action(analysis.action_type.value),
             )
             for a in advice_list
         ]

@@ -108,6 +108,12 @@ class AnalysisTask(Base):
         back_populates="task",
         cascade="all, delete-orphan",
     )
+    teaching_tips: Mapped[list["TeachingTip"]] = relationship(  # noqa: F821
+        "TeachingTip",
+        foreign_keys="TeachingTip.task_id",
+        back_populates="task",
+        cascade="all, delete-orphan",
+    )
 
     @property
     def is_deleted(self) -> bool:

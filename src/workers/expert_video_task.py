@@ -521,6 +521,93 @@ def _cleanup(tmp_path: Path | None) -> None:
             logger.debug("Temp file cleanup skipped (non-fatal): %s", tmp_path)
 
 
+def _extract_and_save_teaching_tips(
+    task_id: uuid.UUID,
+    action_type_hint: str | None,
+) -> None:
+    """Extract teaching tips from the stored AudioTranscript and save to DB.
+
+    This is a best-effort operation: any failure is logged and silently ignored.
+    Never raises — caller should never need to handle errors from this helper.
+    """
+    try:
+        asyncio.run(_extract_and_save_teaching_tips_async(task_id, action_type_hint))
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "teaching_tip extraction failed (non-fatal) task_id=%s: %s", task_id, exc
+        )
+
+
+async def _extract_and_save_teaching_tips_async(
+    task_id: uuid.UUID,
+    action_type_hint: str | None,
+) -> None:
+    """Async impl: load AudioTranscript from DB, call extractor, persist tips."""
+    from sqlalchemy import select
+    from src.models.audio_transcript import AudioTranscript
+    from src.models.teaching_tip import TeachingTip
+    from src.services.teaching_tip_extractor import TeachingTipExtractor
+
+    factory = _make_session_factory()
+    async with factory() as session:
+        # Load the AudioTranscript for this task
+        result = await session.execute(
+            select(AudioTranscript).where(AudioTranscript.task_id == task_id)
+        )
+        transcript = result.scalar_one_or_none()
+        if transcript is None or not transcript.sentences:
+            logger.info(
+                "teaching_tip_extractor skip: no transcript for task_id=%s", task_id
+            )
+            return
+
+        action_type = action_type_hint or "forehand_topspin"
+
+    # Run extraction outside DB session (LLM call may be slow)
+    settings = get_settings()
+    extractor = TeachingTipExtractor(
+        openai_api_key=settings.openai_api_key,
+        model=settings.openai_model,
+        timeout_s=settings.openai_timeout_s,
+    )
+    tips_data = extractor.extract(
+        sentences=transcript.sentences,
+        action_type=action_type,
+        task_id=task_id,
+    )
+
+    if not tips_data:
+        logger.info(
+            "teaching_tip_extractor returned 0 tips for task_id=%s", task_id
+        )
+        return
+
+    # Persist new auto tips (delete old auto first, keep human)
+    async with factory() as session:
+        async with session.begin():
+            from sqlalchemy import delete
+            await session.execute(
+                delete(TeachingTip).where(
+                    TeachingTip.task_id == task_id,
+                    TeachingTip.source_type == "auto",
+                )
+            )
+            for tip in tips_data:
+                session.add(TeachingTip(
+                    task_id=tip.task_id,
+                    action_type=tip.action_type,
+                    tech_phase=tip.tech_phase,
+                    tip_text=tip.tip_text,
+                    confidence=tip.confidence,
+                    source_type="auto",
+                ))
+
+    logger.info(
+        "teaching_tip_extractor saved %d tips for task_id=%s action_type=%s",
+        len(tips_data), task_id, action_type,
+    )
+
+
 # ── Celery task ────────────────────────────────────────────────────────────────
 
 @shared_task(
@@ -652,6 +739,12 @@ def process_expert_video(
             logger.info(
                 "%d keyword priority windows identified (task %s)", len(priority_windows), task_id
             )
+
+        # ── 8.6 Teaching Tip extraction (Feature 005) — runs after audio transcript ──
+        # Only triggers when audio pipeline succeeded and transcript is available.
+        # Failure is non-fatal: empty tips are logged, main flow continues.
+        if not audio_fallback_reason:
+            _extract_and_save_teaching_tips(task_id, action_type_hint)
 
         # ── 6–8. Segmented processing loop (US3) ──────────────────────────────
         # Each segment is processed independently; results are written to KB as

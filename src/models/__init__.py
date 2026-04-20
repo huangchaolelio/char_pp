@@ -12,6 +12,7 @@ from src.models.skill import Skill
 from src.models.skill_execution import ExecutionStatus, SkillExecution
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_semantic_segment import TechSemanticSegment
+from src.models.teaching_tip import TeachingTip
 from src.models.video_classification import VideoClassification
 
 __all__ = [
@@ -36,5 +37,6 @@ __all__ = [
     "TechKnowledgeBase",
     "KBStatus",
     "TechSemanticSegment",
+    "TeachingTip",
     "VideoClassification",
 ]
