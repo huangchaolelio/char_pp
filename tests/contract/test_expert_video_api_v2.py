@@ -374,8 +374,8 @@ class TestExpertResultV2Fields:
             if n == 1:
                 r.scalar_one_or_none.return_value = task
             elif n == 2:
-                # ExpertTechPoint query
-                r.scalars.return_value.all.return_value = [tech_point]
+                # ExpertTechPoint + TechSemanticSegment outerjoin query → list of tuples
+                r.all.return_value = [(tech_point, None)]
             elif n == 3:
                 # TechKnowledgeBase lookup
                 r.scalar_one_or_none.return_value = kb
@@ -415,8 +415,8 @@ class TestExpertResultV2Fields:
                 # task lookup
                 r.scalar_one_or_none.return_value = task
             elif n == 2:
-                # ExpertTechPoint query (scalars().all())
-                r.scalars.return_value.all.return_value = [tech_point]
+                # ExpertTechPoint + TechSemanticSegment outerjoin → list of tuples
+                r.all.return_value = [(tech_point, None)]
             elif n == 3:
                 # TechKnowledgeBase lookup
                 r.scalar_one_or_none.return_value = kb
@@ -457,8 +457,8 @@ class TestExpertResultV2Fields:
             if n == 1:
                 r.scalar_one_or_none.return_value = task
             elif n == 2:
-                # ExpertTechPoint query
-                r.scalars.return_value.all.return_value = [tech_point]
+                # ExpertTechPoint + TechSemanticSegment outerjoin → list of tuples
+                r.all.return_value = [(tech_point, None)]
             elif n == 3:
                 # TechKnowledgeBase lookup
                 r.scalar_one_or_none.return_value = kb

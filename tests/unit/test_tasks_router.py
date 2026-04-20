@@ -114,7 +114,7 @@ class TestGetTaskResult:
         task_result.scalar_one_or_none.return_value = task
 
         points_result = MagicMock()
-        points_result.scalars.return_value.all.return_value = [point]
+        points_result.all.return_value = [(point, None)]  # outerjoin returns (ExpertTechPoint, TechSemanticSegment) tuples
 
         kb_result = MagicMock()
         kb_result.scalar_one_or_none.return_value = kb

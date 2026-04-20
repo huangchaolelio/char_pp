@@ -391,7 +391,7 @@ async def get_task_result(
                 audio_ideal=p.conflict_detail["audio"]["param_ideal"],
                 diff_pct=p.conflict_detail["diff_pct"],
             )
-            for p in points
+            for p, seg in points
             if p.conflict_flag and p.conflict_detail
         ]
 
