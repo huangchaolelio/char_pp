@@ -140,10 +140,39 @@ async def submit_expert_video(
     await db.refresh(task)
 
     # Step 3 — Dispatch Celery task (fire-and-forget)
-    # Auto-infer action_type_hint from filename keywords if not explicitly provided
+    # Resolve action_type_hint: explicit > DB classification > lazy classify
     action_type_hint = body.action_type_hint
     if action_type_hint is None:
-        action_type_hint = cos_client.infer_action_type_hint(body.cos_object_key)
+        from src.models.video_classification import VideoClassification
+        from src.services.video_classifier import VideoClassifierService
+
+        vc_result = await db.execute(
+            select(VideoClassification).where(
+                VideoClassification.cos_object_key == body.cos_object_key
+            )
+        )
+        vc = vc_result.scalar_one_or_none()
+        if vc is not None:
+            # Use the DB classification (single source of truth — FR-010)
+            action_type_hint = vc.action_type
+        else:
+            # Lazy classify and persist for future calls
+            classifier = VideoClassifierService()
+            classification = classifier.classify(body.cos_object_key)
+            action_type_hint = classification.action_type
+            new_vc = VideoClassification(
+                cos_object_key=body.cos_object_key,
+                coach_name=classification.coach_name,
+                tech_category=classification.tech_category,
+                tech_sub_category=classification.tech_sub_category,
+                tech_detail=classification.tech_detail,
+                video_type=classification.video_type,
+                action_type=classification.action_type,
+                classification_confidence=classification.classification_confidence,
+                manually_overridden=False,
+            )
+            db.add(new_vc)
+            await db.commit()
 
     process_expert_video.delay(
         str(task.id),

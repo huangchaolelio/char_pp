@@ -1,0 +1,647 @@
+version: "1.0"
+
+# 教练定义：从 COS 路径中识别教练
+coaches:
+  - name: "孙浩泓"
+    cos_prefix_keywords: ["孙浩泓"]
+
+# 分类规则（优先级从高到低，首个命中规则生效）
+# 字段说明：
+#   require_keywords: 文件名必须全部包含（AND）
+#   match_keywords:   文件名至少包含一个（OR），为空则只要 require 满足即命中
+#   exclude_keywords: 文件名不能包含任何一个（优先于其他规则）
+#   confidence:       命中时的置信度（默认 1.0；大类兜底时用 0.7）
+categories:
+
+  # ─── 接发球（优先级高于正/反手，避免「正手半出台接发球」误入正手技术）────────
+  - id: receive_backhand_long
+    name: 反手位急长接发球
+    tech_category: 接发球
+    tech_sub_category: 反手位急长接发球
+    tech_detail: 反手位急长接发球
+    action_type: null
+    require_keywords: ["接发球"]
+    match_keywords: ["反手位急长", "急长"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: receive_forehand_half_table
+    name: 正手半出台接发球
+    tech_category: 接发球
+    tech_sub_category: 正手半出台接发球
+    tech_detail: 正手半出台接发球
+    action_type: null
+    require_keywords: ["接发球"]
+    match_keywords: ["半出台"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: receive_side_topspin
+    name: 侧上旋接发球
+    tech_category: 接发球
+    tech_sub_category: 侧上旋接发球
+    tech_detail: 侧上旋接发球
+    action_type: null
+    require_keywords: ["接发球"]
+    match_keywords: ["侧上旋"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: receive_side_underspin
+    name: 侧下旋接发球
+    tech_category: 接发球
+    tech_sub_category: 侧下旋接发球
+    tech_detail: 侧下旋接发球
+    action_type: null
+    require_keywords: ["接发球"]
+    match_keywords: ["侧下旋", "勾手下旋"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: receive_no_spin
+    name: 转不转接发球
+    tech_category: 接发球
+    tech_sub_category: 转不转接发球
+    tech_detail: 转不转接发球
+    action_type: null
+    require_keywords: ["接发球"]
+    match_keywords: ["转不转"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: receive_general
+    name: 接发球（通用）
+    tech_category: 接发球
+    tech_sub_category: 接发球综合
+    tech_detail: 接发球综合
+    action_type: null
+    require_keywords: []
+    match_keywords: ["接发球"]
+    exclude_keywords: []
+    confidence: 0.7
+
+  # ─── 搓球与摆短（优先级高于正/反手，避免「反手摆短」误入反手技术）──────────
+
+  # ─── 综合技术（正反手组合，优先排除，避免误分到单侧）───────────────────
+  - id: combined_general
+    name: 正反手综合
+    tech_category: 综合技术
+    tech_sub_category: 正反手综合
+    tech_detail: 正反手综合
+    action_type: null
+    require_keywords: []
+    match_keywords: ["正反手", "正反"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  # ─── 正手技术 ────────────────────────────────────────────────────────────
+  - id: forehand_position
+    name: 正手位置步法
+    tech_category: 正手技术
+    tech_sub_category: 正手位置步法
+    tech_detail: 正手位置步法
+    action_type: forehand_position
+    require_keywords: ["正手"]
+    match_keywords: ["两点", "跑位", "不定点"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: forehand_attack
+    name: 正手攻球
+    tech_category: 正手技术
+    tech_sub_category: 正手攻球
+    tech_detail: 正手攻球
+    action_type: forehand_attack
+    require_keywords: ["正手"]
+    match_keywords: ["攻球"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: forehand_counter
+    name: 正手快带
+    tech_category: 正手技术
+    tech_sub_category: 正手快带
+    tech_detail: 正手快带
+    action_type: forehand_counter
+    require_keywords: ["正手"]
+    match_keywords: ["快带"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: forehand_chop_long
+    name: 正手劈长
+    tech_category: 正手技术
+    tech_sub_category: 正手劈长
+    tech_detail: 正手劈长
+    action_type: forehand_chop_long
+    require_keywords: ["正手"]
+    match_keywords: ["劈长"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: forehand_flick
+    name: 正手挑打
+    tech_category: 正手技术
+    tech_sub_category: 正手挑打
+    tech_detail: 正手挑打
+    action_type: forehand_flick
+    require_keywords: ["正手"]
+    match_keywords: ["挑打", "挑球", "位挑球"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: forehand_loop_underspin
+    name: 正手起下旋
+    tech_category: 正手技术
+    tech_sub_category: 正手起下旋
+    tech_detail: 正手起下旋
+    action_type: forehand_loop_underspin
+    require_keywords: ["正手"]
+    match_keywords: ["起下旋"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  # 正手拉球：标题无「正手」但含「同框架」+「正手」方向词的情况，用宽松规则兜底
+  - id: forehand_topspin_loop
+    name: 正手拉球（弧圈）
+    tech_category: 正手技术
+    tech_sub_category: 正手拉球（弧圈）
+    tech_detail: 正手拉球（弧圈）
+    action_type: forehand_topspin
+    require_keywords: ["正手"]
+    match_keywords: ["连续拉", "发力拉", "发力", "广式", "拉球", "同框架"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  # 训练计划版本标题中省略了「正手」，用快带/同框架关键词单独匹配
+  - id: forehand_counter_training
+    name: 正手快带（训练计划）
+    tech_category: 正手技术
+    tech_sub_category: 正手快带
+    tech_detail: 正手快带
+    action_type: forehand_counter
+    require_keywords: []
+    match_keywords: ["快带"]
+    exclude_keywords: ["正反手", "正反", "反手"]
+    confidence: 1.0
+
+  - id: forehand_topspin_training
+    name: 正手拉球—同框架延续（训练计划）
+    tech_category: 正手技术
+    tech_sub_category: 正手拉球（弧圈）
+    tech_detail: 正手拉球（弧圈）
+    action_type: forehand_topspin
+    require_keywords: []
+    match_keywords: ["同框架"]
+    exclude_keywords: ["正反手", "正反", "反手"]
+    confidence: 1.0
+
+  - id: forehand_general_fallback
+    name: 正手技术（通用）
+    tech_category: 正手技术
+    tech_sub_category: null
+    tech_detail: null
+    action_type: forehand_general
+    require_keywords: ["正手"]
+    match_keywords: []
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 0.7
+
+  # ─── 反手技术 ────────────────────────────────────────────────────────────
+  - id: backhand_flick_strike
+    name: 反手弹击
+    tech_category: 反手技术
+    tech_sub_category: 反手弹击
+    tech_detail: 反手弹击
+    action_type: backhand_flick
+    require_keywords: ["反手"]
+    match_keywords: ["弹击"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: backhand_push
+    name: 反手推拨
+    tech_category: 反手技术
+    tech_sub_category: 反手推拨
+    tech_detail: 反手推拨
+    action_type: backhand_push
+    require_keywords: ["反手"]
+    match_keywords: ["推拨"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: backhand_chop_long
+    name: 反手劈长
+    tech_category: 反手技术
+    tech_sub_category: 反手劈长
+    tech_detail: 反手劈长
+    action_type: null
+    require_keywords: ["反手"]
+    match_keywords: ["劈长"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: backhand_change_line
+    name: 反手变线
+    tech_category: 反手技术
+    tech_sub_category: 反手变线
+    tech_detail: 反手变线
+    action_type: null
+    require_keywords: ["反手"]
+    match_keywords: ["变线"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: backhand_loop_underspin
+    name: 反手起下旋
+    tech_category: 反手技术
+    tech_sub_category: 反手起下旋
+    tech_detail: 反手起下旋
+    action_type: null
+    require_keywords: ["反手"]
+    match_keywords: ["起下旋"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: backhand_topspin_loop
+    name: 反手拉球
+    tech_category: 反手技术
+    tech_sub_category: 反手拉球
+    tech_detail: 反手拉球
+    action_type: backhand_topspin
+    require_keywords: ["反手"]
+    match_keywords: ["同框架", "拉球"]
+    exclude_keywords: ["正反手", "正反"]
+    confidence: 1.0
+
+  - id: penhold_backhand
+    name: 直板反手
+    tech_category: 反手技术
+    tech_sub_category: 直板反手
+    tech_detail: 直板反手
+    action_type: null
+    require_keywords: ["直板反手"]
+    match_keywords: []
+    exclude_keywords: []
+    confidence: 1.0
+
+  # 拧拉（不需要"反手"前缀，单独匹配）
+  - id: backhand_flip
+    name: 反手拧拉
+    tech_category: 反手技术
+    tech_sub_category: 反手拧拉
+    tech_detail: 反手拧拉
+    action_type: null
+    require_keywords: []
+    match_keywords: ["拧拉"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: backhand_general_fallback
+    name: 反手技术（通用）
+    tech_category: 反手技术
+    tech_sub_category: null
+    tech_detail: null
+    action_type: backhand_general
+    require_keywords: ["反手"]
+    match_keywords: []
+    exclude_keywords: ["正反手", "正反", "摆短"]
+    confidence: 0.7
+
+  # ─── 步法与衔接 ──────────────────────────────────────────────────────────
+  - id: footwork_push_side_lunge
+    name: 推侧扑
+    tech_category: 步法与衔接
+    tech_sub_category: 推侧扑
+    tech_detail: 推侧扑
+    action_type: null
+    require_keywords: []
+    match_keywords: ["推侧扑"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: footwork_combined
+    name: 综合步法
+    tech_category: 步法与衔接
+    tech_sub_category: 综合步法
+    tech_detail: 综合步法
+    action_type: null
+    require_keywords: []
+    match_keywords: ["移动中找球", "两边衔接", "三个计划", "跑位", "不定点"]
+    exclude_keywords: ["正手", "反手"]
+    confidence: 1.0
+
+  # ─── 搓球与摆短 ──────────────────────────────────────────────────────────
+  - id: short_push_twiddle
+    name: 推挑/撇挑
+    tech_category: 搓球与摆短
+    tech_sub_category: 偷长
+    tech_detail: 推挑/撇挑
+    action_type: null
+    require_keywords: []
+    match_keywords: ["推挑", "撇挑"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: short_push_steal_long
+    name: 偷长
+    tech_category: 搓球与摆短
+    tech_sub_category: 偷长
+    tech_detail: 偷长
+    action_type: null
+    require_keywords: []
+    match_keywords: ["偷长"]
+    exclude_keywords: ["发球", "勾手", "直板"]
+    confidence: 1.0
+
+  - id: short_push_backhand
+    name: 反手摆短
+    tech_category: 搓球与摆短
+    tech_sub_category: 反手摆短
+    tech_detail: 反手摆短
+    action_type: null
+    require_keywords: ["反手"]
+    match_keywords: ["摆短"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: short_push_penhold
+    name: 摆短（直板）
+    tech_category: 搓球与摆短
+    tech_sub_category: 摆短（直板）
+    tech_detail: 摆短（直板）
+    action_type: null
+    require_keywords: ["直板"]
+    match_keywords: ["摆短"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: short_push_basic
+    name: 摆短（横板）
+    tech_category: 搓球与摆短
+    tech_sub_category: 摆短（横板）
+    tech_detail: 摆短（横板）
+    action_type: null
+    require_keywords: []
+    match_keywords: ["摆短"]
+    exclude_keywords: ["反手", "直板"]
+    confidence: 1.0
+
+  - id: basic_push_combined
+    name: 正反手搓球（基础）
+    tech_category: 搓球与摆短
+    tech_sub_category: 正反手搓球（基础）
+    tech_detail: 正反手搓球（基础）
+    action_type: null
+    require_keywords: []
+    match_keywords: ["搓球"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  # ─── 直板系列（直板发球/偷长，优先于通用发球规则）──────────────────────────
+  - id: penhold_steal_long_serve
+    name: 直板偷长发球
+    tech_category: 发球
+    tech_sub_category: 勾手发球
+    tech_detail: 勾手发球（偷长）
+    action_type: null
+    require_keywords: ["直板"]
+    match_keywords: ["偷长"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: penhold_side_spin_serve
+    name: 直板侧旋发球
+    tech_category: 发球
+    tech_sub_category: 侧旋发球
+    tech_detail: 侧旋发球
+    action_type: null
+    require_keywords: ["直板"]
+    match_keywords: ["侧旋"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: penhold_hook_serve
+    name: 直板勾手发球
+    tech_category: 发球
+    tech_sub_category: 勾手发球
+    tech_detail: 勾手发球
+    action_type: null
+    require_keywords: ["直板"]
+    match_keywords: ["勾手"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: penhold_no_spin_serve
+    name: 直板转不转发球
+    tech_category: 发球
+    tech_sub_category: 转不转发球
+    tech_detail: 转不转发球
+    action_type: null
+    require_keywords: ["直板"]
+    match_keywords: ["转不转"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  # ─── 发球 ────────────────────────────────────────────────────────────────
+  - id: serve_lin_yunru
+    name: 林昀儒式发球
+    tech_category: 发球
+    tech_sub_category: 林昀儒式发球
+    tech_detail: 林昀儒式发球
+    action_type: null
+    require_keywords: []
+    match_keywords: ["林昀儒"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: serve_reverse_spin
+    name: 逆旋转发球
+    tech_category: 发球
+    tech_sub_category: 逆旋转发球
+    tech_detail: 逆旋转发球
+    action_type: null
+    require_keywords: []
+    match_keywords: ["逆旋转", "逆旋", "逆下旋", "逆上旋"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: serve_hook_steal
+    name: 勾手发球（偷长）
+    tech_category: 发球
+    tech_sub_category: 勾手发球
+    tech_detail: 勾手发球（偷长）
+    action_type: null
+    require_keywords: ["勾手"]
+    match_keywords: ["偷长"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: serve_hook
+    name: 勾手发球
+    tech_category: 发球
+    tech_sub_category: 勾手发球
+    tech_detail: 勾手发球
+    action_type: null
+    require_keywords: []
+    match_keywords: ["勾手发球"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: serve_side_spin
+    name: 侧旋发球
+    tech_category: 发球
+    tech_sub_category: 侧旋发球
+    tech_detail: 侧旋发球
+    action_type: null
+    require_keywords: []
+    match_keywords: ["侧旋发球"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: serve_no_spin
+    name: 转不转发球
+    tech_category: 发球
+    tech_sub_category: 转不转发球
+    tech_detail: 转不转发球
+    action_type: null
+    require_keywords: []
+    match_keywords: ["转不转发球"]
+    exclude_keywords: ["接发球"]
+    confidence: 1.0
+
+  - id: serve_general
+    name: 发球（通用）
+    tech_category: 发球
+    tech_sub_category: null
+    tech_detail: null
+    action_type: null
+    require_keywords: []
+    match_keywords: ["发球"]
+    exclude_keywords: ["接发球", "多球"]
+    confidence: 0.7
+
+  # ─── 握拍与姿态 ──────────────────────────────────────────────────────────
+  - id: grip_penhold
+    name: 直板握拍
+    tech_category: 握拍与姿态
+    tech_sub_category: 直板握拍
+    tech_detail: 直板握拍
+    action_type: null
+    require_keywords: []
+    match_keywords: ["直板握拍"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: grip_shakehand
+    name: 横板握拍
+    tech_category: 握拍与姿态
+    tech_sub_category: 横板握拍
+    tech_detail: 横板握拍
+    action_type: null
+    require_keywords: []
+    match_keywords: ["横板握拍"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: stance
+    name: 站姿体态
+    tech_category: 握拍与姿态
+    tech_sub_category: 站姿体态
+    tech_detail: 站姿体态
+    action_type: null
+    require_keywords: []
+    match_keywords: ["姿态", "屁股理论"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  # ─── 防守与保障 ──────────────────────────────────────────────────────────
+  - id: defense_high_topspin
+    name: 防高吊
+    tech_category: 防守与保障
+    tech_sub_category: 防高吊
+    tech_detail: 防高吊
+    action_type: null
+    require_keywords: []
+    match_keywords: ["防高吊"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: defense_basic
+    name: 基础防守
+    tech_category: 防守与保障
+    tech_sub_category: 基础防守
+    tech_detail: 基础防守
+    action_type: null
+    require_keywords: []
+    match_keywords: ["基础防守", "防守"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  # ─── 体能与辅助 ──────────────────────────────────────────────────────────
+  - id: fitness_ladder
+    name: 步法热身（绳梯）
+    tech_category: 体能与辅助
+    tech_sub_category: 步法热身（绳梯）
+    tech_detail: 步法热身（绳梯）
+    action_type: null
+    require_keywords: []
+    match_keywords: ["绳梯"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: fitness_warmup
+    name: 运动前热身
+    tech_category: 体能与辅助
+    tech_sub_category: 运动前热身
+    tech_detail: 运动前热身
+    action_type: null
+    require_keywords: []
+    match_keywords: ["热身"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: fitness_stretch
+    name: 放松拉伸
+    tech_category: 体能与辅助
+    tech_sub_category: 放松拉伸
+    tech_detail: 放松拉伸
+    action_type: null
+    require_keywords: []
+    match_keywords: ["放松拉伸", "拉伸"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  # ─── 其他（兜底，优先级最低）────────────────────────────────────────────
+  - id: misc_multi_ball
+    name: 多球技巧
+    tech_category: 其他
+    tech_sub_category: 多球技巧
+    tech_detail: 多球技巧
+    action_type: null
+    require_keywords: []
+    match_keywords: ["多球"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: misc_intro
+    name: 前言/概述
+    tech_category: 其他
+    tech_sub_category: 前言/概述
+    tech_detail: 前言/概述
+    action_type: null
+    require_keywords: []
+    match_keywords: ["前言", "知行合一"]
+    exclude_keywords: []
+    confidence: 1.0
+
+  - id: misc_other
+    name: 其他
+    tech_category: 其他
+    tech_sub_category: null
+    tech_detail: null
+    action_type: null
+    require_keywords: []
+    match_keywords: []
+    exclude_keywords: []
+    confidence: 0.5
