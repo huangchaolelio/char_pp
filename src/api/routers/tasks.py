@@ -42,6 +42,7 @@ from src.models.coaching_advice import CoachingAdvice
 from src.models.deviation_report import DeviationReport
 from src.models.expert_tech_point import ExpertTechPoint
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
+from src.models.tech_semantic_segment import TechSemanticSegment
 from src.services import cos_client
 from src.workers.expert_video_task import process_expert_video
 
@@ -320,14 +321,19 @@ async def get_task_result(
 
     # ── expert_video branch ───────────────────────────────────────────────────
     if task.task_type == TaskType.expert_video:
-        # Load all tech points linked to this task's KB draft version
+        # Load all tech points with their source segment timestamps (FR-008)
         points_result = await db.execute(
-            select(ExpertTechPoint).where(
+            select(ExpertTechPoint, TechSemanticSegment)
+            .outerjoin(
+                TechSemanticSegment,
+                ExpertTechPoint.transcript_segment_id == TechSemanticSegment.id,
+            )
+            .where(
                 ExpertTechPoint.source_video_id == task_uuid,
                 ExpertTechPoint.knowledge_base_version == task.knowledge_base_version,
             )
         )
-        points = points_result.scalars().all()
+        points = points_result.all()
 
         # Determine whether the KB version is still pending approval (draft)
         kb_result = await db.execute(
@@ -350,8 +356,10 @@ async def get_task_result(
                 source_type=p.source_type,
                 conflict_flag=p.conflict_flag,
                 conflict_detail=p.conflict_detail,
+                segment_start_ms=seg.start_ms if seg is not None else None,
+                segment_end_ms=seg.end_ms if seg is not None else None,
             )
-            for p in points
+            for p, seg in points
         ]
 
         # Feature 002: query AudioTranscript for audio analysis summary

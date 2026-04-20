@@ -62,10 +62,12 @@ class ExtractedTechPoint(BaseModel):
     param_ideal: float
     unit: str
     extraction_confidence: float
-    # Feature 002: source annotation and conflict fields
+    # Feature 002: source annotation, conflict fields, and timestamp range (FR-008)
     source_type: str = "visual"
     conflict_flag: bool = False
     conflict_detail: Optional[dict] = None
+    segment_start_ms: Optional[int] = None
+    segment_end_ms: Optional[int] = None
 
 
 class AudioAnalysisInfo(BaseModel):
