@@ -640,13 +640,7 @@ async def _extract_and_save_teaching_tips_async(
         action_type = action_type_hint or "forehand_topspin"
 
     # Run extraction outside DB session (LLM call may be slow)
-    settings = get_settings()
-    extractor = TeachingTipExtractor(
-        openai_api_key=settings.openai_api_key,
-        model=settings.llm_model or settings.openai_model,
-        timeout_s=settings.openai_timeout_s,
-        base_url=settings.openai_base_url or settings.base_url,
-    )
+    extractor = TeachingTipExtractor.from_settings()
     tips_data = extractor.extract(
         sentences=transcript.sentences,
         action_type=action_type,

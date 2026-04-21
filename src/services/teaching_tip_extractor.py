@@ -7,10 +7,9 @@ Flow:
   4. Call LLM to extract tips grouped by tech_phase → return list[TeachingTipData]
   5. On any LLM error / timeout / JSON parse failure → log warning, return []
 
-LLM configuration:
-  - model: from settings.openai_model (default: gpt-4o-mini)
-  - timeout: settings.openai_timeout_s (default: 30s)
-  - api_key: settings.openai_api_key
+LLM backend priority (configured via .env):
+  1. Venus Proxy  (venus_token + venus_base_url)  — raw HTTP, no openai SDK
+  2. OpenAI-compatible (openai_api_key + base_url) — openai SDK (DeepSeek / OpenAI)
 """
 
 from __future__ import annotations
@@ -22,7 +21,7 @@ import uuid
 from dataclasses import dataclass
 from typing import Optional
 
-import openai
+from src.services.llm_client import LlmClient, LlmError
 
 logger = logging.getLogger(__name__)
 
@@ -74,31 +73,13 @@ class TeachingTipData:
 class TeachingTipExtractor:
     """Extracts structured teaching tips from audio transcript using LLM."""
 
-    def __init__(
-        self,
-        openai_api_key: Optional[str] = None,
-        model: str = "gpt-4o-mini",
-        timeout_s: int = 30,
-        base_url: Optional[str] = None,
-    ) -> None:
-        self._model = model
-        self._timeout_s = timeout_s
-        client_kwargs: dict = {"api_key": openai_api_key, "timeout": timeout_s}
-        if base_url:
-            client_kwargs["base_url"] = base_url
-        self._client = openai.OpenAI(**client_kwargs)
+    def __init__(self, llm_client: LlmClient) -> None:
+        self._client = llm_client
 
     @classmethod
     def from_settings(cls) -> "TeachingTipExtractor":
         """Create extractor from application settings."""
-        from src.config import get_settings
-        settings = get_settings()
-        return cls(
-            openai_api_key=settings.openai_api_key,
-            model=settings.llm_model or settings.openai_model,
-            timeout_s=settings.openai_timeout_s,
-            base_url=settings.openai_base_url or settings.base_url,
-        )
+        return cls(llm_client=LlmClient.from_settings())
 
     def extract(
         self,
@@ -128,7 +109,7 @@ class TeachingTipExtractor:
         start_time = time.monotonic()
         try:
             # Step 1: judge if technical coaching content exists
-            is_technical, call_tokens = self._judge_is_technical(transcript_text)
+            is_technical, judge_tokens = self._judge_is_technical(transcript_text)
             if not is_technical:
                 logger.info(
                     "teaching_tip_extractor no_technical_content task_id=%s action_type=%s",
@@ -138,9 +119,7 @@ class TeachingTipExtractor:
                 return []
 
             # Step 2: extract tips grouped by tech_phase
-            tips_data, extract_tokens = self._extract_tips(
-                transcript_text, action_type
-            )
+            tips_data, extract_tokens = self._extract_tips(transcript_text, action_type)
 
             elapsed_ms = int((time.monotonic() - start_time) * 1000)
             result = [
@@ -157,29 +136,21 @@ class TeachingTipExtractor:
 
             logger.info(
                 "teaching_tip_extractor done task_id=%s action_type=%s "
-                "model=%s tip_count=%d elapsed_ms=%d "
+                "backend=%s tip_count=%d elapsed_ms=%d "
                 "judge_tokens=%d extract_tokens=%d",
                 task_id,
                 action_type,
-                self._model,
+                self._client._backend,
                 len(result),
                 elapsed_ms,
-                call_tokens,
+                judge_tokens,
                 extract_tokens,
             )
             return result
 
-        except openai.APITimeoutError as exc:
+        except LlmError as exc:
             logger.warning(
-                "teaching_tip_extractor timeout task_id=%s action_type=%s error=%s",
-                task_id,
-                action_type,
-                exc,
-            )
-            return []
-        except openai.APIError as exc:
-            logger.warning(
-                "teaching_tip_extractor api_error task_id=%s action_type=%s error=%s",
+                "teaching_tip_extractor llm_error task_id=%s action_type=%s error=%s",
                 task_id,
                 action_type,
                 exc,
@@ -195,46 +166,28 @@ class TeachingTipExtractor:
             return []
 
     def _judge_is_technical(self, transcript: str) -> tuple[bool, int]:
-        """Ask LLM whether the transcript contains technical coaching content.
-
-        Returns:
-            (is_technical, prompt_tokens_used)
-        """
+        """Ask LLM whether the transcript contains technical coaching content."""
         prompt = _IS_TECHNICAL_PROMPT.format(transcript=transcript[:3000])
-        response = self._client.chat.completions.create(
-            model=self._model,
+        content, tokens = self._client.chat(
             messages=[{"role": "user", "content": prompt}],
             temperature=0,
-            response_format={"type": "json_object"},
+            json_mode=True,
         )
-        content = response.choices[0].message.content or "{}"
-        tokens = response.usage.prompt_tokens + response.usage.completion_tokens if response.usage else 0
-
-        data = json.loads(content)
+        data = json.loads(content or "{}")
         return bool(data.get("is_technical", False)), tokens
 
-    def _extract_tips(
-        self, transcript: str, action_type: str
-    ) -> tuple[list[dict], int]:
-        """Ask LLM to extract tips grouped by tech_phase.
-
-        Returns:
-            (tips_list, tokens_used)
-        """
+    def _extract_tips(self, transcript: str, action_type: str) -> tuple[list[dict], int]:
+        """Ask LLM to extract tips grouped by tech_phase."""
         prompt = _EXTRACT_TIPS_PROMPT.format(
             transcript=transcript[:4000],
             action_type=action_type,
         )
-        response = self._client.chat.completions.create(
-            model=self._model,
+        content, tokens = self._client.chat(
             messages=[{"role": "user", "content": prompt}],
             temperature=0.2,
-            response_format={"type": "json_object"},
+            json_mode=True,
         )
-        content = response.choices[0].message.content or '{"tips": []}'
-        tokens = response.usage.prompt_tokens + response.usage.completion_tokens if response.usage else 0
-
-        data = json.loads(content)
+        data = json.loads(content or '{"tips": []}')
         tips = data.get("tips", [])
         if not isinstance(tips, list):
             tips = []
