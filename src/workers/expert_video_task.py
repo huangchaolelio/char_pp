@@ -643,8 +643,9 @@ async def _extract_and_save_teaching_tips_async(
     settings = get_settings()
     extractor = TeachingTipExtractor(
         openai_api_key=settings.openai_api_key,
-        model=settings.openai_model,
+        model=settings.llm_model or settings.openai_model,
         timeout_s=settings.openai_timeout_s,
+        base_url=settings.openai_base_url or settings.base_url,
     )
     tips_data = extractor.extract(
         sentences=transcript.sentences,

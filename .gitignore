@@ -53,6 +53,8 @@ logs/
 *.pth
 *.onnx
 *.weights
+*.task
+models/
 
 # SQLite dev/test databases
 *.sqlite3
