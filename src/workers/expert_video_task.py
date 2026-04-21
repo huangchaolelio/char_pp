@@ -33,7 +33,7 @@ import logging
 import shutil
 import subprocess
 import uuid
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -383,15 +383,16 @@ def _split_one_segment(
     offset_s: int,
     duration_s: int,
 ) -> str | None:
-    """Worker function executed in a subprocess pool.
+    """Worker function for thread pool: launch one ffmpeg subprocess.
+
+    Uses ThreadPoolExecutor (not ProcessPoolExecutor) because Celery prefork
+    workers are daemon processes and cannot spawn child processes.  Each thread
+    calls subprocess.run(ffmpeg), so GIL is released during the subprocess wait
+    and parallelism is real.
 
     Returns seg_path_str on success, None on failure.
-    Must be a top-level function (not nested/lambda) to be picklable.
     """
-    import subprocess as _sp
-    from pathlib import Path as _Path
-
-    seg_path = _Path(seg_path_str)
+    seg_path = Path(seg_path_str)
     cmd = [
         ffmpeg_bin, "-y",
         "-ss", str(offset_s),
@@ -401,7 +402,7 @@ def _split_one_segment(
         "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-an",
         seg_path_str,
     ]
-    result = _sp.run(cmd, capture_output=True, timeout=120)
+    result = subprocess.run(cmd, capture_output=True, timeout=120)
     if result.returncode == 0 and seg_path.exists():
         return seg_path_str
     return None
@@ -412,9 +413,14 @@ def _pre_split_video(
     segment_duration_s: int,
     total_segments: int,
 ) -> list[Path | None]:
-    """Pre-split *src* into *total_segments* clips in parallel using ProcessPoolExecutor.
+    """Pre-split *src* into *total_segments* clips in parallel using ThreadPoolExecutor.
 
-    Uses max_workers = min(4, total_segments) to cap CPU + I/O pressure.
+    Uses ThreadPoolExecutor (not ProcessPoolExecutor) because Celery prefork workers
+    are daemon processes and cannot spawn child processes.  Each thread launches an
+    ffmpeg subprocess — the GIL is released during subprocess.run() wait, so
+    parallelism is genuine for this I/O-bound workload.
+
+    Uses max_workers = min(4, total_segments) to cap concurrent ffmpeg processes.
 
     Returns a list of length *total_segments* where each element is either:
     - A Path to the successfully created clip file, or
@@ -443,7 +449,7 @@ def _pre_split_video(
     results: list[Path | None] = [None] * total_segments
     failed_indices: list[int] = []
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
         future_to_idx = {
             executor.submit(_split_one_segment, *args): idx
             for idx, args in enumerate(seg_args)

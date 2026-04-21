@@ -2,9 +2,12 @@
 
 测试策略：
 - Mock subprocess.run 以避免真实 ffmpeg 调用
-- 验证并行执行路径（ProcessPoolExecutor）
-- 验证失败取消语义（任一失败 → 整体返回全 None 列表或抛异常）
+- 验证并行执行路径（ThreadPoolExecutor）
+- 验证失败取消语义（任一失败 → 整体抛 RuntimeError）
 - 验证 max_workers = min(4, total_segments)
+
+注：使用 ThreadPoolExecutor（不是 ProcessPoolExecutor）因为 Celery prefork
+worker 是 daemon 进程，无法 fork 子进程；ffmpeg 是 subprocess，线程池同样有效。
 """
 import os
 import sys
@@ -43,9 +46,8 @@ class TestPreSplitParallel:
         src.touch()
 
         def fake_run(cmd, **kwargs):
-            # Derive seg_path from cmd (last positional arg)
             seg_path = Path(cmd[-1])
-            seg_path.touch()  # simulate output file creation
+            seg_path.touch()
             return _make_subprocess_result(0)
 
         with patch("src.workers.expert_video_task.subprocess.run", side_effect=fake_run):
@@ -67,7 +69,6 @@ class TestPreSplitParallel:
             call_count["n"] += 1
             seg_path = Path(cmd[-1])
             if call_count["n"] == 2:
-                # Second segment fails
                 return _make_subprocess_result(1)
             seg_path.touch()
             return _make_subprocess_result(0)
@@ -77,8 +78,8 @@ class TestPreSplitParallel:
                 _pre_split_video(src, segment_duration_s=30, total_segments=4)
 
     def test_max_workers_capped_at_4(self, tmp_path):
-        """ProcessPoolExecutor is constructed with max_workers=min(4, total_segments)."""
-        from concurrent.futures import ProcessPoolExecutor
+        """ThreadPoolExecutor is constructed with max_workers=min(4, total_segments)."""
+        from concurrent.futures import ThreadPoolExecutor
 
         from src.workers.expert_video_task import _pre_split_video
 
@@ -86,10 +87,9 @@ class TestPreSplitParallel:
         src.touch()
 
         captured_kwargs = {}
+        original_tpe = ThreadPoolExecutor
 
-        original_ppe = ProcessPoolExecutor
-
-        class CapturingPPE(original_ppe):
+        class CapturingTPE(original_tpe):
             def __init__(self, *args, **kwargs):
                 captured_kwargs.update(kwargs)
                 super().__init__(*args, **kwargs)
@@ -100,7 +100,7 @@ class TestPreSplitParallel:
             return _make_subprocess_result(0)
 
         with (
-            patch("src.workers.expert_video_task.ProcessPoolExecutor", CapturingPPE),
+            patch("src.workers.expert_video_task.ThreadPoolExecutor", CapturingTPE),
             patch("src.workers.expert_video_task.subprocess.run", side_effect=fake_run),
         ):
             _pre_split_video(src, segment_duration_s=30, total_segments=6)
@@ -111,7 +111,7 @@ class TestPreSplitParallel:
 
     def test_max_workers_fewer_than_4_when_segments_less(self, tmp_path):
         """When total_segments < 4, max_workers == total_segments."""
-        from concurrent.futures import ProcessPoolExecutor
+        from concurrent.futures import ThreadPoolExecutor
 
         from src.workers.expert_video_task import _pre_split_video
 
@@ -119,9 +119,9 @@ class TestPreSplitParallel:
         src.touch()
 
         captured_kwargs = {}
-        original_ppe = ProcessPoolExecutor
+        original_tpe = ThreadPoolExecutor
 
-        class CapturingPPE(original_ppe):
+        class CapturingTPE(original_tpe):
             def __init__(self, *args, **kwargs):
                 captured_kwargs.update(kwargs)
                 super().__init__(*args, **kwargs)
@@ -132,7 +132,7 @@ class TestPreSplitParallel:
             return _make_subprocess_result(0)
 
         with (
-            patch("src.workers.expert_video_task.ProcessPoolExecutor", CapturingPPE),
+            patch("src.workers.expert_video_task.ThreadPoolExecutor", CapturingTPE),
             patch("src.workers.expert_video_task.subprocess.run", side_effect=fake_run),
         ):
             _pre_split_video(src, segment_duration_s=30, total_segments=2)
