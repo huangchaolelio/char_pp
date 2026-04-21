@@ -36,6 +36,8 @@ class ExpertVideoRequest(BaseModel):
         description="动作类型提示，用于过滤提取结果。可选值: forehand_topspin / backhand_push。"
                     "不传时由系统根据视频文件名关键词自动推断。",
     )
+    # Feature 006: associate coach with this expert video task
+    coach_id: Optional[UUID] = Field(None, description="教练 ID（可选），指定后将该任务关联到对应教练")
 
 
 # AthleteVideoRequest uses multipart/form-data — parsed in the endpoint directly
@@ -60,6 +62,9 @@ class TaskStatusResponse(BaseModel):
     audio_fallback_reason: Optional[str] = None
     # Incremental KB draft: populated as soon as the first segment writes results
     knowledge_base_version: Optional[str] = None
+    # Feature 006: coach association
+    coach_id: Optional[UUID] = None
+    coach_name: Optional[str] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────

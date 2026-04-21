@@ -27,6 +27,9 @@ class TeachingTipResponse(BaseModel):
     original_text: Optional[str] = None
     created_at: datetime
     updated_at: datetime
+    # Feature 006: coach info via task JOIN
+    coach_id: Optional[UUID] = None
+    coach_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
 

@@ -26,6 +26,7 @@ from src.api.schemas.teaching_tip import (
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.audio_transcript import AudioTranscript
+from src.models.coach import Coach
 from src.models.teaching_tip import TeachingTip
 
 logger = logging.getLogger(__name__)
@@ -40,10 +41,16 @@ async def list_teaching_tips(
     tech_phase: Optional[str] = None,
     source_type: Optional[str] = None,
     task_id: Optional[uuid.UUID] = None,
+    coach_id: Optional[uuid.UUID] = None,  # Feature 006: filter by coach
     db: AsyncSession = Depends(get_db),
 ) -> TeachingTipListResponse:
     """List teaching tips with optional filters."""
-    stmt = select(TeachingTip)
+    # Feature 006: JOIN with analysis_tasks and coaches to support coach_id filter
+    stmt = (
+        select(TeachingTip, AnalysisTask.coach_id, Coach.name)
+        .join(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
+        .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
+    )
 
     if action_type is not None:
         stmt = stmt.where(TeachingTip.action_type == action_type)
@@ -53,15 +60,21 @@ async def list_teaching_tips(
         stmt = stmt.where(TeachingTip.source_type == source_type)
     if task_id is not None:
         stmt = stmt.where(TeachingTip.task_id == task_id)
+    if coach_id is not None:
+        stmt = stmt.where(AnalysisTask.coach_id == coach_id)
 
     stmt = stmt.order_by(TeachingTip.source_type.desc(), TeachingTip.confidence.desc())
     result = await db.execute(stmt)
-    tips = result.scalars().all()
+    rows = result.all()
 
-    return TeachingTipListResponse(
-        total=len(tips),
-        items=[TeachingTipResponse.model_validate(t) for t in tips],
-    )
+    items = []
+    for tip, tip_coach_id, coach_name in rows:
+        data = TeachingTipResponse.model_validate(tip)
+        data.coach_id = tip_coach_id
+        data.coach_name = coach_name
+        items.append(data)
+
+    return TeachingTipListResponse(total=len(items), items=items)
 
 
 # ── PATCH /teaching-tips/{id} ─────────────────────────────────────────────────

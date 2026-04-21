@@ -3,6 +3,7 @@
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.athlete_motion_analysis import AthleteActionType, AthleteMotionAnalysis
 from src.models.audio_transcript import AudioQualityFlag, AudioTranscript
+from src.models.coach import Coach
 from src.models.coaching_advice import CoachingAdvice, ReliabilityLevel
 from src.models.deviation_report import DeviationDirection, DeviationReport
 from src.models.expert_tech_point import ActionType, ExpertTechPoint
@@ -23,6 +24,7 @@ __all__ = [
     "AthleteActionType",
     "AudioTranscript",
     "AudioQualityFlag",
+    "Coach",
     "CoachingAdvice",
     "ReliabilityLevel",
     "DeviationReport",

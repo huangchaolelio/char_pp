@@ -214,3 +214,41 @@ class TestErrorResponseFormat:
         detail = data.get("detail", {})
         assert "code" in detail
         assert "message" in detail
+
+
+@pytest.mark.contract
+class TestFeature006TaskCoachContracts:
+    """T024: POST /tasks/expert-video accepts optional coach_id; GET /tasks/{id} returns coach_id."""
+
+    def test_expert_video_request_accepts_coach_id(self):
+        from src.api.schemas.task import ExpertVideoRequest
+        import uuid
+        body = ExpertVideoRequest(cos_object_key="coach-videos/test.mp4", coach_id=uuid.uuid4())
+        assert body.coach_id is not None
+
+    def test_expert_video_request_coach_id_optional(self):
+        from src.api.schemas.task import ExpertVideoRequest
+        body = ExpertVideoRequest(cos_object_key="coach-videos/test.mp4")
+        assert body.coach_id is None
+
+    def test_task_status_response_has_coach_fields(self):
+        from src.api.schemas.task import TaskStatusResponse
+        import uuid
+        from datetime import datetime, timezone
+        resp = TaskStatusResponse(
+            task_id=uuid.uuid4(), task_type="expert_video",
+            status="pending", created_at=datetime.now(timezone.utc),
+            coach_id=uuid.uuid4(), coach_name="张教练",
+        )
+        assert resp.coach_name == "张教练"
+
+    def test_task_status_response_coach_fields_optional(self):
+        from src.api.schemas.task import TaskStatusResponse
+        import uuid
+        from datetime import datetime, timezone
+        resp = TaskStatusResponse(
+            task_id=uuid.uuid4(), task_type="expert_video",
+            status="pending", created_at=datetime.now(timezone.utc),
+        )
+        assert resp.coach_id is None
+        assert resp.coach_name is None

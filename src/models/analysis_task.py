@@ -5,12 +5,15 @@ from __future__ import annotations
 import enum
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import BigInteger, Enum, Float, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+
+if TYPE_CHECKING:
+    from src.models.coach import Coach
 
 from src.db.encryption import EncryptedString
 from src.db.session import Base
@@ -79,7 +82,20 @@ class AnalysisTask(Base):
         TIMESTAMP(timezone=True), nullable=True
     )
 
+    # Feature 006: multi-coach KB
+    coach_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("coaches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
     # Relationships
+    coach: Mapped[Optional["Coach"]] = relationship(
+        "Coach",
+        back_populates="tasks",
+        foreign_keys=[coach_id],
+    )
     expert_tech_points: Mapped[list["ExpertTechPoint"]] = relationship(  # noqa: F821
         "ExpertTechPoint",
         foreign_keys="ExpertTechPoint.source_video_id",

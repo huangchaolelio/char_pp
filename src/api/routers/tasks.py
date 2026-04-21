@@ -16,6 +16,7 @@ from typing import Union, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.schemas.task import (
@@ -41,6 +42,7 @@ from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.athlete_motion_analysis import AthleteMotionAnalysis
 from src.models.audio_transcript import AudioTranscript
+from src.models.coach import Coach
 from src.models.coaching_advice import CoachingAdvice
 from src.models.deviation_report import DeviationReport
 from src.models.expert_tech_point import ExpertTechPoint
@@ -137,6 +139,25 @@ async def submit_expert_video(
         video_size_bytes=0,
         video_storage_uri=body.cos_object_key,
     )
+
+    # Feature 006: validate and associate coach if provided
+    if body.coach_id is not None:
+        coach_result = await db.execute(
+            select(Coach).where(Coach.id == body.coach_id)
+        )
+        coach = coach_result.scalar_one_or_none()
+        if coach is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "COACH_NOT_FOUND", "message": "教练不存在"},
+            )
+        if not coach.is_active:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "COACH_INACTIVE", "message": "无法关联已停用的教练"},
+            )
+        task.coach_id = body.coach_id
+
     db.add(task)
     await db.commit()
     await db.refresh(task)
@@ -299,7 +320,9 @@ async def get_task_status(
         )
 
     result = await db.execute(
-        select(AnalysisTask).where(
+        select(AnalysisTask)
+        .options(selectinload(AnalysisTask.coach))
+        .where(
             AnalysisTask.id == task_uuid,
             AnalysisTask.deleted_at.is_(None),
         )
@@ -331,6 +354,9 @@ async def get_task_status(
         total_segments=task.total_segments,
         audio_fallback_reason=task.audio_fallback_reason,
         knowledge_base_version=task.knowledge_base_version,
+        # Feature 006: coach info via relationship
+        coach_id=task.coach_id,
+        coach_name=task.coach.name if task.coach else None,
     )
 
 

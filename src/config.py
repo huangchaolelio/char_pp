@@ -70,7 +70,10 @@ class Settings(BaseSettings):
 
     # LLM — Feature 005: teaching tip extraction
     openai_api_key: Optional[str] = None        # required for TeachingTipExtractor
-    openai_model: str = "gpt-4o-mini"           # model used for tip extraction
+    openai_base_url: Optional[str] = None       # custom API base URL (e.g. proxy)
+    base_url: Optional[str] = None              # alias for openai_base_url (.env compat)
+    openai_model: str = "gpt-4o-mini"           # model used for tip extraction (fallback)
+    llm_model: Optional[str] = None             # overrides openai_model if set
     openai_timeout_s: int = 30                  # LLM call timeout in seconds
     max_teaching_tips: int = 3                  # max tips attached per coaching advice item
 

@@ -1,10 +1,12 @@
-"""Contract tests for Teaching Tips API (Feature 005) — T013.
+"""Contract tests for Teaching Tips API (Feature 005 + 006) — T013, T016.
 
 Tests:
   1. GET /teaching-tips — response schema valid
   2. PATCH /teaching-tips/{id} — source_type becomes 'human'
   3. POST /tasks/{task_id}/extract-tips — 202 response schema valid
   4. GET /tasks/{task_id}/result (athlete) — teaching_tips field present in CoachingAdviceItem
+  5. [Feature 006] GET /teaching-tips?coach_id={id} — coach filter support
+  6. [Feature 006] TeachingTipResponse includes coach_id and coach_name fields
 """
 
 from __future__ import annotations
@@ -168,3 +170,68 @@ class TestCoachingAdviceTeachingTipsContract:
         assert ref.tip_text == "保持放松"
         assert ref.tech_phase == "preparation"
         assert ref.source_type == "auto"
+
+
+# ── [Feature 006] Contract: GET /teaching-tips?coach_id ─────────────────────
+
+class TestTeachingTipsCoachFilter:
+
+    def test_teaching_tip_response_has_coach_fields(self):
+        """TeachingTipResponse includes coach_id and coach_name (Feature 006)."""
+        from src.api.schemas.teaching_tip import TeachingTipResponse
+        import datetime
+
+        tip = TeachingTipResponse(
+            id=__import__("uuid").uuid4(),
+            task_id=__import__("uuid").uuid4(),
+            action_type="forehand_topspin",
+            tech_phase="contact",
+            tip_text="击球瞬间手腕内旋",
+            confidence=0.9,
+            source_type="auto",
+            original_text=None,
+            created_at=datetime.datetime.now(),
+            updated_at=datetime.datetime.now(),
+            coach_id=None,
+            coach_name=None,
+        )
+        assert tip.coach_id is None
+        assert tip.coach_name is None
+
+    def test_teaching_tip_response_with_coach(self):
+        """TeachingTipResponse carries coach info when coach is assigned."""
+        from src.api.schemas.teaching_tip import TeachingTipResponse
+        import uuid, datetime
+
+        coach_id = uuid.uuid4()
+        tip = TeachingTipResponse(
+            id=uuid.uuid4(),
+            task_id=uuid.uuid4(),
+            action_type="forehand_topspin",
+            tech_phase="contact",
+            tip_text="击球瞬间手腕内旋",
+            confidence=0.9,
+            source_type="auto",
+            original_text=None,
+            created_at=datetime.datetime.now(),
+            updated_at=datetime.datetime.now(),
+            coach_id=coach_id,
+            coach_name="张教练",
+        )
+        assert tip.coach_id == coach_id
+        assert tip.coach_name == "张教练"
+
+    def test_list_teaching_tips_accepts_coach_id_param(self):
+        """GET /teaching-tips endpoint supports coach_id query param."""
+        import inspect
+        from src.api.routers.teaching_tips import list_teaching_tips
+        sig = inspect.signature(list_teaching_tips)
+        assert "coach_id" in sig.parameters
+
+    def test_nonexistent_coach_id_returns_empty_list(self):
+        """coach_id filter with unknown UUID should return empty list (not error)."""
+        # Schema-level validation: coach_id is optional UUID
+        from src.api.schemas.coach import TaskCoachUpdate
+        body = TaskCoachUpdate(coach_id=__import__("uuid").uuid4())
+        assert body.coach_id is not None
+

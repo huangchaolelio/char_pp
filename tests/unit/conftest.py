@@ -99,6 +99,9 @@ def make_task(
     t.processed_segments = None
     t.total_segments = None
     t.audio_fallback_reason = None
+    # Feature 006: coach fields
+    t.coach_id = None
+    t.coach = None
     return t
 
 

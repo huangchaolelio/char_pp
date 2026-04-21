@@ -79,13 +79,14 @@ class TeachingTipExtractor:
         openai_api_key: Optional[str] = None,
         model: str = "gpt-4o-mini",
         timeout_s: int = 30,
+        base_url: Optional[str] = None,
     ) -> None:
         self._model = model
         self._timeout_s = timeout_s
-        self._client = openai.OpenAI(
-            api_key=openai_api_key,
-            timeout=timeout_s,
-        )
+        client_kwargs: dict = {"api_key": openai_api_key, "timeout": timeout_s}
+        if base_url:
+            client_kwargs["base_url"] = base_url
+        self._client = openai.OpenAI(**client_kwargs)
 
     @classmethod
     def from_settings(cls) -> "TeachingTipExtractor":
@@ -94,8 +95,9 @@ class TeachingTipExtractor:
         settings = get_settings()
         return cls(
             openai_api_key=settings.openai_api_key,
-            model=settings.openai_model,
+            model=settings.llm_model or settings.openai_model,
             timeout_s=settings.openai_timeout_s,
+            base_url=settings.openai_base_url or settings.base_url,
         )
 
     def extract(

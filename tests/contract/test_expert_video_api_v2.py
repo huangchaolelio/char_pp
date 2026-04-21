@@ -58,6 +58,8 @@ def _make_task(
     task.processed_segments = processed_segments
     task.total_segments = total_segments
     task.audio_fallback_reason = audio_fallback_reason
+    task.coach_id = None
+    task.coach = None
     return task
 
 
