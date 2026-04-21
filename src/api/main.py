@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 
 from src.api.routers import knowledge_base, tasks
 from src.api.routers.calibration import router as calibration_router
+from src.api.routers.classifications import router as classifications_router
 from src.api.routers.coaches import router as coaches_router
 from src.api.routers.videos import router as videos_router
 from src.api.routers.teaching_tips import router as teaching_tips_router
@@ -83,6 +84,7 @@ def create_app() -> FastAPI:
     app.include_router(teaching_tips_router, prefix="/api/v1")
     app.include_router(coaches_router, prefix="/api/v1")
     app.include_router(calibration_router, prefix="/api/v1")
+    app.include_router(classifications_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

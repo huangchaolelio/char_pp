@@ -15,6 +15,7 @@ def create_celery_app() -> Celery:
         include=[
             "src.workers.expert_video_task",
             "src.workers.athlete_video_task",
+            "src.workers.classification_task",
         ],
     )
 
