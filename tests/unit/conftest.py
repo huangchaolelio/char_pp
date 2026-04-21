@@ -102,6 +102,8 @@ def make_task(
     # Feature 006: coach fields
     t.coach_id = None
     t.coach = None
+    # Feature 007: timing stats
+    t.timing_stats = None
     return t
 
 

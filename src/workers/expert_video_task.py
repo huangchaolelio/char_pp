@@ -33,6 +33,7 @@ import logging
 import shutil
 import subprocess
 import uuid
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -375,43 +376,109 @@ def _get_video_duration_ffprobe(video_path: Path) -> float | None:
     return None
 
 
+def _split_one_segment(
+    ffmpeg_bin: str,
+    src_str: str,
+    seg_path_str: str,
+    offset_s: int,
+    duration_s: int,
+) -> str | None:
+    """Worker function executed in a subprocess pool.
+
+    Returns seg_path_str on success, None on failure.
+    Must be a top-level function (not nested/lambda) to be picklable.
+    """
+    import subprocess as _sp
+    from pathlib import Path as _Path
+
+    seg_path = _Path(seg_path_str)
+    cmd = [
+        ffmpeg_bin, "-y",
+        "-ss", str(offset_s),
+        "-t", str(duration_s),
+        "-i", src_str,
+        "-vf", "scale=1280:720",
+        "-c:v", "libx264", "-preset", "ultrafast", "-crf", "23", "-an",
+        seg_path_str,
+    ]
+    result = _sp.run(cmd, capture_output=True, timeout=120)
+    if result.returncode == 0 and seg_path.exists():
+        return seg_path_str
+    return None
+
+
 def _pre_split_video(
     src: Path,
     segment_duration_s: int,
     total_segments: int,
 ) -> list[Path | None]:
-    """Pre-split *src* into *total_segments* clips of *segment_duration_s* seconds each.
+    """Pre-split *src* into *total_segments* clips in parallel using ProcessPoolExecutor.
+
+    Uses max_workers = min(4, total_segments) to cap CPU + I/O pressure.
 
     Returns a list of length *total_segments* where each element is either:
     - A Path to the successfully created clip file, or
     - None if the FFmpeg clip command failed.
 
+    Fail-fast: if any segment fails, raises RuntimeError("pre-split failed …")
+    so the caller can mark the entire task as failed.
+
     Each successful clip file must be deleted by the caller after processing.
     """
     ffmpeg_bin = shutil.which("ffmpeg") or "/opt/conda/bin/ffmpeg"
-    seg_paths: list[Path | None] = []
+    max_workers = min(4, total_segments)
+
+    # Build argument tuples for each segment
+    seg_args = []
     for i in range(total_segments):
         seg_path = src.parent / f"seg_{i:04d}_{src.stem}.mp4"
-        cmd = [
-            ffmpeg_bin, "-y",
-            "-ss", str(i * segment_duration_s),
-            "-t", str(segment_duration_s),
-            "-i", str(src),
-            "-vf", "scale=1280:720",
-            "-c:v", "libx264", "-crf", "23", "-an",
+        seg_args.append((
+            ffmpeg_bin,
+            str(src),
             str(seg_path),
-        ]
-        result = subprocess.run(cmd, capture_output=True, timeout=120)
-        if result.returncode == 0 and seg_path.exists():
-            seg_paths.append(seg_path)
-        else:
-            logger.warning("Pre-split failed for segment %d/%d (task src=%s)", i, total_segments, src.name)
-            seg_paths.append(None)
+            i * segment_duration_s,
+            segment_duration_s,
+        ))
+
+    results: list[Path | None] = [None] * total_segments
+    failed_indices: list[int] = []
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        future_to_idx = {
+            executor.submit(_split_one_segment, *args): idx
+            for idx, args in enumerate(seg_args)
+        }
+        for future in as_completed(future_to_idx):
+            idx = future_to_idx[future]
+            try:
+                path_str = future.result()
+            except Exception as exc:
+                logger.warning(
+                    "Pre-split raised exception for segment %d/%d (src=%s): %s",
+                    idx, total_segments, src.name, exc,
+                )
+                failed_indices.append(idx)
+            else:
+                if path_str is not None:
+                    results[idx] = Path(path_str)
+                else:
+                    logger.warning(
+                        "Pre-split failed for segment %d/%d (task src=%s)",
+                        idx, total_segments, src.name,
+                    )
+                    failed_indices.append(idx)
+
+    if failed_indices:
+        raise RuntimeError(
+            f"pre-split failed for {len(failed_indices)}/{total_segments} segments "
+            f"(src={src.name}, failed_indices={failed_indices})"
+        )
+
     logger.info(
         "Pre-split complete: %d/%d segments OK (src=%s)",
-        sum(1 for p in seg_paths if p is not None), total_segments, src.name,
+        total_segments, total_segments, src.name,
     )
-    return seg_paths
+    return results
 
 
 async def _update_progress(
@@ -489,6 +556,7 @@ async def _finalize_task(
     audio_fallback_reason: str | None,
     final_status: TaskStatus,
     failed_segment_indices: list[int],
+    timing_stats: dict | None = None,
 ) -> None:
     """Mark the AnalysisTask as complete and record metadata.
 
@@ -507,6 +575,8 @@ async def _finalize_task(
                 task.video_duration_seconds = video_meta.duration_seconds
                 task.knowledge_base_version = kb_version
                 task.audio_fallback_reason = audio_fallback_reason
+                if timing_stats is not None:
+                    task.timing_stats = timing_stats
                 if failed_segment_indices:
                     import json as _json
                     task.error_message = _json.dumps({"failed_segments": failed_segment_indices})
@@ -649,6 +719,12 @@ def process_expert_video(
         task_id, cos_object_key, action_type_hint,
     )
 
+    import time as _time
+    _t_task_start = _time.monotonic()
+    _t_pre_split_s: float = 0.0
+    _t_pose_s: float = 0.0
+    _t_kb_s: float = 0.0
+
     try:
         # ── 1. Mark as processing ──────────────────────────────────────────────
         asyncio.run(_set_processing(task_id))
@@ -721,7 +797,10 @@ def process_expert_video(
         )
 
         # ── 5.5 Pre-split all segments up front ───────────────────────────────
+        _t0 = _time.monotonic()
         seg_paths = _pre_split_video(tmp_path, segment_duration_s, total_segments)
+        _t_pre_split_s = _time.monotonic() - _t0
+        logger.info("[timing] phase=pre_split duration=%.1fs (task %s)", _t_pre_split_s, task_id)
         failed_segment_indices: list[int] = [
             i for i, p in enumerate(seg_paths) if p is None
         ]
@@ -764,7 +843,9 @@ def process_expert_video(
             )
             try:
                 # Pose estimation on this segment
+                _t_pose0 = _time.monotonic()
                 seg_frames = pose_estimator.estimate_pose(seg_path)
+                _t_pose_s += _time.monotonic() - _t_pose0
                 if not seg_frames:
                     logger.info(
                         "No motion in segment %d/%d (task %s)", seg_idx + 1, total_segments, task_id
@@ -797,11 +878,13 @@ def process_expert_video(
                         known_segs = []
 
                 # Extract tech dimensions for this segment
+                _t_kb0 = _time.monotonic()
                 seg_extraction_results = []
                 for cs in known_segs:
                     res = tech_extractor.extract_tech_points(cs, seg_frames)
                     if res.dimensions:
                         seg_extraction_results.append(res)
+                _t_kb_s += _time.monotonic() - _t_kb0
 
                 # Build visual dicts for this segment only
                 seg_visual_dicts = [
@@ -901,6 +984,22 @@ def process_expert_video(
         kb_version = kb_version_holder[0]
 
         # ── 10. Finalize task ─────────────────────────────────────────────────
+        _t_total_s = _time.monotonic() - _t_task_start
+        _timing_stats = {
+            "pre_split_s": round(_t_pre_split_s, 2),
+            "pose_estimation_s": round(_t_pose_s, 2),
+            "kb_extraction_s": round(_t_kb_s, 2),
+            "total_s": round(_t_total_s, 2),
+        }
+        logger.info(
+            "[timing] phase=pose_estimation duration=%.1fs (task %s)", _t_pose_s, task_id
+        )
+        logger.info(
+            "[timing] phase=kb_extraction duration=%.1fs (task %s)", _t_kb_s, task_id
+        )
+        logger.info(
+            "[timing] phase=total duration=%.1fs (task %s)", _t_total_s, task_id
+        )
         final_status = (
             TaskStatus.partial_success if failed_segment_indices else TaskStatus.success
         )
@@ -908,6 +1007,7 @@ def process_expert_video(
             _finalize_task(
                 task_id, video_meta, kb_version, audio_fallback_reason,
                 final_status, failed_segment_indices,
+                timing_stats=_timing_stats,
             )
         )
 

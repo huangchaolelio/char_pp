@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import BigInteger, Enum, Float, ForeignKey, Integer, String, Text, TIMESTAMP
-from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 
@@ -81,6 +81,9 @@ class AnalysisTask(Base):
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
         TIMESTAMP(timezone=True), nullable=True
     )
+
+    # Feature 007: per-task processing timing
+    timing_stats: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
     # Feature 006: multi-coach KB
     coach_id: Mapped[Optional[uuid.UUID]] = mapped_column(

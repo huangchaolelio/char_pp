@@ -357,6 +357,8 @@ async def get_task_status(
         # Feature 006: coach info via relationship
         coach_id=task.coach_id,
         coach_name=task.coach.name if task.coach else None,
+        # Feature 007: processing timing stats
+        timing_stats=task.timing_stats,
     )
 
 

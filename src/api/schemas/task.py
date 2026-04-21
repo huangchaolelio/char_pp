@@ -65,6 +65,8 @@ class TaskStatusResponse(BaseModel):
     # Feature 006: coach association
     coach_id: Optional[UUID] = None
     coach_name: Optional[str] = None
+    # Feature 007: processing timing stats
+    timing_stats: Optional[dict] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────
