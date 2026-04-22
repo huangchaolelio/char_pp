@@ -22,8 +22,12 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from dotenv import load_dotenv
+
 import psycopg2
 import requests
+
+load_dotenv()
 
 TMP_DIR = Path("/tmp/coaching-advisor")
 TMP_CLEANUP_THRESHOLD_GB = 10
@@ -72,8 +76,9 @@ def maybe_cleanup_tmp() -> None:
     after_gb = get_tmp_dir_gb()
     print(f"     已删除 {deleted} 个文件，释放 {freed_gb:.1f}GB，剩余 {after_gb:.1f}GB")
 
-API_BASE = "http://localhost:8080"
-DB_URL = "postgresql://postgres:password@localhost:5432/coaching_db"
+API_BASE = os.environ["API_BASE"]
+# DATABASE_URL 可能含 asyncpg 驱动前缀，psycopg2 需要标准 postgresql:// 格式
+DB_URL = os.environ["DATABASE_URL"].replace("postgresql+asyncpg://", "postgresql://")
 
 
 def get_pending_videos(tech_category: str) -> list[dict]:
