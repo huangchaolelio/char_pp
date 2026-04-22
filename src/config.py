@@ -55,10 +55,10 @@ class Settings(BaseSettings):
     mediapipe_model_path: str = "models/pose_landmarker_lite.task"  # Tasks API model file
 
     # COS video root path — all coach videos (Feature 008)
-    cos_video_all_cocah: str = "charhuang/tt_video/乒乓球合集【较新】/"
+    cos_video_all_cocah: str
 
     # COS video selection — forehand / backhand keywords (comma-separated)
-    cos_video_prefix: str = "charhuang/tt_video/乒乓球合集【较新】/《知行合一》孙浩泓专业乒乓球全套教学课程120集/"
+    cos_video_prefix: str
     forehand_video_keywords: str = "正手"   # comma-separated substrings matched against filename
     backhand_video_keywords: str = "反手"   # comma-separated substrings matched against filename
 
