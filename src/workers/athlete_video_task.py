@@ -266,12 +266,30 @@ async def _persist_athlete_results(
     factory = _make_session_factory()
     async with factory() as session:
         async with session.begin():
-            # Fetch expert points for this KB version
-            ep_result = await session.execute(
-                select(ExpertTechPoint).where(
+            # Feature 006: check if this task has a coach_id; if so, filter expert points by coach
+            task_for_coach = await session.get(AnalysisTask, task_id)
+            coach_id = task_for_coach.coach_id if task_for_coach else None
+
+            # Fetch expert points for this KB version (optionally filtered by coach)
+            if coach_id is not None:
+                from src.models.analysis_task import AnalysisTask as _AT
+                ep_stmt = (
+                    select(ExpertTechPoint)
+                    .join(_AT, ExpertTechPoint.source_video_id == _AT.id)
+                    .where(
+                        ExpertTechPoint.knowledge_base_version == kb_version,
+                        _AT.coach_id == coach_id,
+                    )
+                )
+                logger.info(
+                    "Fetching expert points for KB=%s filtered by coach_id=%s",
+                    kb_version, coach_id,
+                )
+            else:
+                ep_stmt = select(ExpertTechPoint).where(
                     ExpertTechPoint.knowledge_base_version == kb_version
                 )
-            )
+            ep_result = await session.execute(ep_stmt)
             all_expert_points = ep_result.scalars().all()
 
             # Group expert points by action_type

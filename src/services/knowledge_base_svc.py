@@ -16,11 +16,13 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.expert_tech_point import ActionType, ExpertTechPoint
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.services.tech_extractor import ExtractionResult
+from src.services.kb_merger import MergedTechPoint
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +45,18 @@ class VersionNotDraftError(KnowledgeBaseError):
     def __init__(self, version: str, status: str) -> None:
         super().__init__(f"Version {version} is {status}, expected draft")
         self.version = version
+
+
+class ConflictUnresolvedError(KnowledgeBaseError):
+    """Raised when a KB version has unresolved visual/audio parameter conflicts."""
+
+    def __init__(self, version: str, conflict_count: int) -> None:
+        super().__init__(
+            f"KB version {version} has {conflict_count} unresolved conflict(s) — "
+            "resolve or override before approving"
+        )
+        self.version = version
+        self.conflict_count = conflict_count
 
 
 # ── Version helpers ───────────────────────────────────────────────────────────
@@ -99,17 +113,22 @@ async def add_tech_points(
     session: AsyncSession,
     kb_version: str,
     source_task_id: uuid.UUID,
-    extraction_results: list[ExtractionResult],
+    extraction_results: list[MergedTechPoint],
 ) -> int:
-    """Add extracted tech points to a draft KB version.
+    """Add merged tech points to a draft KB version (incremental upsert).
+
+    Supports being called multiple times for the same kb_version (incremental
+    writes from per-segment processing). Uses INSERT ... ON CONFLICT DO UPDATE
+    so that a higher-confidence point from a later segment replaces a lower-
+    confidence one already written.
 
     Args:
         kb_version: The draft version string to add points to.
         source_task_id: The AnalysisTask.id of the expert video that produced these points.
-        extraction_results: List of ExtractionResult from tech_extractor.
+        extraction_results: List of MergedTechPoint from KbMerger (Feature-002 path).
 
     Returns:
-        Number of TechPoints actually inserted.
+        Number of rows upserted (inserted or updated).
 
     Raises:
         VersionNotFoundError: if the version doesn't exist.
@@ -121,44 +140,79 @@ async def add_tech_points(
     if kb.status != KBStatus.draft:
         raise VersionNotDraftError(kb_version, kb.status.value)
 
-    # Aggregate dimensions across multiple segments: keep the entry with the
-    # highest extraction_confidence for each (action_type, dimension) pair.
-    # This avoids UniqueViolationError on uq_expert_point_version_action_dim.
-    best: dict[tuple[str, str], object] = {}  # (action_type, dimension) → dim
-    for result in extraction_results:
-        if result.action_type not in ("forehand_topspin", "backhand_push"):
-            logger.debug("Skipping unknown action type: %s", result.action_type)
+    # De-duplicate input: keep highest extraction_confidence per (action_type, dimension).
+    best: dict[tuple[str, str], MergedTechPoint] = {}
+    for point in extraction_results:
+        action_type_str = point.action_type or ""
+        if action_type_str not in {m.value for m in ActionType}:
+            logger.debug("Skipping unknown action type: %s", action_type_str)
             continue
-        for dim in result.dimensions:
-            key = (result.action_type, dim.dimension)
-            existing = best.get(key)
-            if existing is None or dim.extraction_confidence > existing.extraction_confidence:
-                best[key] = dim
-            # Keep a reference to the action_type string alongside the dim
-            dim._action_type_str = result.action_type  # type: ignore[attr-defined]
+        key = (action_type_str, point.dimension)
+        existing = best.get(key)
+        if existing is None or point.extraction_confidence > existing.extraction_confidence:
+            best[key] = point
 
-    inserted = 0
-    for (action_type_str, _), dim in best.items():
-        action_type = ActionType(action_type_str)
-        point = ExpertTechPoint(
-            knowledge_base_version=kb_version,
-            action_type=action_type,
-            dimension=dim.dimension,
-            param_min=dim.param_min,
-            param_max=dim.param_max,
-            param_ideal=dim.param_ideal,
-            unit=dim.unit,
-            extraction_confidence=dim.extraction_confidence,
-            source_video_id=source_task_id,
+    if not best:
+        return 0
+
+    # Build rows for upsert
+    rows = []
+    for (action_type_str, _), point in best.items():
+        rows.append({
+            "id": uuid.uuid4(),
+            "knowledge_base_version": kb_version,
+            "action_type": action_type_str,
+            "dimension": point.dimension,
+            "param_min": point.param_min,
+            "param_max": point.param_max,
+            "param_ideal": point.param_ideal,
+            "unit": point.unit,
+            "extraction_confidence": point.extraction_confidence,
+            "source_video_id": source_task_id,
+            "source_type": point.source_type,
+            "conflict_flag": point.conflict_flag,
+            "conflict_detail": point.conflict_detail,
+            "transcript_segment_id": point.transcript_segment_id,
+        })
+
+    # INSERT ON CONFLICT (knowledge_base_version, action_type, dimension) DO UPDATE
+    # Update only when the incoming confidence is higher than the stored value.
+    stmt = (
+        pg_insert(ExpertTechPoint)
+        .values(rows)
+        .on_conflict_do_update(
+            constraint="uq_expert_point_version_action_dim",
+            set_={
+                "param_min": pg_insert(ExpertTechPoint).excluded.param_min,
+                "param_max": pg_insert(ExpertTechPoint).excluded.param_max,
+                "param_ideal": pg_insert(ExpertTechPoint).excluded.param_ideal,
+                "unit": pg_insert(ExpertTechPoint).excluded.unit,
+                "extraction_confidence": pg_insert(ExpertTechPoint).excluded.extraction_confidence,
+                "source_video_id": pg_insert(ExpertTechPoint).excluded.source_video_id,
+                "source_type": pg_insert(ExpertTechPoint).excluded.source_type,
+                "conflict_flag": pg_insert(ExpertTechPoint).excluded.conflict_flag,
+                "conflict_detail": pg_insert(ExpertTechPoint).excluded.conflict_detail,
+                "transcript_segment_id": pg_insert(ExpertTechPoint).excluded.transcript_segment_id,
+            },
+            # Only update when new confidence is higher
+            where=(
+                pg_insert(ExpertTechPoint).excluded.extraction_confidence
+                > ExpertTechPoint.extraction_confidence
+            ),
         )
-        session.add(point)
-        inserted += 1
+    )
+    result = await session.execute(stmt)
+    upserted = result.rowcount
 
-    # Update point count
-    kb.point_count = kb.point_count + inserted
+    # Refresh point_count from DB (upsert may insert fewer rows than len(rows))
+    count_result = await session.execute(
+        select(ExpertTechPoint).where(ExpertTechPoint.knowledge_base_version == kb_version)
+    )
+    kb.point_count = len(count_result.scalars().all())
     await session.flush()
-    logger.info("Added %d tech points to KB version %s", inserted, kb_version)
-    return inserted
+    logger.info("Upserted %d tech points to KB version %s (total now %d)",
+                upserted, kb_version, kb.point_count)
+    return upserted
 
 
 async def approve_version(
@@ -182,6 +236,17 @@ async def approve_version(
         raise VersionNotFoundError(version)
     if kb.status != KBStatus.draft:
         raise VersionNotDraftError(version, kb.status.value)
+
+    # Feature 002: block approval if any tech points have unresolved conflicts
+    conflict_result = await session.execute(
+        select(ExpertTechPoint).where(
+            ExpertTechPoint.knowledge_base_version == version,
+            ExpertTechPoint.conflict_flag.is_(True),
+        )
+    )
+    conflict_points = conflict_result.scalars().all()
+    if conflict_points:
+        raise ConflictUnresolvedError(version, len(conflict_points))
 
     # Archive any currently active version
     result = await session.execute(

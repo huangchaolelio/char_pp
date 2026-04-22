@@ -28,11 +28,23 @@ class TestSubmitExpertVideo:
         task = make_task(status="pending")
         override_db.refresh = AsyncMock(side_effect=lambda t: None)
 
+        # The submit endpoint queries VideoClassification after COS check
+        vc_result = MagicMock()
+        vc_result.scalar_one_or_none.return_value = None  # no classification found
+        override_db.execute = AsyncMock(return_value=vc_result)
+
         with (
             patch("src.api.routers.tasks.cos_client.object_exists", return_value=True),
             patch("src.api.routers.tasks.process_expert_video") as mock_celery,
+            patch("src.services.video_classifier.VideoClassifierService") as mock_clf,
         ):
             mock_celery.delay = MagicMock()
+            clf_instance = MagicMock()
+            mock_clf.return_value = clf_instance
+            clf_result = MagicMock()
+            clf_result.action_type = "forehand_topspin"
+            clf_instance.classify.return_value = clf_result
+
             resp = await client.post(
                 "/api/v1/tasks/expert-video",
                 json={"cos_object_key": COS_KEY, "notes": "test"},
@@ -114,13 +126,17 @@ class TestGetTaskResult:
         task_result.scalar_one_or_none.return_value = task
 
         points_result = MagicMock()
-        points_result.scalars.return_value.all.return_value = [point]
+        points_result.all.return_value = [(point, None)]  # outerjoin returns (ExpertTechPoint, TechSemanticSegment) tuples
 
         kb_result = MagicMock()
         kb_result.scalar_one_or_none.return_value = kb
 
+        # Feature 002: 4th execute call → AudioTranscript lookup (returns None)
+        audio_result = MagicMock()
+        audio_result.scalar_one_or_none.return_value = None
+
         override_db.execute = AsyncMock(
-            side_effect=[task_result, points_result, kb_result]
+            side_effect=[task_result, points_result, kb_result, audio_result]
         )
 
         resp = await client.get(f"/api/v1/tasks/{TASK_ID}/result")
@@ -136,11 +152,22 @@ class TestGetTaskResult:
     async def test_athlete_video_result_no_analysis(self, client, override_db):
         """Athlete task with no motion analysis yet returns 200 with empty deviations."""
         task = make_task(status="success", task_type="athlete_video")
-        # First execute: task lookup; second execute: analysis lookup (returns None)
-        results = [MagicMock(), MagicMock()]
-        results[0].scalar_one_or_none.return_value = task
-        results[1].scalar_one_or_none.return_value = None
-        override_db.execute = AsyncMock(side_effect=results)
+        # execute calls:
+        # 1st: task lookup
+        # 2nd: TeachingTip pre-load (Feature 005 — returns empty)
+        # 3rd: AthleteMotionAnalysis lookup (returns empty list)
+        task_result = MagicMock()
+        task_result.scalar_one_or_none.return_value = task
+
+        tips_result = MagicMock()
+        tips_result.scalars.return_value.all.return_value = []
+
+        analyses_result = MagicMock()
+        analyses_result.scalars.return_value.all.return_value = []
+
+        override_db.execute = AsyncMock(
+            side_effect=[task_result, tips_result, analyses_result]
+        )
 
         resp = await client.get(f"/api/v1/tasks/{TASK_ID}/result")
         assert resp.status_code == 200

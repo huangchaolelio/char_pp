@@ -36,6 +36,7 @@ Thumbs.db
 
 # Temporary video processing files
 /tmp/coaching-advisor/
+data/
 
 # Logs
 *.log
@@ -52,6 +53,8 @@ logs/
 *.pth
 *.onnx
 *.weights
+*.task
+models/
 
 # SQLite dev/test databases
 *.sqlite3

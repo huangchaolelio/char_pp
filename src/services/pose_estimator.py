@@ -172,28 +172,52 @@ def _estimate_pose_yolov8(
 def _estimate_pose_mediapipe(
     video_path: Path,
     visibility_threshold: float,
-    model_complexity: int,
+    model_path: str,
 ) -> list[FramePoseResult]:
-    """Run MediaPipe Pose on *video_path* (CPU inference)."""
+    """Run MediaPipe Pose on *video_path* (CPU inference) using the Tasks API.
+
+    Requires mediapipe >= 0.10 and a pose_landmarker .task model file.
+    The legacy mp.solutions.pose API was removed in mediapipe 0.10.
+    """
     try:
         import cv2  # type: ignore[import]
         import mediapipe as mp  # type: ignore[import]
+        from mediapipe.tasks.python import vision as mp_vision  # type: ignore[import]
+        from mediapipe.tasks.python.components.containers import landmark as mp_landmark  # type: ignore[import] # noqa: F401
     except ImportError as exc:
-        raise RuntimeError("mediapipe or opencv-python-headless is not installed") from exc
+        raise RuntimeError("mediapipe>=0.10 or opencv-python-headless is not installed") from exc
 
-    mp_pose = mp.solutions.pose  # type: ignore[attr-defined]
+    from mediapipe.tasks import python as mp_python  # type: ignore[import]
+
+    # Resolve model path relative to project root (src/../models/)
+    model_file = Path(model_path)
+    if not model_file.is_absolute():
+        # try relative to this file's project root
+        project_root = Path(__file__).parent.parent
+        model_file = project_root / model_path
+    if not model_file.exists():
+        raise RuntimeError(
+            f"MediaPipe model file not found: {model_file}. "
+            "Download from: https://storage.googleapis.com/mediapipe-models/"
+            "pose_landmarker/pose_landmarker_lite/float16/latest/pose_landmarker_lite.task"
+        )
+
+    base_options = mp_python.BaseOptions(model_asset_path=str(model_file))
+    options = mp_vision.PoseLandmarkerOptions(
+        base_options=base_options,
+        running_mode=mp_vision.RunningMode.VIDEO,
+        num_poses=1,
+        min_pose_detection_confidence=0.5,
+        min_pose_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+    )
+
     results: list[FramePoseResult] = []
 
     cap = cv2.VideoCapture(str(video_path))
     fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
 
-    with mp_pose.Pose(
-        static_image_mode=False,
-        model_complexity=model_complexity,
-        smooth_landmarks=True,
-        min_detection_confidence=0.5,
-        min_tracking_confidence=0.5,
-    ) as pose:
+    with mp_vision.PoseLandmarker.create_from_options(options) as landmarker:
         frame_index = 0
         while True:
             ret, frame = cap.read()
@@ -202,17 +226,22 @@ def _estimate_pose_mediapipe(
 
             timestamp_ms = int(frame_index * 1000 / fps)
             rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pose_result = pose.process(rgb_frame)
+            mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+
+            detection = landmarker.detect_for_video(mp_image, timestamp_ms)
 
             keypoints: dict = {}
             confidences: list[float] = []
 
-            if pose_result.pose_landmarks:
-                for idx, lm in enumerate(pose_result.pose_landmarks.landmark):
-                    if lm.visibility >= visibility_threshold:
-                        kp = Keypoint(x=lm.x, y=lm.y, z=lm.z, visibility=lm.visibility)
+            if detection.pose_landmarks:
+                # Take first (most confident) person
+                landmarks = detection.pose_landmarks[0]
+                for idx, lm in enumerate(landmarks):
+                    vis = lm.visibility if lm.visibility is not None else 0.0
+                    if vis >= visibility_threshold:
+                        kp = Keypoint(x=lm.x, y=lm.y, z=lm.z, visibility=vis)
                         keypoints[idx] = kp
-                        confidences.append(lm.visibility)
+                        confidences.append(vis)
                     else:
                         keypoints[idx] = None
 
@@ -268,5 +297,5 @@ def estimate_pose(video_path: Path) -> list[FramePoseResult]:
         return _estimate_pose_mediapipe(
             video_path,
             visibility_threshold=settings.keypoint_visibility_threshold,
-            model_complexity=settings.mediapipe_model_complexity,
+            model_path=settings.mediapipe_model_path,
         )

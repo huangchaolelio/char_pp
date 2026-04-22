@@ -21,6 +21,23 @@ class ExpertVideoRequest(BaseModel):
         examples=["coach-videos/forehand_lesson_001.mp4"],
     )
     notes: Optional[str] = Field(None, description="视频备注说明")
+    # Feature 002: audio analysis options
+    enable_audio_analysis: bool = Field(True, description="是否启用音频分析（Whisper）")
+    audio_language: str = Field("zh", description="音频语言代码，默认 zh（普通话）")
+    # US3: optional pre-declared duration for early rejection before download
+    video_duration_seconds: Optional[float] = Field(
+        None, description="视频时长（秒），由客户端提供时用于提前校验 90 分钟上限"
+    )
+    # Action type hint: when set, only keep extracted segments matching this type.
+    # Auto-inferred from cos_object_key filename keywords if not provided.
+    # Values: "forehand_topspin" | "backhand_push" | None (no filter)
+    action_type_hint: Optional[str] = Field(
+        None,
+        description="动作类型提示，用于过滤提取结果。可选值: forehand_topspin / backhand_push。"
+                    "不传时由系统根据视频文件名关键词自动推断。",
+    )
+    # Feature 006: associate coach with this expert video task
+    coach_id: Optional[UUID] = Field(None, description="教练 ID（可选），指定后将该任务关联到对应教练")
 
 
 # AthleteVideoRequest uses multipart/form-data — parsed in the endpoint directly
@@ -38,6 +55,18 @@ class TaskStatusResponse(BaseModel):
     video_duration_seconds: Optional[float] = None
     video_fps: Optional[float] = None
     video_resolution: Optional[str] = None
+    # Feature 002: long video progress fields
+    progress_pct: Optional[float] = None
+    processed_segments: Optional[int] = None
+    total_segments: Optional[int] = None
+    audio_fallback_reason: Optional[str] = None
+    # Incremental KB draft: populated as soon as the first segment writes results
+    knowledge_base_version: Optional[str] = None
+    # Feature 006: coach association
+    coach_id: Optional[UUID] = None
+    coach_name: Optional[str] = None
+    # Feature 007: processing timing stats
+    timing_stats: Optional[dict] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────
@@ -50,6 +79,26 @@ class ExtractedTechPoint(BaseModel):
     param_ideal: float
     unit: str
     extraction_confidence: float
+    # Feature 002: source annotation, conflict fields, and timestamp range (FR-008)
+    source_type: str = "visual"
+    conflict_flag: bool = False
+    conflict_detail: Optional[dict] = None
+    segment_start_ms: Optional[int] = None
+    segment_end_ms: Optional[int] = None
+
+
+class AudioAnalysisInfo(BaseModel):
+    enabled: bool
+    quality_flag: Optional[str] = None
+    fallback_reason: Optional[str] = None
+    transcript_sentence_count: Optional[int] = None
+
+
+class ConflictDetail(BaseModel):
+    dimension: str
+    visual_ideal: float
+    audio_ideal: float
+    diff_pct: float
 
 
 class TaskResultExpertResponse(BaseModel):
@@ -58,6 +107,9 @@ class TaskResultExpertResponse(BaseModel):
     extracted_points_count: int
     extracted_points: list[ExtractedTechPoint]
     pending_approval: bool
+    # Feature 002: audio analysis summary and conflicts
+    audio_analysis: Optional[AudioAnalysisInfo] = None
+    conflicts: list[ConflictDetail] = []
 
 
 # ── Athlete video result ─────────────────────────────────────────────────────
@@ -84,6 +136,12 @@ class CoachingAdviceItem(BaseModel):
     impact_score: float
     reliability_level: str
     reliability_note: Optional[str] = None
+    # Feature 005: teaching tips attached to this advice item
+    teaching_tips: list["TeachingTipRef"] = []
+
+
+# TeachingTipRef is defined in teaching_tip.py; import here for forward ref
+from src.api.schemas.teaching_tip import TeachingTipRef  # noqa: E402
 
 
 class MotionAnalysisItem(BaseModel):
@@ -129,3 +187,18 @@ class TaskDeleteResponse(BaseModel):
     task_id: UUID
     deleted_at: datetime
     message: str
+
+
+# ── COS video list ────────────────────────────────────────────────────────────
+
+class CosVideoItem(BaseModel):
+    cos_object_key: str
+    filename: str
+    size_bytes: int
+    action_type: str  # "forehand" | "backhand" | "forehand+backhand" | "other"
+
+
+class CosVideoListResponse(BaseModel):
+    action_type_filter: str
+    total: int
+    videos: list[CosVideoItem]

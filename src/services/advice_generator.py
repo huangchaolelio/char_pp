@@ -17,6 +17,7 @@ import logging
 import uuid
 from typing import Optional
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.coaching_advice import CoachingAdvice, ReliabilityLevel
@@ -147,7 +148,26 @@ async def generate_advice(
     Returns:
         List of CoachingAdvice records sorted by impact_score DESC.
     """
+    from src.config import get_settings
+    from src.models.teaching_tip import TeachingTip
+
+    settings = get_settings()
     advice_list: list[CoachingAdvice] = []
+
+    # Feature 005: pre-load matching TeachingTips for this action_type (human first)
+    tips_result = await session.execute(
+        select(TeachingTip)
+        .where(TeachingTip.action_type == action_type)
+        .order_by(
+            # human tips first, then by confidence desc
+            TeachingTip.source_type.desc(),  # 'human' > 'auto' alphabetically
+            TeachingTip.confidence.desc(),
+        )
+        .limit(settings.max_teaching_tips * 3)  # fetch extra, trim per advice
+    )
+    all_tips = tips_result.scalars().all()
+    # Take top max_teaching_tips, human priority already in order
+    top_tips = list(all_tips[: settings.max_teaching_tips])
 
     for report in deviation_reports:
         # Only generate advice for actual deviations
@@ -170,6 +190,17 @@ async def generate_advice(
             if is_low else None
         )
 
+        base_method = _get_improvement_method(report.dimension, report.deviation_direction)
+
+        # Append teaching tips to improvement_method if available
+        if top_tips:
+            tips_text = "\n\n💡 教练建议：\n" + "\n".join(
+                f"• {tip.tip_text}" for tip in top_tips
+            )
+            improvement_method = base_method + tips_text
+        else:
+            improvement_method = base_method
+
         advice = CoachingAdvice(
             deviation_id=report.id,
             task_id=task_id,
@@ -181,9 +212,7 @@ async def generate_advice(
                 unit=expert_point.unit,
             ),
             improvement_target=_format_improvement_target(expert_point),
-            improvement_method=_get_improvement_method(
-                report.dimension, report.deviation_direction
-            ),
+            improvement_method=improvement_method,
             impact_score=report.impact_score or 0.0,
             reliability_level=reliability_level,
             reliability_note=reliability_note,
@@ -197,7 +226,7 @@ async def generate_advice(
     advice_list.sort(key=lambda a: a.impact_score, reverse=True)
 
     logger.info(
-        "Generated %d coaching advice records for task %s",
-        len(advice_list), task_id,
+        "Generated %d coaching advice records for task %s (tips_appended=%d)",
+        len(advice_list), task_id, len(top_tips),
     )
     return advice_list

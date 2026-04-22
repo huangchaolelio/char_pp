@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.backends.legacy:build"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "charhuang-pp-cn"
@@ -29,6 +29,11 @@ dependencies = [
     "cos-python-sdk-v5>=1.9.30",
     # Utilities
     "python-multipart>=0.0.9",
+    # Audio analysis (Feature 002)
+    "openai-whisper==20231117",
+    "jieba>=0.42.1",
+    # LLM API (Feature 005)
+    "openai>=1.0.0",
 ]
 
 [project.optional-dependencies]
