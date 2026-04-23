@@ -61,6 +61,18 @@ class ConflictUnresolvedError(KnowledgeBaseError):
 
 # ── Version helpers ───────────────────────────────────────────────────────────
 
+def _is_valid_semver(version: str) -> bool:
+    """Return True if version matches X.Y.Z with all-numeric components."""
+    parts = version.split(".")
+    if len(parts) != 3:
+        return False
+    try:
+        int(parts[0]); int(parts[1]); int(parts[2])
+        return True
+    except ValueError:
+        return False
+
+
 def _next_minor_version(current: str) -> str:
     """Increment the minor component of a semver string, e.g. '1.0.0' → '1.1.0'."""
     parts = current.split(".")
@@ -71,9 +83,16 @@ def _next_minor_version(current: str) -> str:
 
 
 async def _latest_version(session: AsyncSession) -> Optional[TechKnowledgeBase]:
-    """Return the most recently created knowledge base version."""
+    """Return the most recently created knowledge base version with a valid semver string.
+
+    Skips rows whose version field does not match X.Y.Z (e.g. legacy 'it3a-...' identifiers)
+    so that _next_minor_version never receives an unparseable string.
+    """
     result = await session.execute(
-        select(TechKnowledgeBase).order_by(TechKnowledgeBase.created_at.desc()).limit(1)
+        select(TechKnowledgeBase)
+        .where(TechKnowledgeBase.version.regexp_match(r"^\d+\.\d+\.\d+$"))
+        .order_by(TechKnowledgeBase.created_at.desc())
+        .limit(1)
     )
     return result.scalar_one_or_none()
 
