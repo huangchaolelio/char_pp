@@ -13,6 +13,7 @@ from src.api.routers.classifications import router as classifications_router
 from src.api.routers.coaches import router as coaches_router
 from src.api.routers.videos import router as videos_router
 from src.api.routers.teaching_tips import router as teaching_tips_router
+from src.api.routers.standards import router as standards_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -85,6 +86,7 @@ def create_app() -> FastAPI:
     app.include_router(coaches_router, prefix="/api/v1")
     app.include_router(calibration_router, prefix="/api/v1")
     app.include_router(classifications_router, prefix="/api/v1")
+    app.include_router(standards_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

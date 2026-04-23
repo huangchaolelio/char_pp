@@ -14,6 +14,7 @@ from src.models.skill_execution import ExecutionStatus, SkillExecution
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_semantic_segment import TechSemanticSegment
 from src.models.teaching_tip import TeachingTip
+from src.models.tech_standard import SourceQuality, StandardStatus, TechStandard, TechStandardPoint
 from src.models.video_classification import VideoClassification
 
 __all__ = [
@@ -40,5 +41,9 @@ __all__ = [
     "KBStatus",
     "TechSemanticSegment",
     "TeachingTip",
+    "TechStandard",
+    "TechStandardPoint",
+    "StandardStatus",
+    "SourceQuality",
     "VideoClassification",
 ]
