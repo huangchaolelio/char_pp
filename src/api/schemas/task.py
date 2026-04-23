@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from uuid import UUID
-from typing import Optional
+from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
@@ -67,6 +67,8 @@ class TaskStatusResponse(BaseModel):
     coach_name: Optional[str] = None
     # Feature 007: processing timing stats
     timing_stats: Optional[dict] = None
+    # Feature 012: related entity summary (only populated by GET /tasks/{task_id})
+    summary: Optional["TaskSummary"] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────
@@ -202,3 +204,46 @@ class CosVideoListResponse(BaseModel):
     action_type_filter: str
     total: int
     videos: list[CosVideoItem]
+
+
+# ── Feature 012: Task list query schemas ─────────────────────────────────────
+
+class TaskSummary(BaseModel):
+    """Aggregated counts of related entities for a single task."""
+    tech_point_count: int = 0
+    has_transcript: bool = False
+    semantic_segment_count: int = 0
+    motion_analysis_count: int = 0
+    deviation_count: int = 0
+    advice_count: int = 0
+
+
+class TaskListItemResponse(BaseModel):
+    """Lightweight task representation for list endpoint."""
+    task_id: UUID
+    task_type: str
+    status: str
+    video_filename: str
+    video_storage_uri: str
+    video_duration_seconds: Optional[float] = None
+    progress_pct: Optional[float] = None
+    error_message: Optional[str] = None
+    knowledge_base_version: Optional[str] = None
+    coach_id: Optional[UUID] = None
+    coach_name: Optional[str] = None
+    created_at: datetime
+    started_at: Optional[datetime] = None
+    completed_at: Optional[datetime] = None
+
+
+class TaskListResponse(BaseModel):
+    """Paginated task list response."""
+    items: List[TaskListItemResponse]
+    total: int
+    page: int
+    page_size: int
+    total_pages: int
+
+
+# Rebuild TaskStatusResponse to resolve forward reference to TaskSummary
+TaskStatusResponse.model_rebuild()

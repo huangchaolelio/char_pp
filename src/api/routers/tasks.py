@@ -3,19 +3,22 @@
 US1 endpoints: expert-video submission, task status, expert result, soft-delete.
 US2 endpoints: athlete-video submission, athlete result (with deviation reports).
 US3 update: athlete result includes coaching_advice populated.
+Feature 012: GET /tasks list endpoint with pagination, filtering and sorting.
 """
 
 from __future__ import annotations
 
+import logging
 import shutil
+import time
 import uuid
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
 from pathlib import Path
 from typing import Union, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,10 +34,13 @@ from src.api.schemas.task import (
     MotionAnalysisItem,
     ResultSummary,
     TaskDeleteResponse,
+    TaskListItemResponse,
+    TaskListResponse,
     TaskResultAthleteResponse,
     TaskResultExpertResponse,
     TaskStatusResponse,
     TaskSubmitResponse,
+    TaskSummary,
 )
 from src.api.schemas.teaching_tip import TeachingTipRef
 from src.config import get_settings
@@ -52,7 +58,159 @@ from src.models.tech_semantic_segment import TechSemanticSegment
 from src.services import cos_client
 from src.workers.expert_video_task import process_expert_video
 
+logger = logging.getLogger(__name__)
+
 router = APIRouter(tags=["tasks"])
+
+
+# ── GET /tasks ───────────────────────────────────────────────────────────────
+
+_VALID_SORT_BY = {"created_at", "completed_at"}
+_VALID_ORDER = {"asc", "desc"}
+_MAX_PAGE_SIZE = 200
+
+
+@router.get("/tasks", response_model=TaskListResponse)
+async def list_tasks(
+    page: int = Query(1, ge=1, description="页码，从 1 开始"),
+    page_size: int = Query(20, ge=1, description="每页条数，最大 200"),
+    sort_by: str = Query("created_at", description="排序字段: created_at / completed_at"),
+    order: str = Query("desc", description="排序方向: asc / desc"),
+    status: Optional[str] = Query(None, description="按任务状态筛选"),
+    task_type: Optional[str] = Query(None, description="按任务类型筛选: expert_video / athlete_video"),
+    coach_id: Optional[uuid.UUID] = Query(None, description="按教练 ID 筛选"),
+    created_after: Optional[datetime] = Query(None, description="创建时间下界（ISO 8601）"),
+    created_before: Optional[datetime] = Query(None, description="创建时间上界（ISO 8601）"),
+    db: AsyncSession = Depends(get_db),
+) -> TaskListResponse:
+    """List all non-deleted tasks with pagination, filtering and sorting.
+
+    - Default: page=1, page_size=20, sort_by=created_at, order=desc
+    - page_size is capped at 200 automatically
+    - Multiple filters are combined with AND logic
+    - completed_at ordering uses NULLS LAST
+    """
+    t_start = time.monotonic()
+
+    # ── Parameter validation ──────────────────────────────────────────────────
+    if page_size > _MAX_PAGE_SIZE:
+        page_size = _MAX_PAGE_SIZE
+
+    if sort_by not in _VALID_SORT_BY:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid sort_by value: '{sort_by}'. Valid values: {', '.join(sorted(_VALID_SORT_BY))}",
+        )
+    if order not in _VALID_ORDER:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid order value: '{order}'. Valid values: asc, desc",
+        )
+
+    # Validate status enum
+    status_enum: Optional[TaskStatus] = None
+    if status is not None:
+        try:
+            status_enum = TaskStatus(status)
+        except ValueError:
+            valid_statuses = ", ".join(s.value for s in TaskStatus)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid status value: '{status}'. Valid values: {valid_statuses}",
+            )
+
+    # Validate task_type enum
+    task_type_enum: Optional[TaskType] = None
+    if task_type is not None:
+        try:
+            task_type_enum = TaskType(task_type)
+        except ValueError:
+            valid_types = ", ".join(t.value for t in TaskType)
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid task_type value: '{task_type}'. Valid values: {valid_types}",
+            )
+
+    # ── Build base query ──────────────────────────────────────────────────────
+    base_stmt = (
+        select(AnalysisTask, Coach.name.label("coach_name"))
+        .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
+        .where(AnalysisTask.deleted_at.is_(None))
+    )
+
+    # ── Apply filters ─────────────────────────────────────────────────────────
+    if status_enum is not None:
+        base_stmt = base_stmt.where(AnalysisTask.status == status_enum)
+    if task_type_enum is not None:
+        base_stmt = base_stmt.where(AnalysisTask.task_type == task_type_enum)
+    if coach_id is not None:
+        base_stmt = base_stmt.where(AnalysisTask.coach_id == coach_id)
+    if created_after is not None:
+        base_stmt = base_stmt.where(AnalysisTask.created_at >= created_after)
+    if created_before is not None:
+        base_stmt = base_stmt.where(AnalysisTask.created_at <= created_before)
+
+    # ── Count total ───────────────────────────────────────────────────────────
+    count_stmt = select(func.count()).select_from(base_stmt.subquery())
+    total_result = await db.execute(count_stmt)
+    total = total_result.scalar_one()
+
+    # ── Apply sorting ─────────────────────────────────────────────────────────
+    if sort_by == "completed_at":
+        sort_col = AnalysisTask.completed_at
+        if order == "desc":
+            base_stmt = base_stmt.order_by(sort_col.desc().nullslast())
+        else:
+            base_stmt = base_stmt.order_by(sort_col.asc().nullslast())
+    else:  # created_at
+        sort_col = AnalysisTask.created_at
+        if order == "desc":
+            base_stmt = base_stmt.order_by(sort_col.desc())
+        else:
+            base_stmt = base_stmt.order_by(sort_col.asc())
+
+    # ── Apply pagination ──────────────────────────────────────────────────────
+    offset = (page - 1) * page_size
+    base_stmt = base_stmt.offset(offset).limit(page_size)
+
+    rows_result = await db.execute(base_stmt)
+    rows = rows_result.all()
+
+    # ── Build response items ──────────────────────────────────────────────────
+    items = [
+        TaskListItemResponse(
+            task_id=task.id,
+            task_type=task.task_type.value,
+            status=task.status.value,
+            video_filename=task.video_filename,
+            video_storage_uri=task.video_storage_uri,
+            video_duration_seconds=task.video_duration_seconds,
+            progress_pct=task.progress_pct,
+            error_message=task.error_message,
+            knowledge_base_version=task.knowledge_base_version,
+            coach_id=task.coach_id,
+            coach_name=coach_name,
+            created_at=task.created_at,
+            started_at=task.started_at,
+            completed_at=task.completed_at,
+        )
+        for task, coach_name in rows
+    ]
+
+    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
+    elapsed_ms = int((time.monotonic() - t_start) * 1000)
+    logger.info(
+        "task_list_query total=%d page=%d page_size=%d elapsed_ms=%d",
+        total, page, page_size, elapsed_ms,
+    )
+
+    return TaskListResponse(
+        items=items,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages,
+    )
 
 
 # ── GET /tasks/cos-videos ────────────────────────────────────────────────────
@@ -339,6 +497,50 @@ async def get_task_status(
             },
         )
 
+    # ── Feature 012: aggregate related entity counts ──────────────────────────
+    tech_point_count_result = await db.execute(
+        select(func.count()).where(ExpertTechPoint.source_video_id == task_uuid)
+    )
+    tech_point_count = tech_point_count_result.scalar_one()
+
+    has_transcript_result = await db.execute(
+        select(func.count()).where(AudioTranscript.task_id == task_uuid)
+    )
+    has_transcript = has_transcript_result.scalar_one() > 0
+
+    semantic_segment_count_result = await db.execute(
+        select(func.count()).where(TechSemanticSegment.task_id == task_uuid)
+    )
+    semantic_segment_count = semantic_segment_count_result.scalar_one()
+
+    motion_analysis_count_result = await db.execute(
+        select(func.count()).where(AthleteMotionAnalysis.task_id == task_uuid)
+    )
+    motion_analysis_count = motion_analysis_count_result.scalar_one()
+
+    # deviation_count: subquery via athlete_motion_analyses
+    motion_ids_stmt = select(AthleteMotionAnalysis.id).where(
+        AthleteMotionAnalysis.task_id == task_uuid
+    )
+    deviation_count_result = await db.execute(
+        select(func.count()).where(DeviationReport.analysis_id.in_(motion_ids_stmt))
+    )
+    deviation_count = deviation_count_result.scalar_one()
+
+    advice_count_result = await db.execute(
+        select(func.count()).where(CoachingAdvice.task_id == task_uuid)
+    )
+    advice_count = advice_count_result.scalar_one()
+
+    summary = TaskSummary(
+        tech_point_count=tech_point_count,
+        has_transcript=has_transcript,
+        semantic_segment_count=semantic_segment_count,
+        motion_analysis_count=motion_analysis_count,
+        deviation_count=deviation_count,
+        advice_count=advice_count,
+    )
+
     return TaskStatusResponse(
         task_id=task.id,
         task_type=task.task_type.value,
@@ -359,6 +561,8 @@ async def get_task_status(
         coach_name=task.coach.name if task.coach else None,
         # Feature 007: processing timing stats
         timing_stats=task.timing_stats,
+        # Feature 012: related entity summary
+        summary=summary,
     )
 
 
