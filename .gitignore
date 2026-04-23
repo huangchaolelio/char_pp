@@ -1,0 +1,68 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+*.egg
+.eggs/
+
+# Environment
+.env
+.env.*
+!.env.example
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+*.tmp
+
+# Temporary video processing files
+/tmp/coaching-advisor/
+data/
+
+# Logs
+*.log
+logs/
+
+# Alembic
+# (migrations are committed, only cache excluded)
+
+# Git LFS (benchmark datasets tracked separately)
+# docs/benchmarks/*.json are tracked via Git LFS
+
+# Model weights (download on first use)
+*.pt
+*.pth
+*.onnx
+*.weights
+*.task
+models/
+
+# SQLite dev/test databases
+*.sqlite3
+*.db
+
+# Logs
+nohup.out
+
+# Broken pip install artifacts
+=*
+dump.rdb
