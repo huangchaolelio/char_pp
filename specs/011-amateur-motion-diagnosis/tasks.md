@@ -1,313 +1,203 @@
-# 任务: 非专业选手动作诊断与评分
+# Feature 011 任务列表: 非专业选手动作诊断与评分
 
-**输入**: 来自 `/specs/011-amateur-motion-diagnosis/` 的设计文档
-**前置条件**: plan.md ✅, spec.md ✅
+## Phase 1: 设置
 
-**测试**: 规范要求 TDD（章程原则 II），包含契约测试、集成测试和单元测试任务。
+**目标**: 确认目录结构，创建规范文件
 
-**组织结构**: 任务按用户故事分组，每个故事独立实施和测试。
-
-## 格式: `[ID] [P?] [Story] 描述`
-- **[P]**: 可以并行运行（不同文件，无依赖关系）
-- **[Story]**: 此任务属于哪个用户故事（US1, US2, US3）
-- 描述中包含确切的文件路径
+- [x] T001 确认 src/services/, src/api/routers/, tests/unit/, tests/integration/, tests/contract/ 目录均存在
 
 ---
 
-## 阶段 1: 设置
+## Phase 2: 基础（数据库迁移与模型）
 
-**目的**: 确认目录结构存在，无需新建顶层目录
+**目标**: 建立 diagnosis_reports 和 diagnosis_dimension_results 两张表，并完成 ORM 模型
 
-- [ ] T001 确认 src/models/, src/services/, src/api/routers/, tests/unit/, tests/integration/, tests/contract/ 目录已存在且无需新建
+- [x] T002 在 src/db/migrations/versions/0011_diagnosis_report.py 中创建 Alembic 迁移，新建 diagnosis_reports 表（字段：id UUID PK DEFAULT gen_random_uuid(), tech_category VARCHAR(64) NOT NULL, standard_id BIGINT FK→tech_standards.id ON DELETE RESTRICT, standard_version INTEGER NOT NULL, video_path TEXT NOT NULL, overall_score FLOAT NOT NULL, strengths_summary TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()；索引 idx_dr_tech_category ON (tech_category), idx_dr_created_at ON (created_at DESC)）
+- [x] T003 在同一迁移文件 src/db/migrations/versions/0011_diagnosis_report.py 中新建 diagnosis_dimension_results 表（字段：id BIGSERIAL PK, report_id UUID FK→diagnosis_reports.id ON DELETE CASCADE NOT NULL, dimension VARCHAR(128) NOT NULL, measured_value FLOAT NOT NULL, ideal_value FLOAT NOT NULL, standard_min FLOAT NOT NULL, standard_max FLOAT NOT NULL, unit VARCHAR(32), score FLOAT NOT NULL, deviation_level VARCHAR(20) NOT NULL CHECK(deviation_level IN ('ok','slight','significant')), deviation_direction VARCHAR(10) CHECK(deviation_direction IN ('above','below','none')), improvement_advice TEXT；唯一约束 uq_ddr_report_dimension ON (report_id, dimension)；索引 idx_ddr_report ON (report_id)）（依赖 T002）
+- [x] T004 在 src/models/diagnosis_report.py 中实现 DiagnosisReport SQLAlchemy ORM 模型（对应 diagnosis_reports 表，UUID PK，包含关系 dimensions: List[DiagnosisDimensionResult]，lazy="selectin"）以及 DeviationLevel enum（ok/slight/significant）和 DiagnosisDimensionResult ORM 模型（对应 diagnosis_dimension_results 表，包含 FK 关系 report: DiagnosisReport）（依赖 T002, T003）
+- [x] T005 在 src/models/__init__.py 中导出 DiagnosisReport 和 DiagnosisDimensionResult（依赖 T004）
+- [x] T006 运行迁移验证：执行 alembic upgrade head 并确认两张表及所有索引创建成功（依赖 T003, T005）
 
----
+### 补充 TDD 测试（需补写，对应已完成实现）
 
-## 阶段 2: 基础（阻塞前置条件）
-
-**目的**: 新表迁移和 ORM 模型，所有用户故事的共同依赖
-
-**⚠️ 关键**: 在此阶段完成之前，无法开始任何用户故事工作
-
-- [ ] T002 在 src/db/migrations/versions/0011_diagnosis_report.py 中创建 Alembic 迁移，新建 diagnosis_reports 表（字段：id UUID PK DEFAULT gen_random_uuid(), tech_category VARCHAR(64) NOT NULL, standard_id BIGINT FK→tech_standards.id ON DELETE RESTRICT, standard_version INTEGER NOT NULL, video_path TEXT NOT NULL, overall_score FLOAT NOT NULL, strengths_summary TEXT, created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()；索引 idx_dr_tech_category ON (tech_category), idx_dr_created_at ON (created_at DESC)）
-
-- [ ] T003 在同一迁移文件 src/db/migrations/versions/0011_diagnosis_report.py 中新建 diagnosis_dimension_results 表（字段：id BIGSERIAL PK, report_id UUID FK→diagnosis_reports.id ON DELETE CASCADE NOT NULL, dimension VARCHAR(128) NOT NULL, measured_value FLOAT NOT NULL, ideal_value FLOAT NOT NULL, standard_min FLOAT NOT NULL, standard_max FLOAT NOT NULL, unit VARCHAR(32), score FLOAT NOT NULL, deviation_level VARCHAR(20) NOT NULL CHECK(deviation_level IN ('ok','slight','significant')), deviation_direction VARCHAR(10) CHECK(deviation_direction IN ('above','below','none')), improvement_advice TEXT；唯一约束 uq_ddr_report_dimension ON (report_id, dimension)；索引 idx_ddr_report ON (report_id)）（依赖 T002）
-
-- [ ] T004 在 src/models/diagnosis_report.py 中实现 DiagnosisReport SQLAlchemy ORM 模型（对应 diagnosis_reports 表，UUID PK，包含关系 dimensions: List[DiagnosisDimensionResult]，lazy="selectin"）以及 DeviationLevel enum（ok/slight/significant）和 DiagnosisDimensionResult ORM 模型（对应 diagnosis_dimension_results 表，包含 FK 关系 report: DiagnosisReport）（依赖 T002, T003）
-
-- [ ] T005 在 src/models/__init__.py 中导出 DiagnosisReport 和 DiagnosisDimensionResult（依赖 T004）
-
-- [ ] T006 运行迁移验证：执行 alembic upgrade head 并确认两张表及所有索引创建成功（依赖 T003, T005）
-
-**检查点**: 数据库表已创建，ORM 模型可用 → 可以开始用户故事实施
+- [ ] T007 [P] 补写 tests/unit/test_migration_011.py，验证 migration 0011 执行后 diagnosis_reports 和 diagnosis_dimension_results 表结构符合预期（列类型、约束、索引、FK），使用 sqlalchemy inspect 方式验证（依赖 T006）
+- [ ] T008 [P] 补写 tests/unit/test_diagnosis_model.py，验证 DiagnosisReport 和 DiagnosisDimensionResult ORM 模型字段映射正确、relationship lazy=selectin 正常加载，使用 factory_boy 或手工构造对象验证（依赖 T004）
 
 ---
 
-## 阶段 3: 评分逻辑（US1 + US2 核心，纯函数，可无 DB 单元测试）
+## Phase 3: 评分算法（US1/US2 基础）(P1)
 
-**目标**: 实现偏差等级判断、维度得分计算、综合评分函数，无任何 DB 依赖
+**故事目标**: 实现 AD-003 线性插值评分算法，支持 ok/slight/significant 三级偏差判断和 above/below/none 方向识别
 
-**独立测试**: 给定 measured_value, standard_min, standard_max, ideal_value，验证 deviation_level、score、overall_score 计算正确
+**独立测试标准**: pytest tests/unit/test_diagnosis_scorer.py 全部通过（27 tests）
 
-### 评分逻辑的测试 ⚠️ 先编写，确认失败后再实施
+### 测试（TDD — 先写测试）
 
-- [ ] T007 [P] [US1] 在 tests/unit/test_diagnosis_scorer.py 中编写 diagnosis_scorer 单元测试，覆盖：
-  (a) 值在 [min, max] 内 → deviation_level=ok, score=100, direction=none；
-  (b) 值超出 min/max 但在 1.5 倍半宽内 → deviation_level=slight, score 在 [60, 100) 线性插值；
-  (c) 值超出 1.5 倍半宽 → deviation_level=significant, score 在 [0, 60) 线性插值；
-  (d) direction 判断：measured > max → above；measured < min → below；其他 → none；
-  (e) 综合评分 = 各维度得分简单平均；
-  (f) 空维度列表时综合评分 = 0；
-  (g) 半宽为零（min==max）时的边界处理（不抛除零异常）
+- [x] T009 [P] [US1] 编写 tests/unit/test_diagnosis_scorer.py，覆盖 AD-003 算法所有场景：a) 在范围内→ok score=100；b) slight 范围→score∈[60,100]；c) significant 范围→score∈[0,60]；d) 偏差方向 above/below/none；e) overall_score=维度均值；f) 空列表→0.0；g) min==max 特殊情况
 
-### 评分逻辑的实施
+### 实现
 
-- [ ] T008 [US1] 在 src/services/diagnosis_scorer.py 中实现：
-  - `DeviationLevel` enum（ok/slight/significant）
-  - `DeviationDirection` enum（above/below/none）
-  - `DimensionScore` dataclass（dimension, measured_value, ideal_value, standard_min, standard_max, unit, score, deviation_level, deviation_direction）
-  - `compute_dimension_score(measured, std_min, std_max, ideal, unit, dimension) -> DimensionScore`：实现线性插值评分，半宽=0 时降级处理
-  - `compute_overall_score(dimension_scores: list[DimensionScore]) -> float`：等权平均，忽略无测量值的维度
-  （依赖 T004，纯函数不依赖 DB）
-
-**检查点**: T007 单元测试全部通过，评分逻辑可独立验证
+- [x] T010 [US1] 实现 src/services/diagnosis_scorer.py，包含 compute_dimension_score() 和 compute_overall_score()，以及 DimensionScore dataclass、DeviationLevel/DeviationDirection enum（依赖 T009）
 
 ---
 
-## 阶段 4: LLM 改进建议生成（US1 + US2，可 mock 单元测试）
+## Phase 4: LLM 建议生成（US1/US2 基础）(P1)
 
-**目标**: 针对偏差维度生成自然语言改进建议，复用 LlmClient
+**故事目标**: 使用 LlmClient 为偏差维度动态生成改进建议，LLM 失败时降级模板
 
-**独立测试**: mock LlmClient.chat()，验证 prompt 包含维度名、测量值、理想值、偏差方向；达标维度不调用 LLM
+**独立测试标准**: pytest tests/unit/test_diagnosis_llm_advisor.py 全部通过（11 tests）
 
-### LLM advisor 的测试 ⚠️ 先编写，确认失败后再实施
+### 测试（TDD — 先写测试）
 
-- [ ] T009 [P] [US1] 在 tests/unit/test_diagnosis_llm_advisor.py 中编写 diagnosis_llm_advisor 单元测试，覆盖：
-  (a) 偏差维度（slight/significant）调用 LlmClient.chat()，返回建议文本；
-  (b) 达标维度（ok）不调用 LLM，improvement_advice=None；
-  (c) prompt 中包含 dimension 名称、measured_value、ideal_value、deviation_direction（above/below）；
-  (d) LlmClient 抛出 LlmError 时降级为默认模板文本（不抛异常给上层）；
-  (e) tech_category 和 dimension 的中文名称映射在 prompt 中正确体现
+- [x] T011 [P] [US1] 编写 tests/unit/test_diagnosis_llm_advisor.py，场景：a) ok→返回 None 不调用 LLM；b) slight→LLM 调用返回建议；c) significant→LLM 调用返回建议；d) LLM 失败→降级模板不抛异常；e) 提示词包含维度名/实测值/范围/技术类别
 
-### LLM advisor 的实施
+### 实现
 
-- [ ] T010 [US1] 在 src/services/diagnosis_llm_advisor.py 中实现：
-  - `generate_improvement_advice(dimension_score: DimensionScore, tech_category: str, llm_client: LlmClient) -> str | None`
-    - deviation_level=ok → 返回 None（不调用 LLM）
-    - 偏差维度：构造中文 prompt（含技术类别名、维度名、测量值、理想值、标准范围、偏差方向），调用 llm_client.chat()，temperature=0.3
-    - LlmError 时返回 fallback 模板字符串（含偏差方向和数值差）
-  - `DIMENSION_CN_NAMES: dict[str, str]`：维度中文名称映射
-  - `ACTION_CN_NAMES: dict[str, str]`：技术类别中文名称映射（复用 advice_generator.py 中的映射）
-  （依赖 T008）
-
-**检查点**: T009 单元测试全部通过，LLM advisor 可独立 mock 测试
+- [x] T012 [US1] 实现 src/services/diagnosis_llm_advisor.py，包含 generate_improvement_advice(dim, tech_category, llm_client)，ok 返回 None，slight/significant 调用 LLM，LlmError 降级模板（依赖 T011）
 
 ---
 
-## 阶段 5: 诊断主服务与 API 路由（US1 MVP 核心）
+## Phase 5: 诊断服务与 API（US1 — 核心流程）(P1)
 
-**目标**: DiagnosisService 编排完整诊断流程；POST /api/v1/diagnosis 端点同步返回报告
+**故事目标**: POST /api/v1/diagnosis 端点同步返回完整诊断报告，持久化到 DB，≤60s 响应
 
-**独立测试**: 提交一段 forehand_topspin 视频路径，POST /api/v1/diagnosis 返回包含 overall_score、dimensions[] 的完整报告；无标准时返回 404
+**独立测试标准**:
+- pytest tests/unit/test_diagnosis_service.py 全部通过
+- pytest tests/contract/test_diagnosis_contract.py 全部通过（17 tests）
+- pytest tests/integration/test_diagnosis_api.py::TestUS1FullFlow 全部通过
 
-### 诊断服务与路由的测试 ⚠️ 先编写，确认失败后再实施
+**检查点**: POST /api/v1/diagnosis 可用，US1 MVP 可演示
 
-- [ ] T011 [P] [US1] 在 tests/unit/test_diagnosis_scorer.py 中（或新建文件）补充 DiagnosisService 的单元级测试（mock pose_estimator + tech_extractor + llm_advisor + DB session），验证：
-  (a) 无 active 标准时抛出 StandardNotFoundError；
-  (b) 视频提取无有效动作时抛出 ExtractionFailedError；
-  (c) 正常流程返回 DiagnosisReportData（含 overall_score, dimensions, strengths）
+### 测试（TDD — 先写测试）
 
-- [ ] T012 [P] [US1] 在 tests/contract/test_diagnosis_contract.py 中编写 POST /api/v1/diagnosis 契约测试：
-  验证 200 响应包含 report_id(UUID), tech_category, standard_id, standard_version, overall_score(float 0-100), strengths(list[str]), dimensions[](每项含 dimension, measured_value, ideal_value, standard_min, standard_max, unit, score, deviation_level, deviation_direction, improvement_advice), created_at；
-  验证 422 响应（tech_category 非法）；
-  验证 404 响应结构（error, detail 字段，无标准时）
+- [x] T013 [P] [US1] 编写 tests/contract/test_diagnosis_contract.py，场景：a) 200 响应包含所有 FR-006+FR-007 字段；b) 422 无效 tech_category；c) 404 StandardNotFoundError；d) 400 ExtractionFailedError；使用 TestClient + patch AsyncMock，不依赖真实 DB
+- [x] T014 [P] [US1] 编写 tests/integration/test_diagnosis_api.py 中的 TestUS1FullFlow，使用真实 PostgreSQL + savepoint 隔离，mock _localize_video 和 _extract_measurements，验证：1) 返回 200；2) 报告写入 diagnosis_reports；3) standard_id 匹配 active 标准
+- [ ] T015 [P] [US1] 补写 tests/unit/test_diagnosis_service.py，mock 所有外部依赖（pose_estimator、tech_extractor、llm_advisor、AsyncSession），验证场景：a) 无 active 标准→StandardNotFoundError；b) 空测量值→ExtractionFailedError；c) 正常流程→返回 DiagnosisReportData；d) LLM 通过 run_in_executor 调用；e) finally 块清理 tmp_path（依赖 T010, T012）
 
-- [ ] T013 [P] [US1] 在 tests/integration/test_diagnosis_api.py 中编写 US1 集成测试（真实 DB + mock 视频处理）：
-  给定 DB 中存在 forehand_topspin 的 active tech_standard，mock tech_extractor 返回固定维度值，
-  调用 POST /api/v1/diagnosis，验证：返回 200，overall_score 在 [0, 100]，dimensions[] 非空，report 已持久化到 DB
+### 实现
 
-### 诊断服务与路由的实施
-
-- [ ] T014 [US1] 在 src/services/diagnosis_service.py 中实现 DiagnosisService：
-  ```
-  async def diagnose(
-      session: AsyncSession,
-      tech_category: str,
-      video_path: str,
-  ) -> DiagnosisReportData:
-  ```
-  流程：
-  1. 查询 active TechStandard（tech_category + status=active），无则抛出 StandardNotFoundError
-  2. 下载/本地化视频到临时目录（COS key 通过 cos_client 下载）
-  3. 调用 pose_estimator.estimate_pose(video_path)，获取帧关键点
-  4. 调用 tech_extractor 提取维度测量值（ExtractionResult），无有效动作则抛出 ExtractionFailedError
-  5. 遍历 standard.points，调用 diagnosis_scorer.compute_dimension_score()
-  6. 对偏差维度调用 diagnosis_llm_advisor.generate_improvement_advice()（run_in_executor 包装）
-  7. 调用 diagnosis_scorer.compute_overall_score()
-  8. 持久化 DiagnosisReport + DiagnosisDimensionResult，session.flush()
-  9. 返回 DiagnosisReportData dataclass
-  清理：finally 块删除临时文件
-  （依赖 T005, T008, T010）
-
-- [ ] T015 [US1] 在 src/api/routers/diagnosis.py 中实现 POST /api/v1/diagnosis 端点：
-  - 请求模型 DiagnosisRequest（tech_category: str 必填，video_path: str 必填）
-  - 响应模型 DiagnosisResponse（含所有报告字段）
-  - 调用 DiagnosisService.diagnose()
-  - 异常处理：StandardNotFoundError → 404；ExtractionFailedError → 400；其他 → 500
-  - tech_category 校验：非法值返回 422（复用 ActionType enum 校验，参考 standards.py）
-  （依赖 T014）
-
-- [ ] T016 [US1] 在 src/api/main.py 中注册 diagnosis router，前缀 /api/v1（依赖 T015）
-
-- [ ] T017 [US1] 在 src/services/diagnosis_service.py 中添加结构化日志：记录每次诊断的 tech_category, standard_id, overall_score, dimensions_count, deviations_count, llm_calls, elapsed_ms（依赖 T014）
-
-**检查点**: POST /api/v1/diagnosis 可用，T011/T012/T013 测试全部通过，US1 MVP 可演示
+- [x] T016 [US1] 实现 src/services/diagnosis_service.py：DiagnosisService.diagnose() 完整流程（加载标准→本地化视频→提取测量→评分→LLM建议→持久化），StandardNotFoundError/ExtractionFailedError 异常，run_in_executor 包装 CPU 密集操作，finally 清理临时文件（依赖 T010, T012）
+- [x] T017 [US1] 实现 src/api/routers/diagnosis.py：DiagnosisRequest/DiagnosisResponse/DimensionResultResponse Pydantic 模型，POST "" 端点，StandardNotFoundError→404/ExtractionFailedError→400/Exception→500，session commit（依赖 T016）
+- [x] T018 [US1] 在 src/api/main.py 中注册 diagnosis_router，prefix="/api/v1"（依赖 T017）
 
 ---
 
-## 阶段 6: 维度详细偏差展示（US2）
+## Phase 6: 维度详情（US2）(P1)
 
-**目标**: 确认响应中每维度已包含完整偏差详情（measured/ideal/range/level/direction/advice），补充 US2 专项测试
+**故事目标**: 每个维度返回 FR-007 所有 10 个字段（含 improvement_advice），优点维度建议为 null
 
-**独立测试**: 给定已知测量值的请求，验证每维度的偏差等级与人工预期一致（SC-003 ≥ 90%）
+**独立测试标准**: pytest tests/integration/test_diagnosis_api.py::TestUS2DimensionDetails 全部通过（3 tests）
 
-### US2 的测试 ⚠️ 先编写，确认失败后再实施
+### 测试（TDD）
 
-- [ ] T018 [P] [US2] 在 tests/unit/test_diagnosis_scorer.py 中补充 US2 边界用例：
-  (a) 在标准范围恰好边界时（measured == min 或 measured == max）→ deviation_level=ok；
-  (b) measured 超出范围 1.5 倍半宽恰好边界时 → deviation_level=slight/significant 正确切换；
-  (c) deviation_direction 字段在所有 level 中均正确设置
+- [x] T019 [P] [US2] 编写 tests/integration/test_diagnosis_api.py 中的 TestUS2DimensionDetails：a) ok 维度在 strengths 中且 advice=null；b) 全部 ideal 值→overall_score=100；c) 偏差维度有非空 improvement_advice（依赖 T014）
 
-- [ ] T019 [P] [US2] 在 tests/integration/test_diagnosis_api.py 中补充 US2 集成测试：
-  (a) 达标维度在 strengths[] 中出现，improvement_advice=null；
-  (b) 偏差维度 improvement_advice 非空且包含偏差方向描述；
-  (c) 给定全部维度达标的理想输入，overall_score=100；
-  (d) 给定全部维度明显偏差，overall_score 较低（≤ 40）
+### 验证
 
-### US2 的实施（通常无需新增代码，通过测试即验证完成）
-
-- [ ] T020 [US2] 确认 DiagnosisResponse 的 dimensions[] 每项已包含 measured_value, ideal_value, standard_min, standard_max, unit, score, deviation_level, deviation_direction, improvement_advice；如响应序列化缺字段则更新 src/api/routers/diagnosis.py 中的响应模型（依赖 T015, T018）
-
-**检查点**: US2 维度详情完整，T018/T019 测试通过
+- [x] T020 [US2] 确认 DimensionResultResponse 包含 FR-007 全部 10 字段：dimension, measured_value, ideal_value, standard_min, standard_max, unit, score, deviation_level, deviation_direction, improvement_advice（依赖 T017）
 
 ---
 
-## 阶段 7: 教练视频验证（US3）
+## Phase 7: 标准版本追溯（US2.5）(P2)
 
-**目标**: 使用系统内已有教练视频验证诊断基准可信度（SC-001：评分 ≥ 80 分）
+**故事目标**: 响应中包含 standard_id 和 standard_version，支持跨用户结果比较
 
-**独立测试**: 提交数据库中已有的 forehand_topspin 教练视频路径，验证系统返回完整报告且评分 ≥ 80
+**独立测试标准**: pytest tests/integration/test_diagnosis_api.py::TestUS1FullFlow::test_diagnosis_standard_id_matches_active 通过
 
-### US3 的测试 ⚠️ 先编写，确认失败后再实施
-
-- [ ] T021 [P] [US3] 在 tests/integration/test_diagnosis_api.py 中编写 US3 集成测试：
-  (a) 提交已有 forehand_topspin active 标准对应的教练视频路径，验证返回 200、报告格式完整；
-  (b) 验证标准版本字段 standard_version 与 DB 中 active 版本一致；
-  (c) 如 DB 中有真实教练视频 COS 路径（从 coach_video_classifications 或 analysis_tasks 查询），
-      提交诊断，验证 overall_score ≥ 80（SC-001），此测试可标记 @pytest.mark.slow 可选运行
-
-### US3 的实施（无需新增代码，主要为测试数据准备）
-
-- [ ] T022 [US3] 确认 POST /api/v1/diagnosis 支持通过 video_path 传入 COS key（形如 "cos://bucket/key.mp4" 或直接 object key），DiagnosisService 中 cos_client.download 能正确处理；如需补充 COS key 解析逻辑则在 T014 基础上扩展（依赖 T015）
-
-**检查点**: 教练视频诊断流程可用，T021 测试通过，SC-001 可验证
+- [x] T021 [US2.5] 确认 DiagnosisResponse 包含 standard_id 和 standard_version 字段，且值与 DB 中 active 标准一致（已由 test_diagnosis_standard_id_matches_active 覆盖）（依赖 T018）
 
 ---
 
-## 阶段 8: 错误处理与边界情况
+## Phase 8: 错误处理验证（US1/FR-010）(P1)
 
-**目标**: 无标准返回 404、视频无效返回 400、维度数据不足时的降级处理
+**故事目标**: 无活跃标准→404，无效类别→422，空测量值→400，全部有明确 error code
 
-### 错误处理的测试 ⚠️ 先编写，确认失败后再实施
+**独立测试标准**: pytest tests/integration/test_diagnosis_api.py::TestErrorHandling 全部通过（3 tests）
 
-- [ ] T023 [P] 在 tests/integration/test_diagnosis_api.py 中补充边界用例：
-  (a) tech_category 对应无 active 标准 → 返回 404，body 含 error=standard_not_found；
-  (b) tech_category 非法值 → 422；
-  (c) video_path 指向不存在文件（mock）→ 400 或 500 含明确 error 字段；
-  (d) 视频提取出 0 个有效动作 → 400，body 含 error=extraction_failed
-
-### 错误处理的实施
-
-- [ ] T024 在 src/services/diagnosis_service.py 中确认自定义异常类 StandardNotFoundError 和 ExtractionFailedError 已定义（可在文件顶部定义），并在路由层正确映射为 HTTP 404/400（依赖 T015）
-
-**检查点**: 所有错误路径有明确的 HTTP 状态和错误结构，T023 通过
+- [x] T022 [P] [US1] 编写 tests/integration/test_diagnosis_api.py 中的 TestErrorHandling：a) 无标准→404 standard_not_found；b) 无效 tech_category→422；c) 空测量→400 extraction_failed（依赖 T014）
+- [x] T023 [US1] 确认 StandardNotFoundError→404，ExtractionFailedError→400，Exception→500 internal_error 在 src/api/routers/diagnosis.py 中映射正确（依赖 T017）
 
 ---
 
-## 阶段 9: 收尾与横切关注点
+## Phase 9: 结构化日志与可观测性（NFR-001）
 
-**目的**: 验证、日志、性能确认、手工 curl 验证
+**目标**: 每次诊断记录结构化日志，字段：tech_category, standard_id, overall_score, dimensions_count, deviations_count, llm_calls, elapsed_ms
 
-- [ ] T025 [P] 手工 curl 验证：启动 `uvicorn src.api.main:app --reload`，执行：
-  (1) POST /api/v1/diagnosis（有效请求）→ 200 含完整报告；
-  (2) POST /api/v1/diagnosis（无标准类别）→ 404；
-  (3) POST /api/v1/diagnosis（tech_category=invalid）→ 422；
-  记录端到端响应时间，确认 ≤ 60 秒（SC-002）
-
-- [ ] T026 [P] 确认 DiagnosisService 中 LLM 调用通过 asyncio.get_event_loop().run_in_executor(None, ...) 包装（或等效方式），不阻塞 FastAPI 事件循环；如未实现则在 T014 基础上修正（依赖 T014）
-
-- [ ] T027 [P] 确认 diagnosis_service.py 中 finally 块正确清理临时视频文件；补充 tests/unit/test_diagnosis_service_cleanup.py 测试（mock os.unlink，验证临时文件总是被删除，包括异常路径）（依赖 T014）
-
-- [ ] T028 [P] 在 tests/contract/test_diagnosis_contract.py 中确认所有契约测试覆盖规范中要求的字段（FR-006）：综合评分、各维度测量值与标准对比、优点列表（strengths）、改进建议列表（improvement_advice）；补充缺失字段的契约断言
+- [x] T024 在 src/services/diagnosis_service.py 的 DiagnosisService.diagnose() 中添加结构化日志（logger.info），已包含所有 NFR-001 必需字段（依赖 T016）
 
 ---
 
-## 依赖关系与执行顺序
+## Phase 10: NFR 验证与收尾
 
-### 阶段依赖关系
+**目标**: 验证 NFR-002~NFR-004，补写缺失测试，执行 curl 冒烟测试
 
-- **设置（阶段 1）**: 无依赖，立即开始
-- **基础（阶段 2）**: 依赖阶段 1 → 阻塞所有用户故事
-- **评分逻辑（阶段 3）**: 依赖阶段 2（ORM 模型导入），但评分函数为纯函数，可与 T006/T007 并行
-- **LLM advisor（阶段 4）**: 依赖阶段 3（DimensionScore 类型）
-- **主服务与路由（阶段 5）**: 依赖阶段 2 + 3 + 4 全部完成
-- **US2（阶段 6）**: 依赖阶段 5 完成，大部分为补充测试
-- **US3（阶段 7）**: 依赖阶段 5 完成
-- **错误处理（阶段 8）**: 依赖阶段 5 完成
-- **收尾（阶段 9）**: 依赖所有阶段完成
+### NFR 补充测试
 
-### 用户故事内部顺序
+- [ ] T025 [P] 补写 tests/unit/test_diagnosis_service_cleanup.py，mock os.unlink，验证：a) 正常流程后 tmp_path 被删除；b) 异常流程（ExtractionFailedError）后 tmp_path 仍被清理（finally 块）（依赖 T016）
+- [ ] T026 [P] 验证 src/services/diagnosis_service.py 中 generate_improvement_advice 通过 asyncio.get_event_loop().run_in_executor(None, ...) 调用（NFR-004），若已存在则在 test_diagnosis_service.py 中补充对应断言（依赖 T015）
 
-- TDD：每个阶段的测试任务（[P]）必须先于实施任务完成并确认失败
-- ORM 模型 → 评分服务 → LLM advisor → 主服务 → API 路由 → 注册
+### COS 路径验证
 
-### 并行机会
+- [ ] T027 验证 src/services/diagnosis_service.py 中 _download_from_cos 的 cos:// 路径解析：cos://bucket-name/path/to/video.mp4→key: path/to/video.mp4；cos://bucket/key.mp4→key: key.mp4（可新增 tests/unit/test_diagnosis_service.py 中的 test_cos_key_parsing 测试）（依赖 T016）
 
-- T007, T009, T011, T012, T013 可并行（不同文件，均为测试编写）
-- T018, T019, T021, T023 可并行（补充测试，不同故事）
-- T025, T026, T027, T028 可并行（收尾验收）
-- 阶段 2 完成后：阶段 3 和阶段 4 的测试编写可立即并行启动
+### 手动验收
+
+- [ ] T028 启动 uvicorn src.api.main:app --reload，执行三条 curl 验证：1) 无效类别→422；2) forehand_loop_underspin 无标准→404 standard_not_found；3) 计时正常请求确认 ≤60s（SC-002）（依赖 T018）
+
+### 教练视频验证（SC-001，阻塞于真实 pipeline）
+
+- [ ] T029 [US3] 使用教练视频 COS 路径（或本地路径）发起真实诊断请求，验证 overall_score ≥ 80（SC-001）、standard_id 匹配 active 标准（SC-003）。*注意: 此任务阻塞于 estimate_pose/segment_actions/classify_segments/extract_tech_points pipeline 完整实现，如 pipeline 未就绪则标注为人工验收项*（依赖 T028）
 
 ---
 
-## 实施策略
+## 任务摘要
 
-### MVP（US1）
+| Phase | 任务数 | 状态 |
+|-------|--------|------|
+| Phase 1: 设置 | T001 | ✅ 完成 |
+| Phase 2: 基础（DB+模型）| T002-T008 | T002-T006 ✅，T007-T008 待补写 |
+| Phase 3: 评分算法 | T009-T010 | ✅ 完成（27 tests） |
+| Phase 4: LLM 建议 | T011-T012 | ✅ 完成（11 tests） |
+| Phase 5: 服务+API（US1） | T013-T018 | T013-T014/T016-T018 ✅，T015 待补写 |
+| Phase 6: 维度详情（US2） | T019-T020 | ✅ 完成 |
+| Phase 7: 标准版本（US2.5）| T021 | ✅ 完成 |
+| Phase 8: 错误处理 | T022-T023 | ✅ 完成 |
+| Phase 9: 结构化日志 | T024 | ✅ 完成 |
+| Phase 10: NFR+收尾 | T025-T029 | 全部待完成 |
 
-1. 完成阶段 1: 设置
-2. 完成阶段 2: 基础（T002~T006）
-3. 完成阶段 3: 评分逻辑（T007~T008）
-4. 完成阶段 4: LLM advisor（T009~T010）
-5. 完成阶段 5: 主服务与路由（T011~T017）
-6. **停止并验证**: POST /api/v1/diagnosis 完整流程可用
-7. MVP 可演示
-
-### 增量交付
-
-1. MVP（US1）→ 可演示核心价值
-2. 添加 US2 详细偏差展示（T018~T020）→ 维度级别可见
-3. 添加 US3 教练视频验证（T021~T022）→ 基准可信度验证
-4. 补充错误处理（T023~T024）→ 生产就绪
-5. 收尾（T025~T028）→ 最终交付
+**当前通过测试**: 64 tests（unit 38 + contract 17 + integration 9）
 
 ---
 
-## 注意事项
+## 依赖关系
 
-- [P] 任务 = 不同文件，无依赖关系，可并行
-- 每个 [US] 标签确保任务与用户故事可追溯
-- TDD：测试任务必须在对应实施任务之前完成并确认失败
-- LLM 调用是同步的，通过 run_in_executor 包装，确保不阻塞事件循环
-- ActionType 枚举沿用 src/models/expert_tech_point.py 中的定义（12 个类别）
-- 评分插值系数（得分区间 100/60/0）定义为 diagnosis_scorer.py 顶部常量，可调参
-- 临时文件务必在 finally 块清理，避免磁盘泄漏
-- US4（历史查询）明确不在本功能范围内，tasks.md 不含相关任务
+- Phase 2 (DB) → Phase 3 (Scorer) → Phase 5 (Service)
+- Phase 4 (LLM) → Phase 5 (Service)
+- Phase 5 (US1) → Phase 6 (US2) → Phase 7 (US2.5)
+- Phase 5 → Phase 8 (错误处理)
+- Phase 5 → Phase 9 (日志)
+- Phase 5 → Phase 10 (收尾)
+- T029 阻塞于外部 pipeline 就绪
+
+## 并行执行机会
+
+- T007, T008 可并行（不同文件，均为补写测试）
+- T009, T011 可并行（在原始 TDD 实现时，均为测试编写不同文件）
+- T025, T026, T027 可并行（均为收尾验证，不同文件）
+
+## 实现策略
+
+**MVP 范围（Phase 3-8 — US1+US2 已完成）:**
+- POST /api/v1/diagnosis 同步返回完整诊断报告
+- 维度详情含全部 10 字段（FR-007）
+- StandardNotFoundError/ExtractionFailedError 明确错误码
+- 评分算法 + LLM 建议 + 结构化日志
+
+**待完成项（Phase 2 补写 + Phase 10）:**
+- T007/T008: migration/model 测试（TDD 补写）
+- T015: DiagnosisService 单元测试（mock pipeline）
+- T025: 临时文件清理测试
+- T026: run_in_executor 断言
+- T027: COS 路径解析测试
+- T028: 手动 curl 冒烟测试
+- T029: 教练视频 SC-001 验证（依赖 pipeline）
