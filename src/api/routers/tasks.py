@@ -185,6 +185,14 @@ async def list_tasks(
             video_filename=task.video_filename,
             video_storage_uri=task.video_storage_uri,
             video_duration_seconds=task.video_duration_seconds,
+            video_size_bytes=task.video_size_bytes,
+            video_fps=task.video_fps,
+            video_resolution=task.video_resolution,
+            execution_seconds=(
+                (task.completed_at - task.started_at).total_seconds()
+                if task.completed_at and task.started_at else None
+            ),
+            timing_stats=task.timing_stats,
             progress_pct=task.progress_pct,
             error_message=task.error_message,
             knowledge_base_version=task.knowledge_base_version,
@@ -549,8 +557,13 @@ async def get_task_status(
         started_at=task.started_at,
         completed_at=task.completed_at,
         video_duration_seconds=task.video_duration_seconds,
+        video_size_bytes=task.video_size_bytes,
         video_fps=task.video_fps,
         video_resolution=task.video_resolution,
+        execution_seconds=(
+            (task.completed_at - task.started_at).total_seconds()
+            if task.completed_at and task.started_at else None
+        ),
         progress_pct=task.progress_pct,
         processed_segments=task.processed_segments,
         total_segments=task.total_segments,

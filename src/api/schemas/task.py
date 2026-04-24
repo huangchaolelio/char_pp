@@ -53,8 +53,10 @@ class TaskStatusResponse(BaseModel):
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
     video_duration_seconds: Optional[float] = None
+    video_size_bytes: Optional[int] = None
     video_fps: Optional[float] = None
     video_resolution: Optional[str] = None
+    execution_seconds: Optional[float] = None
     # Feature 002: long video progress fields
     progress_pct: Optional[float] = None
     processed_segments: Optional[int] = None
@@ -226,6 +228,11 @@ class TaskListItemResponse(BaseModel):
     video_filename: str
     video_storage_uri: str
     video_duration_seconds: Optional[float] = None
+    video_size_bytes: Optional[int] = None
+    video_fps: Optional[float] = None
+    video_resolution: Optional[str] = None
+    execution_seconds: Optional[float] = None
+    timing_stats: Optional[dict] = None
     progress_pct: Optional[float] = None
     error_message: Optional[str] = None
     knowledge_base_version: Optional[str] = None
