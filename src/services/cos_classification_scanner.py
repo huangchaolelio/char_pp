@@ -46,9 +46,24 @@ class CosClassificationScanner:
         cos_root_prefix: str,
         tech_classifier,
     ) -> None:
-        self._coach_map = coach_map
         self._cos_root_prefix = cos_root_prefix
         self._classifier = tech_classifier
+        # Each COS directory is treated as a distinct coach.
+        # When the same base name appears in multiple directories, append a
+        # numeric suffix to later occurrences: 孙浩泓, 孙浩泓_2, 孙浩泓_3, …
+        # self._dir_to_unique_coach: directory -> unique coach name
+        # self._coach_bio_map:        unique coach name -> directory (used as bio)
+        self._dir_to_unique_coach: dict[str, str] = {}
+        self._coach_bio_map: dict[str, str] = {}
+        name_counter: dict[str, int] = {}  # base_name -> count seen so far
+        for directory, base_name in coach_map.items():
+            count = name_counter.get(base_name, 0) + 1
+            name_counter[base_name] = count
+            unique_name = base_name if count == 1 else f"{base_name}_{count}"
+            self._dir_to_unique_coach[directory] = unique_name
+            self._coach_bio_map[unique_name] = directory
+        # Keep original map for any callers that still reference it
+        self._coach_map = coach_map
 
     @classmethod
     def from_settings(cls) -> "CosClassificationScanner":
@@ -121,11 +136,41 @@ class CosClassificationScanner:
         return relative
 
     def _get_coach_name(self, course_series: str) -> tuple[str, str]:
-        """Return (coach_name, name_source) for a course_series directory name."""
-        coach = self._coach_map.get(course_series)
-        if coach:
-            return coach, "map"
+        """Return (unique_coach_name, name_source) for a course_series directory.
+
+        Each directory maps to a distinct unique name.  When the base name is
+        shared by multiple directories, later occurrences carry a numeric suffix
+        (_2, _3, …) so coaches table rows stay 1-to-1 with COS directories.
+        """
+        unique = self._dir_to_unique_coach.get(course_series)
+        if unique:
+            return unique, "map"
         return course_series, "fallback"
+
+    def _get_coach_bio(self, coach_name: str) -> Optional[str]:
+        """Return bio string for a coach, derived from their COS directory names."""
+        return self._coach_bio_map.get(coach_name)
+
+    async def _upsert_coach(self, session: AsyncSession, coach_name: str) -> None:
+        """Insert or update coach in coaches table (match by name).
+
+        - New coach: inserted with bio derived from COS directory name.
+        - Existing coach with no bio: bio is backfilled.
+        - Existing coach with bio already set: left unchanged.
+        """
+        from src.models.coach import Coach
+
+        result = await session.execute(
+            select(Coach).where(Coach.name == coach_name)
+        )
+        existing = result.scalar_one_or_none()
+        bio = self._get_coach_bio(coach_name)
+        if existing is None:
+            session.add(Coach(name=coach_name, bio=bio, is_active=True))
+            logger.info("Auto-inserted new coach: %s (bio=%s)", coach_name, bio)
+        elif existing.bio is None and bio is not None:
+            existing.bio = bio
+            logger.info("Backfilled bio for coach: %s", coach_name)
 
     async def scan_full(self, session: AsyncSession) -> ScanStats:
         """Full scan: upsert all mp4 files from COS root prefix."""
@@ -146,6 +191,9 @@ class CosClassificationScanner:
         total = len(objects)
         logger.info("Starting full scan: %d mp4 files to process", total)
 
+        # Track coaches already upserted this run to avoid redundant SELECTs
+        seen_coaches: set[str] = set()
+
         for i, obj in enumerate(objects):
             cos_key: str = obj["Key"]
             filename = cos_key.rsplit("/", 1)[-1]
@@ -160,6 +208,11 @@ class CosClassificationScanner:
                 continue
 
             try:
+                # Sync coach to coaches table
+                if coach_name not in seen_coaches:
+                    await self._upsert_coach(session, coach_name)
+                    seen_coaches.add(coach_name)
+
                 # Check existing record (upsert logic)
                 stmt = select(CoachVideoClassification).where(
                     CoachVideoClassification.cos_object_key == cos_key
@@ -259,6 +312,9 @@ class CosClassificationScanner:
         )
         stats.skipped = len(objects) - len(new_objects)
 
+        # Track coaches already upserted this run to avoid redundant SELECTs
+        seen_coaches: set[str] = set()
+
         for obj in new_objects:
             cos_key: str = obj["Key"]
             filename = cos_key.rsplit("/", 1)[-1]
@@ -273,6 +329,11 @@ class CosClassificationScanner:
                 continue
 
             try:
+                # Sync coach to coaches table
+                if coach_name not in seen_coaches:
+                    await self._upsert_coach(session, coach_name)
+                    seen_coaches.add(coach_name)
+
                 record = CoachVideoClassification(
                     coach_name=coach_name,
                     course_series=course_series,

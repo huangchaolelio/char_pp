@@ -32,6 +32,42 @@ from src.models.video_classification import VideoClassification
 from src.services import cos_client
 from src.services.video_classifier import VideoClassifierService
 
+
+def _list_all_cos_videos() -> list[dict]:
+    """List all mp4 files under COS_VIDEO_ALL_COCAH prefix (all coaches)."""
+    from qcloud_cos import CosConfig, CosS3Client  # type: ignore[import]
+    from src.config import get_settings
+
+    settings = get_settings()
+    config = CosConfig(
+        Region=settings.cos_region,
+        SecretId=settings.cos_secret_id,
+        SecretKey=settings.cos_secret_key,
+        Scheme="https",
+    )
+    client = CosS3Client(config)
+    bucket = settings.cos_bucket
+    prefix = settings.cos_video_all_cocah
+
+    results = []
+    marker = ""
+    while True:
+        kwargs = dict(Bucket=bucket, Prefix=prefix, MaxKeys=1000)
+        if marker:
+            kwargs["Marker"] = marker
+        response = client.list_objects(**kwargs)
+        for obj in response.get("Contents", []):
+            if int(obj["Size"]) == 0:
+                continue
+            key: str = obj["Key"]
+            if key.lower().endswith(".mp4"):
+                results.append({"cos_object_key": key, "filename": key.split("/")[-1]})
+        if response.get("IsTruncated") == "true":
+            marker = response["NextMarker"]
+        else:
+            break
+    return results
+
 UTC = _tz.utc
 
 router = APIRouter(prefix="/videos", tags=["videos"])
@@ -109,8 +145,8 @@ async def refresh_classifications(
     """
     classifier = _get_classifier()
 
-    # Fetch all videos from COS
-    all_videos = cos_client.list_videos(action_type="all")
+    # Fetch all videos from COS (all coaches, using COS_VIDEO_ALL_COCAH prefix)
+    all_videos = _list_all_cos_videos()
     total_scanned = len(all_videos)
 
     # Load existing overridden keys so we can skip them

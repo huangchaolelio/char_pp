@@ -1,9 +1,32 @@
 version: "1.0"
 
 # 教练定义：从 COS 路径中识别教练
+# cos_prefix_keywords 匹配 COS object key 中的目录名片段，首个命中规则生效
 coaches:
   - name: "孙浩泓"
-    cos_prefix_keywords: ["孙浩泓"]
+    cos_prefix_keywords: ["《知行合一》孙浩泓专业乒乓球全套教学课程120集"]
+  - name: "小孙"
+    cos_prefix_keywords: ["小孙专业乒乓球"]
+  - name: "孙霆"
+    cos_prefix_keywords: ["孙霆无解勾手发球"]
+  - name: "高云娇"
+    cos_prefix_keywords: ["专业乒乓球系统课程_高云娇42节"]
+  - name: "尹航"
+    cos_prefix_keywords: ["尹航教学合集"]
+  - name: "全世爆"
+    cos_prefix_keywords: ["全世爆乒乓", "全世爆健硕体育"]
+  - name: "沙指导"
+    cos_prefix_keywords: ["源动力沙指导"]
+  - name: "王增羿"
+    cos_prefix_keywords: ["王增羿"]
+  - name: "穆静毓"
+    cos_prefix_keywords: ["穆静毓"]
+  - name: "张继科"
+    cos_prefix_keywords: ["张继科"]
+  - name: "张蔷"
+    cos_prefix_keywords: ["张蔷"]
+  - name: "郭焱"
+    cos_prefix_keywords: ["郭焱"]
 
 # 分类规则（优先级从高到低，首个命中规则生效）
 # 字段说明：
