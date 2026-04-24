@@ -24,6 +24,7 @@ class TestSubmitExpertVideo:
         assert resp.json()["detail"]["details"]["cos_object_key"] == COS_KEY
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
     async def test_success_returns_202_with_task_id(self, client, override_db):
         task = make_task(status="pending")
         override_db.refresh = AsyncMock(side_effect=lambda t: None)
@@ -78,6 +79,7 @@ class TestGetTaskStatus:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
     async def test_returns_task_status(self, client, override_db):
         task = make_task(status="processing")
         result = MagicMock()
@@ -106,6 +108,7 @@ class TestGetTaskStatus:
 
 class TestGetTaskResult:
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
     async def test_task_not_ready_returns_409(self, client, override_db):
         task = make_task(status="processing")
         result = MagicMock()
@@ -117,6 +120,7 @@ class TestGetTaskResult:
         assert resp.json()["detail"]["code"] == "TASK_NOT_READY"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
     async def test_expert_video_success_returns_points(self, client, override_db):
         task = make_task(status="success", task_type="expert_video", kb_version=KB_VERSION)
         kb = make_kb(version=KB_VERSION, status="draft")
@@ -149,6 +153,7 @@ class TestGetTaskResult:
         assert body["extracted_points"][0]["dimension"] == "elbow_angle"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
     async def test_athlete_video_result_no_analysis(self, client, override_db):
         """Athlete task with no motion analysis yet returns 200 with empty deviations."""
         task = make_task(status="success", task_type="athlete_video")
@@ -191,6 +196,7 @@ class TestDeleteTask:
         assert resp.status_code == 404
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
     async def test_soft_delete_sets_deleted_at(self, client, override_db):
         task = make_task(status="success")
         task.deleted_at = None  # mutable

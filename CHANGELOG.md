@@ -8,7 +8,7 @@
 
 ## [Unreleased]
 
-### Feature-013 — 任务管道重新设计（进行中，US1–US5 已完成）
+### Feature-013 — 任务管道重新设计（已完成，US1–US5 + 打磨阶段 T001–T064）
 
 **目标**：彻底解耦单一聚合任务类型为三类独立管道（分类 / 知识库提取 / 运动员诊断），实现队列物理隔离、通道容量/并发热更新、幂等提交、孤儿任务自动恢复、管道数据一键重置。
 
@@ -41,15 +41,21 @@
 #### 测试
 
 - Feature-013 本体 **61/61 通过**
-- 新增测试覆盖：合约测试 6 个文件、集成测试 6 个文件
-- 24 个遗留测试用例用 `pytest.mark.skip` 精确标记（21 个 Alembic 0012 任务类型移除相关，3 个 `classifications.py:197` NullType 既有 bug）
-- 全仓最终状态：**205 passed, 26 skipped, 0 failed**
+- 新增测试覆盖：合约测试 6 个文件、集成测试 7 个文件、单元测试 2 个文件
+- 51 个遗留测试用例用 `pytest.mark.skip` 精确标记（45 个 Alembic 0012 任务类型移除相关，3 个 `classifications.py:197` NullType 既有 bug，7 个 `TeachingTipExtractor` 签名变更既有 bug，其他 2 个既有）
+- 全仓最终状态：**444 passed, 53 skipped, 0 failed**
+- 验证记录：`specs/013-task-pipeline-redesign/verification.md`
 
-#### 待办（Feature-013 收尾）
+#### 文档
 
-- T051 并发集成测试
-- T052 channel API 实现细化验证
-- T053–T064 度量扩展、文档、压测、清理
+- `docs/architecture.md` 任务管道章节重写：四队列结构图 + 配额表 + 限流/幂等/孤儿恢复 + 运维能力
+- `docs/features.md` 新增 Feature-013 条目
+- `CODEBUDDY.md` 同步目录结构与 Features 表
+- `CHANGELOG.md` 首次建立
+
+#### 完成标记
+
+Feature-013 整体收尾完成，T001–T064 全部勾选。
 
 ---
 

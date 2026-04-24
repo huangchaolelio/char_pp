@@ -16,6 +16,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="Feature-013 retired src/workers/expert_video_task.py (Alembic 0012). "
+    "Parallel pre-split logic was part of the legacy 11-step pipeline."
+)
+
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("COS_SECRET_ID", "test-id")
 os.environ.setdefault("COS_SECRET_KEY", "test-key")

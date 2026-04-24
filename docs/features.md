@@ -17,6 +17,7 @@
 - [Feature-010 构建技术标准](#feature-010-构建技术标准)
 - [Feature-011 运动员动作诊断](#feature-011-运动员动作诊断)
 - [Feature-012 全量任务查询接口](#feature-012-全量任务查询接口)
+- [Feature-013 任务管道重新设计](#feature-013-任务管道重新设计)
 
 ---
 
@@ -358,7 +359,7 @@ LLM 生成改进建议
 ### 筛选维度
 
 - `status`：任务状态
-- `task_type`：任务类型（expert_video / athlete_video）
+- `task_type`：任务类型（video_classification / kb_extraction / athlete_diagnosis，Feature 013 重构后）
 - `coach_id`：教练
 - `created_after` / `created_before`：时间范围
 
@@ -384,3 +385,65 @@ LLM 生成改进建议
 |------|------|------|
 | `GET` | `/api/v1/tasks` | 全量任务列表（分页+筛选+排序） |
 | `GET` | `/api/v1/tasks/{task_id}` | 任务详情（含 summary） |
+
+---
+
+## Feature-013 任务管道重新设计
+
+**状态：已完成（US1–US5，T001–T061）**  
+**规范：** `specs/013-task-pipeline-redesign/`
+
+### 功能描述
+
+将原单一聚合任务（`expert_video` / `athlete_video`）拆解为三类独立管道，
+实现队列物理隔离、通道容量/并发热更新、幂等提交、孤儿任务自动恢复、
+管道数据一键重置。
+
+### 核心能力
+
+- **三类独立任务类型**：`video_classification` / `kb_extraction` / `athlete_diagnosis`
+- **四队列物理隔离**：一队列一 Worker，崩溃互不影响
+  | 队列 | 并发 | 默认容量 |
+  |------|------|---------|
+  | `classification` | 1 | 5 |
+  | `kb_extraction` | 2 | 50 |
+  | `diagnosis` | 2 | 20 |
+  | `default` | 1 | — |
+- **幂等提交**：`idempotency_key` + `pg_advisory_xact_lock` + partial unique index
+- **批量提交**：单批 ≤100 条；部分成功语义（accepted/rejected + QUEUE_FULL）
+- **KB 提取门槛**：`ClassificationGateService` 校验已分类且 `tech_category != 'unclassified'`
+- **孤儿任务自动恢复**：Worker 启动时 sweep `status='processing' AND started_at < now-840s`
+- **通道容量/并发热更新**：`PATCH /api/v1/admin/channels/{task_type}`（X-Admin-Token，30 秒生效）
+- **管道数据一键重置**：TRUNCATE 流水表 + DELETE 草稿 KB；保留 coaches / classifications / standards / skills / reference_videos
+
+### 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/v1/tasks/classification` | 提交单条分类任务 |
+| `POST` | `/api/v1/tasks/kb-extraction` | 提交单条 KB 提取任务（前置门槛） |
+| `POST` | `/api/v1/tasks/diagnosis` | 提交单条运动员诊断任务 |
+| `POST` | `/api/v1/tasks/{type}/batch` | 三类批量提交（上限 100 条） |
+| `GET` | `/api/v1/task-channels` | 所有通道实时快照 |
+| `GET` | `/api/v1/task-channels/{task_type}` | 单通道实时快照 |
+| `PATCH` | `/api/v1/admin/channels/{task_type}` | 热更新容量/并发（需 X-Admin-Token） |
+| `POST` | `/api/v1/admin/reset-task-pipeline` | 一键重置管道（需 confirmation token） |
+
+### 配置项（.env）
+
+| 键 | 说明 |
+|-----|------|
+| `ADMIN_RESET_TOKEN` | 管理员 token（重置 + PATCH 通道均需） |
+| `BATCH_MAX_SIZE` | 批量提交单次上限（默认 100） |
+| `ORPHAN_TASK_TIMEOUT_SECONDS` | 孤儿任务判定阈值（默认 840） |
+| `CHANNEL_CONFIG_CACHE_TTL_S` | 通道配置缓存 TTL（默认 30） |
+
+### CLI
+
+```bash
+# 重置预览
+python specs/013-task-pipeline-redesign/scripts/reset_task_pipeline.py --dry-run
+
+# 执行重置
+python specs/013-task-pipeline-redesign/scripts/reset_task_pipeline.py --confirm
+```

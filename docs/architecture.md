@@ -68,11 +68,11 @@
 │  (主数据存储)      │  └────────┬─────────────────┘
 └───────────────────┘           │
                       ┌─────────▼─────────────────┐
-                      │  Celery Worker              │
-                      │  concurrency=2              │
-                      │                             │
-                      │  expert_video_task          │
-                      │  classification_task        │
+                      │  Celery 四队列（Feature 013）│
+                      │  classification (conc=1)     │
+                      │  kb_extraction  (conc=2)     │
+                      │  diagnosis      (conc=2)     │
+                      │  default        (conc=1)     │
                       └─────────┬─────────────────┘
                                 │
                       ┌─────────▼─────────────────┐
@@ -171,34 +171,46 @@ pending → processing → success
 
 ## 异步任务系统
 
-### Celery 配置
+### Celery 配置（Feature 013 — 四队列物理隔离）
 
 - **Broker**：Redis (`redis://localhost:6379/0`)
-- **Concurrency**：2（每机器）
-- **启动方式**：`setsid celery -A src.workers.celery_app worker`
+- **架构原则**：一队列一 Worker，崩溃互不影响
+- **启动方式**：`setsid celery -A src.workers.celery_app worker --concurrency=N -Q <queue_name> -n <worker_name>@%h`
+
+### 队列与配额
+
+| 队列 | Worker 并发 | 默认容量 | 任务来源 | 可热更新 |
+|------|-----------|---------|---------|---------|
+| `classification` | 1 | 5 | `classify_video` | ✅ |
+| `kb_extraction` | 2 | 50 | `extract_kb`（需 tech_category 非空） | ✅ |
+| `diagnosis` | 2 | 20 | `diagnose_athlete` | ✅ |
+| `default` | 1 | — | `scan_cos_videos` + `cleanup_expired_tasks` | — |
+
+> 前三队列容量/并发可通过 `PATCH /api/v1/admin/channels/{task_type}` 热更新，30 秒内生效（`TaskChannelService` TTL 缓存）。
 
 ### 主要任务
 
 | 任务名 | 模块 | 功能 |
 |--------|------|------|
-| `process_expert_video` | `expert_video_task.py` | 专家视频完整处理流水线 |
-| `scan_cos_videos` | `classification_task.py` | COS 视频扫描分类 |
+| `classify_video` | `classification_task.py` | 单条视频技术分类 |
+| `extract_kb` | `kb_extraction_task.py` | 已分类视频 → 知识库条目 |
+| `diagnose_athlete` | `athlete_diagnosis_task.py` | 运动员视频 → 偏差+建议 |
+| `scan_cos_videos` | `classification_task.py` | COS 全量扫描 |
+| `cleanup_expired_tasks` | `housekeeping_task.py` | 周期性清理过期任务（beat 驱动） |
 
-### expert_video 处理流水线
+### 限流与提交保护
 
-```
-1. 标记任务为 processing
-2. 验证 COS 对象存在
-3. 下载到 /tmp/coaching-advisor/
-4. 验证视频质量（fps ≥15, 分辨率 ≥854×480）
-5. 姿态估计（YOLOv8 / MediaPipe）
-6. 动作片段分割（腕部速度峰值检测）
-7. 片段技术分类
-8. 音频增强提取（Whisper 转录 → 关键词匹配）
-9. 持久化到 PostgreSQL（事务）
-10. 清理临时文件
-11. 更新任务状态为 success/partial_success/failed
-```
+- **DB 是容量唯一事实来源**：每次提交前 `pg_advisory_xact_lock(hash(task_type))` 序列化 + `COUNT(*)` 权威计数
+- **幂等提交**：partial unique index `idx_analysis_tasks_idempotency` on `(cos_object_key, task_type)` WHERE status IN ('pending','processing','success')；重复提交返回原 task_id
+- **批量语义**：`POST /tasks/{type}/batch` 单批 ≤100 条；超上限整批 400 `BATCH_TOO_LARGE`；容量不足时前 K 条 `ACCEPTED`、后 M-K 条 `QUEUE_FULL`（部分成功）
+- **KB 提取门槛**：`ClassificationGateService` 校验视频已分类且 `tech_category != 'unclassified'` 才允许入队
+- **孤儿任务自动恢复**：`celeryd_after_setup` 信号在 Worker 启动时 sweep `started_at < now - 840s AND status='processing'` 行并标记 `failed`
+
+### 运维能力
+
+- **管道数据一键重置**：`POST /api/v1/admin/reset-task-pipeline`（body confirmation token + dry-run），TRUNCATE tasks/transcripts/advice/tips 等流水表 + DELETE 草稿 KB；保留 coaches/classifications/standards/skills/reference_videos
+- **CLI 脚本**：`specs/013-task-pipeline-redesign/scripts/reset_task_pipeline.py --confirm` 或 `--dry-run`
+- **通道状态查询**：`GET /api/v1/task-channels` 返回三通道实时 pending/processing/remaining_slots/recent_completion_rate_per_min
 
 ---
 

@@ -43,12 +43,14 @@ charhuang_pp_cn/
 │   ├── services/                 # 25 个业务服务模块
 │   ├── workers/
 │   │   ├── celery_app.py
-│   │   ├── expert_video_task.py  # 教练视频处理（11 步流水线）
-│   │   ├── athlete_video_task.py # 运动员视频处理
-│   │   └── classification_task.py # COS 扫描分类 Celery task
+│   │   ├── classification_task.py    # 分类 + COS 扫描（Feature-013）
+│   │   ├── kb_extraction_task.py     # 教练视频知识库提取（Feature-013）
+│   │   ├── athlete_diagnosis_task.py # 运动员视频诊断（Feature-013）
+│   │   ├── housekeeping_task.py      # 周期清理过期任务
+│   │   └── orphan_recovery.py        # Worker 启动 sweep 超时任务
 │   ├── db/
 │   │   ├── session.py            # async_session_factory
-│   │   └── migrations/           # Alembic 迁移（0001~0011）
+│   │   └── migrations/           # Alembic 迁移（0001~0012）
 │   ├── config/
 │   │   ├── video_classification.yaml  # 12 教练规则 + 21 类技术规则
 │   │   └── keywords/tech_hint_keywords.json
@@ -213,7 +215,7 @@ stance_posture           general                   unclassified
 
 ---
 
-## 活跃 Features（001~012，均已完成）
+## 活跃 Features（001~013，均已完成）
 
 | # | Feature | 核心 API |
 |---|---------|----------|
@@ -229,6 +231,7 @@ stance_posture           general                   unclassified
 | 010 | 构建技术标准 | `POST /standards/build`, `GET /standards` |
 | 011 | 运动员动作诊断 | `POST /diagnosis`, `GET /diagnosis/{id}` |
 | 012 | 全量任务查询接口 | `GET /tasks?page=1&page_size=20&status=X` |
+| 013 | 任务管道重新设计 | `POST /tasks/{classification|kb-extraction|diagnosis}`, `GET /task-channels`, `PATCH /admin/channels/{type}`, `POST /admin/reset-task-pipeline` |
 
 ---
 

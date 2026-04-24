@@ -81,7 +81,7 @@ async def list_tasks(
     sort_by: str = Query("created_at", description="排序字段: created_at / completed_at"),
     order: str = Query("desc", description="排序方向: asc / desc"),
     status: Optional[str] = Query(None, description="按任务状态筛选"),
-    task_type: Optional[str] = Query(None, description="按任务类型筛选: expert_video / athlete_video"),
+    task_type: Optional[str] = Query(None, description="按任务类型筛选: video_classification / kb_extraction / athlete_diagnosis"),
     coach_id: Optional[uuid.UUID] = Query(None, description="按教练 ID 筛选"),
     created_after: Optional[datetime] = Query(None, description="创建时间下界（ISO 8601）"),
     created_before: Optional[datetime] = Query(None, description="创建时间上界（ISO 8601）"),

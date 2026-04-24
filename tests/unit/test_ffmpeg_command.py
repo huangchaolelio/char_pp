@@ -16,6 +16,12 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+pytestmark = pytest.mark.skip(
+    reason="Feature-013 retired src/workers/expert_video_task.py (Alembic 0012). "
+    "Tests target the old 11-step pipeline that has been replaced by the "
+    "split classification/kb_extraction/diagnosis workers."
+)
+
 os.environ.setdefault("DATABASE_URL", "postgresql+asyncpg://test:test@localhost/test")
 os.environ.setdefault("COS_SECRET_ID", "test-id")
 os.environ.setdefault("COS_SECRET_KEY", "test-key")
