@@ -1,4 +1,8 @@
-"""Celery task: scan COS coach video directories and classify each video.
+"""Celery tasks for the classification channel (Feature 013).
+
+Tasks:
+  - ``scan_cos_videos`` — COS full/incremental scan (routed to ``default`` queue).
+  - ``classify_video`` — single coach video → ``tech_category`` (routed to ``classification`` queue).
 
 Flow:
   1. Create scan record in Redis (via Celery backend) for progress tracking
@@ -136,3 +140,100 @@ def scan_cos_videos(self, task_id: str, scan_mode: str = "full") -> dict:
                 "elapsed_s": elapsed,
                 "error_detail": str(exc),
             }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Feature 013 — classify_video: single coach-video classification
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+async def _run_classify(task_id: str, cos_object_key: str) -> dict:
+    """Delegate to ClassificationService (Phase US3 T036/T037)."""
+    from datetime import datetime, timezone
+    from uuid import UUID
+
+    from sqlalchemy import select, update
+
+    from src.models.analysis_task import AnalysisTask, TaskStatus
+
+    factory = _make_session_factory()
+    started_at = datetime.now(timezone.utc)
+
+    async with factory() as session:
+        # Mark task as processing
+        await session.execute(
+            update(AnalysisTask)
+            .where(AnalysisTask.id == UUID(task_id))
+            .values(status=TaskStatus.processing, started_at=started_at)
+        )
+        await session.commit()
+
+        try:
+            # Delegate to ClassificationService (T036). The service performs
+            # the rule-based keyword match (LLM fallback) and upserts the
+            # ``coach_video_classifications`` row; returns the assigned
+            # ``tech_category``.
+            from src.services.classification_service import (
+                ClassificationService,
+            )
+
+            svc = ClassificationService()
+            tech_category = await svc.classify_single_video(
+                session=session, cos_object_key=cos_object_key
+            )
+            result_payload: dict = {"tech_category": tech_category}
+
+            await session.execute(
+                update(AnalysisTask)
+                .where(AnalysisTask.id == UUID(task_id))
+                .values(
+                    status=TaskStatus.success,
+                    completed_at=datetime.now(timezone.utc),
+                )
+            )
+            await session.commit()
+            return {"task_id": task_id, "status": "success", **result_payload}
+
+        except Exception as exc:  # noqa: BLE001
+            await session.execute(
+                update(AnalysisTask)
+                .where(AnalysisTask.id == UUID(task_id))
+                .values(
+                    status=TaskStatus.failed,
+                    completed_at=datetime.now(timezone.utc),
+                    error_message=str(exc)[:2000],
+                )
+            )
+            await session.commit()
+            raise
+
+
+@shared_task(
+    bind=True,
+    name="src.workers.classification_task.classify_video",
+    max_retries=2,
+    default_retry_delay=30,
+    acks_late=True,
+)
+def classify_video(self, task_id: str, cos_object_key: str) -> dict:
+    """Classify a single coach video → tech_category (Feature 013).
+
+    Args:
+        task_id: ``analysis_tasks.id`` (UUID string) enqueued by TaskSubmissionService.
+        cos_object_key: full COS object key of the coach video.
+
+    Returns:
+        dict with ``task_id``, ``status``, and ``tech_category`` (when classified).
+    """
+    logger.info(
+        "classify_video started: task_id=%s cos_object_key=%s celery_task=%s",
+        task_id, cos_object_key, self.request.id,
+    )
+    try:
+        return asyncio.run(_run_classify(task_id, cos_object_key))
+    except Exception as exc:
+        logger.exception("classify_video failed: task_id=%s error=%s", task_id, exc)
+        try:
+            raise self.retry(exc=exc)
+        except self.MaxRetriesExceededError:
+            return {"task_id": task_id, "status": "failed", "error": str(exc)}

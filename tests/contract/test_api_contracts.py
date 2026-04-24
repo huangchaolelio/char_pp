@@ -96,6 +96,7 @@ class TestExpertVideoEndpoints:
             response = await client.get("/api/v1/tasks/not-a-uuid")
         assert response.status_code == 404
 
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
     async def test_get_task_result_not_ready(self, async_client):
         """GET /tasks/{task_id}/result when status != success → 409."""
         task = _make_task(status="processing")

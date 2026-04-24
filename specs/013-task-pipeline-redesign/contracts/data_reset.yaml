@@ -1,0 +1,76 @@
+openapi: 3.0.3
+info:
+  title: 数据重置 API
+  version: "1.0.0"
+  description: |
+    契约 3：清空历史任务数据（保留核心资产）。
+    实现 FR-015 / FR-016 / FR-017。
+
+paths:
+  /api/v1/admin/reset-task-pipeline:
+    post:
+      summary: 重置任务管道相关数据
+      description: |
+        需要 confirmation token（从 .env 的 ADMIN_RESET_TOKEN 读取）。
+        清空：analysis_tasks 及其级联子表、draft 知识库。
+        保留：coaches、coach_video_classifications、video_classifications、
+              tech_standards、已发布 tech_knowledge_bases、skills、reference_*。
+      tags: [admin]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [confirmation_token]
+              properties:
+                confirmation_token:
+                  type: string
+                  description: 必须与服务端 ADMIN_RESET_TOKEN 完全匹配
+                dry_run:
+                  type: boolean
+                  default: false
+                  description: 若 true，只返回拟删除统计不执行
+      responses:
+        "200":
+          description: 重置成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResetReport"
+        "403":
+          description: Token 不匹配
+        "500":
+          description: 重置过程中 DB 错误
+
+components:
+  schemas:
+    ResetReport:
+      type: object
+      required: [reset_at, deleted_counts, preserved_counts, duration_ms]
+      properties:
+        reset_at:
+          type: string
+          format: date-time
+        deleted_counts:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            analysis_tasks: 2589
+            audio_transcripts: 120
+            expert_tech_points: 3400
+            tech_knowledge_bases_draft: 5
+        preserved_counts:
+          type: object
+          additionalProperties:
+            type: integer
+          example:
+            coaches: 20
+            coach_video_classifications: 1015
+            tech_knowledge_bases_published: 3
+        duration_ms:
+          type: integer
+          minimum: 0
+        dry_run:
+          type: boolean

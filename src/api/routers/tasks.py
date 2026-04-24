@@ -56,7 +56,11 @@ from src.models.teaching_tip import TeachingTip
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_semantic_segment import TechSemanticSegment
 from src.services import cos_client
-from src.workers.expert_video_task import process_expert_video
+
+# Feature 013: legacy workers deleted. The expert-video / athlete-video endpoints
+# below that reference process_expert_video / process_athlete_video are scheduled
+# for rewrite in Phase 3 (T022–T024). Until then we import lazily inside each
+# legacy endpoint so the module stays importable.
 
 logger = logging.getLogger(__name__)
 
@@ -363,12 +367,23 @@ async def submit_expert_video(
             db.add(new_vc)
             await db.commit()
 
-    process_expert_video.delay(
-        str(task.id),
-        body.cos_object_key,
-        body.enable_audio_analysis,
-        body.audio_language,
-        action_type_hint,
+    # Feature 013: legacy worker removed — the expert-video endpoint is scheduled
+    # for rewrite in T022. Raise 410 Gone so callers migrate to /tasks/classification
+    # or /tasks/kb-extraction rather than silently hitting a missing pipeline.
+    raise HTTPException(
+        status_code=410,
+        detail="expert-video endpoint is deprecated; use /api/v1/tasks/classification "
+               "or /api/v1/tasks/kb-extraction (Feature 013)",
+    )
+    process_expert_video.apply_async(  # noqa: F821 — unreachable, kept for T022 diff  # type: ignore[unreachable]
+        args=[
+            str(task.id),
+            body.cos_object_key,
+            body.enable_audio_analysis,
+            body.audio_language,
+            action_type_hint,
+        ],
+        queue=body.queue,
     )
 
     # Step 4 — Return 202
@@ -444,8 +459,15 @@ async def submit_athlete_video(
     await db.commit()
     await db.refresh(task)
 
-    # Dispatch Celery task
-    from src.workers.athlete_video_task import process_athlete_video
+    # Feature 013: legacy worker removed — athlete-video endpoint is scheduled for
+    # rewrite in T024. Respond 410 Gone directing clients to /tasks/diagnosis.
+    raise HTTPException(
+        status_code=410,
+        detail="athlete-video endpoint is deprecated; use /api/v1/tasks/diagnosis "
+               "(Feature 013)",
+    )
+    # Dispatch Celery task  # type: ignore[unreachable]
+    from src.workers.athlete_video_task import process_athlete_video  # noqa: F401  # pragma: no cover
     process_athlete_video.delay(
         str(task.id),
         str(tmp_path),
@@ -913,4 +935,356 @@ async def delete_task(
         task_id=task.id,
         deleted_at=now,
         message="任务及关联数据已标记删除，将在 24 小时内物理清除",
+    )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Feature 013 — Task pipeline redesign (US1, US2)
+#
+# Three single-submit endpoints + three batch-submit endpoints exposing the
+# three isolated task channels. All go through TaskSubmissionService which
+# enforces DB-authoritative capacity + partial-unique idempotency index.
+# ═════════════════════════════════════════════════════════════════════════════
+
+from src.api.schemas.task_submit import (  # noqa: E402
+    ChannelSnapshot as _F13ChannelSnapshot,
+    ClassificationBatchRequest as _F13ClassificationBatchRequest,
+    ClassificationSingleRequest as _F13ClassificationSingleRequest,
+    DiagnosisBatchRequest as _F13DiagnosisBatchRequest,
+    DiagnosisSingleRequest as _F13DiagnosisSingleRequest,
+    KbExtractionBatchRequest as _F13KbExtractionBatchRequest,
+    KbExtractionSingleRequest as _F13KbExtractionSingleRequest,
+    SubmissionItem as _F13SubmissionItem,
+    SubmissionResult as _F13SubmissionResult,
+)
+from src.models.analysis_task import TaskType as _F13TaskType  # noqa: E402
+from src.services.classification_gate_service import (  # noqa: E402
+    ClassificationGateService as _F13ClassificationGateService,
+)
+from src.services.task_submission_service import (  # noqa: E402
+    BatchTooLargeError as _F13BatchTooLargeError,
+    ChannelDisabledError as _F13ChannelDisabledError,
+    SubmissionInputItem as _F13SubmissionInputItem,
+    TaskSubmissionService as _F13TaskSubmissionService,
+)
+
+
+def _f13_serialise_result(result) -> _F13SubmissionResult:
+    """Map service-layer dataclasses → Pydantic response schema."""
+    from pathlib import PurePosixPath
+
+    items: list[_F13SubmissionItem] = []
+    for o in result.items:
+        items.append(
+            _F13SubmissionItem(
+                index=o.index,
+                accepted=o.accepted,
+                task_id=o.task_id,
+                cos_object_key=o.cos_object_key,
+                rejection_code=o.rejection_code,
+                rejection_message=o.rejection_message,
+                existing_task_id=o.existing_task_id,
+            )
+        )
+    snap = _F13ChannelSnapshot(
+        task_type=result.channel.task_type.value,
+        queue_capacity=result.channel.queue_capacity,
+        concurrency=result.channel.concurrency,
+        current_pending=result.channel.current_pending,
+        current_processing=result.channel.current_processing,
+        remaining_slots=result.channel.remaining_slots,
+        enabled=result.channel.enabled,
+        recent_completion_rate_per_min=result.channel.recent_completion_rate_per_min,
+    )
+    _ = PurePosixPath  # unused import placeholder to avoid lint churn
+    return _F13SubmissionResult(
+        task_type=result.task_type.value,
+        accepted=result.accepted,
+        rejected=result.rejected,
+        items=items,
+        channel=snap,
+        submitted_at=result.submitted_at,
+    )
+
+
+def _f13_submission_from_classification_req(
+    body: _F13ClassificationSingleRequest,
+) -> _F13SubmissionInputItem:
+    return _F13SubmissionInputItem(
+        cos_object_key=body.cos_object_key,
+        task_kwargs={},
+        video_filename=body.cos_object_key.rsplit("/", 1)[-1],
+        video_storage_uri=body.cos_object_key,
+        force=body.force,
+    )
+
+
+def _f13_submission_from_kb_req(
+    body: _F13KbExtractionSingleRequest,
+) -> _F13SubmissionInputItem:
+    return _F13SubmissionInputItem(
+        cos_object_key=body.cos_object_key,
+        task_kwargs={
+            "enable_audio_analysis": body.enable_audio_analysis,
+            "audio_language": body.audio_language,
+        },
+        video_filename=body.cos_object_key.rsplit("/", 1)[-1],
+        video_storage_uri=body.cos_object_key,
+        force=body.force,
+    )
+
+
+def _f13_submission_from_diagnosis_req(
+    body: _F13DiagnosisSingleRequest,
+) -> _F13SubmissionInputItem:
+    return _F13SubmissionInputItem(
+        cos_object_key=None,
+        task_kwargs={"knowledge_base_version": body.knowledge_base_version},
+        video_filename=body.video_storage_uri.rsplit("/", 1)[-1],
+        video_storage_uri=body.video_storage_uri,
+        knowledge_base_version=body.knowledge_base_version,
+        force=body.force,
+    )
+
+
+async def _f13_submit(
+    db: AsyncSession,
+    task_type: _F13TaskType,
+    items: list[_F13SubmissionInputItem],
+    submitted_via: str,
+) -> _F13SubmissionResult:
+    svc = _F13TaskSubmissionService()
+    try:
+        result = await svc.submit_batch(
+            session=db, task_type=task_type, items=items, submitted_via=submitted_via,
+        )
+    except _F13BatchTooLargeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "BATCH_TOO_LARGE", "message": str(exc)}},
+        ) from exc
+    except _F13ChannelDisabledError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "CHANNEL_DISABLED", "message": str(exc)}},
+        ) from exc
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "INVALID_INPUT", "message": str(exc)}},
+        ) from exc
+    return _f13_serialise_result(result)
+
+
+# ── POST /tasks/classification (single) ──────────────────────────────────────
+@router.post(
+    "/tasks/classification",
+    response_model=_F13SubmissionResult,
+    status_code=200,
+    summary="Submit a single coach video for tech_category classification",
+)
+async def submit_classification(
+    body: _F13ClassificationSingleRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _F13SubmissionResult:
+    item = _f13_submission_from_classification_req(body)
+    return await _f13_submit(
+        db, _F13TaskType.video_classification, [item], submitted_via="single"
+    )
+
+
+# ── POST /tasks/kb-extraction (single) ───────────────────────────────────────
+@router.post(
+    "/tasks/kb-extraction",
+    response_model=_F13SubmissionResult,
+    status_code=200,
+    summary="Submit a single classified video for knowledge-base extraction",
+)
+async def submit_kb_extraction(
+    body: _F13KbExtractionSingleRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _F13SubmissionResult:
+    # FR-004a: pre-check that the video has a non-'unclassified' tech_category.
+    gate = _F13ClassificationGateService()
+    if not await gate.check_classified(db, body.cos_object_key):
+        current = await gate.get_tech_category(db, body.cos_object_key)
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "CLASSIFICATION_REQUIRED",
+                    "message": (
+                        "video must be classified before kb-extraction "
+                        f"(current tech_category={current!r})"
+                    ),
+                    "details": {
+                        "cos_object_key": body.cos_object_key,
+                        "current_tech_category": current,
+                    },
+                }
+            },
+        )
+
+    item = _f13_submission_from_kb_req(body)
+    return await _f13_submit(
+        db, _F13TaskType.kb_extraction, [item], submitted_via="single"
+    )
+
+
+# ── POST /tasks/diagnosis (single) ───────────────────────────────────────────
+@router.post(
+    "/tasks/diagnosis",
+    response_model=_F13SubmissionResult,
+    status_code=200,
+    summary="Submit a single athlete video for motion diagnosis",
+)
+async def submit_diagnosis(
+    body: _F13DiagnosisSingleRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _F13SubmissionResult:
+    item = _f13_submission_from_diagnosis_req(body)
+    return await _f13_submit(
+        db, _F13TaskType.athlete_diagnosis, [item], submitted_via="single"
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Feature 013 — US2: Batch submission endpoints
+# ══════════════════════════════════════════════════════════════════════════════
+
+
+# ── POST /tasks/classification/batch ─────────────────────────────────────────
+@router.post(
+    "/tasks/classification/batch",
+    response_model=_F13SubmissionResult,
+    status_code=200,
+    summary="Batch-submit coach videos for tech_category classification",
+)
+async def submit_classification_batch(
+    body: _F13ClassificationBatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _F13SubmissionResult:
+    items = [_f13_submission_from_classification_req(i) for i in body.items]
+    return await _f13_submit(
+        db, _F13TaskType.video_classification, items, submitted_via="batch"
+    )
+
+
+# ── POST /tasks/kb-extraction/batch ──────────────────────────────────────────
+@router.post(
+    "/tasks/kb-extraction/batch",
+    response_model=_F13SubmissionResult,
+    status_code=200,
+    summary="Batch-submit classified videos for knowledge-base extraction",
+)
+async def submit_kb_extraction_batch(
+    body: _F13KbExtractionBatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _F13SubmissionResult:
+    # FR-004a batch variant: per-item pre-gate. Unclassified items are rejected
+    # up-front with CLASSIFICATION_REQUIRED; the rest flow to the service.
+    # Batch-size guard runs first so 101-item payloads short-circuit before
+    # any gate I/O (keeps 400 BATCH_TOO_LARGE semantics clean).
+    from src.config import get_settings as _get_settings
+    settings = _get_settings()
+    if len(body.items) > settings.batch_max_size:
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "BATCH_TOO_LARGE",
+                    "message": (
+                        f"batch size {len(body.items)} exceeds max "
+                        f"{settings.batch_max_size}"
+                    ),
+                }
+            },
+        )
+
+    gate = _F13ClassificationGateService()
+    classified_items: list[_F13SubmissionInputItem] = []
+    classified_original_index: list[int] = []
+    gate_rejections: list[_F13SubmissionItem] = []
+    for idx, req in enumerate(body.items):
+        if await gate.check_classified(db, req.cos_object_key):
+            classified_items.append(_f13_submission_from_kb_req(req))
+            classified_original_index.append(idx)
+        else:
+            current = await gate.get_tech_category(db, req.cos_object_key)
+            gate_rejections.append(
+                _F13SubmissionItem(
+                    index=idx,
+                    accepted=False,
+                    task_id=None,
+                    cos_object_key=req.cos_object_key,
+                    rejection_code="CLASSIFICATION_REQUIRED",
+                    rejection_message=(
+                        "video must be classified before kb-extraction "
+                        f"(current tech_category={current!r})"
+                    ),
+                    existing_task_id=None,
+                )
+            )
+
+    # If every item failed the gate, still return a 200 with live channel snapshot.
+    if not classified_items:
+        svc = _F13TaskSubmissionService()
+        snap = await svc._channels.get_snapshot(db, _F13TaskType.kb_extraction)
+        return _F13SubmissionResult(
+            task_type=_F13TaskType.kb_extraction.value,
+            accepted=0,
+            rejected=len(gate_rejections),
+            items=gate_rejections,
+            channel=_F13ChannelSnapshot(
+                task_type=snap.task_type.value,
+                queue_capacity=snap.queue_capacity,
+                concurrency=snap.concurrency,
+                current_pending=snap.current_pending,
+                current_processing=snap.current_processing,
+                remaining_slots=snap.remaining_slots,
+                enabled=snap.enabled,
+                recent_completion_rate_per_min=snap.recent_completion_rate_per_min,
+            ),
+            submitted_at=datetime.now(_tz.utc),
+        )
+
+    service_result = await _f13_submit(
+        db, _F13TaskType.kb_extraction, classified_items, submitted_via="batch"
+    )
+
+    # Remap service-item indices back to the original request positions and
+    # merge with the gate rejections — preserving original order.
+    merged: list[_F13SubmissionItem] = []
+    for svc_item in service_result.items:
+        merged.append(
+            svc_item.model_copy(
+                update={"index": classified_original_index[svc_item.index]}
+            )
+        )
+    merged.extend(gate_rejections)
+    merged.sort(key=lambda it: it.index)
+
+    return service_result.model_copy(
+        update={
+            "accepted": service_result.accepted,
+            "rejected": service_result.rejected + len(gate_rejections),
+            "items": merged,
+        }
+    )
+
+
+# ── POST /tasks/diagnosis/batch ──────────────────────────────────────────────
+@router.post(
+    "/tasks/diagnosis/batch",
+    response_model=_F13SubmissionResult,
+    status_code=200,
+    summary="Batch-submit athlete videos for motion diagnosis",
+)
+async def submit_diagnosis_batch(
+    body: _F13DiagnosisBatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _F13SubmissionResult:
+    items = [_f13_submission_from_diagnosis_req(i) for i in body.items]
+    return await _f13_submit(
+        db, _F13TaskType.athlete_diagnosis, items, submitted_via="batch"
     )

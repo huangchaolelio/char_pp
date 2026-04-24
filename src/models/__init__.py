@@ -22,6 +22,7 @@ from src.models.diagnosis_report import (
     DiagnosisReport,
 )
 from src.models.video_classification import VideoClassification
+from src.models.task_channel_config import TaskChannelConfig
 
 __all__ = [
     "AnalysisTask",
@@ -56,4 +57,5 @@ __all__ = [
     "DeviationLevel",
     "DiagnosisDeviationDirection",
     "VideoClassification",
+    "TaskChannelConfig",
 ]

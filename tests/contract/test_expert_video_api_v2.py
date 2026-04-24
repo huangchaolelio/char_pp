@@ -180,6 +180,7 @@ class TestExpertVideoSubmitV2:
 
 @pytest.mark.contract
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
 class TestTaskStatusProgressFields:
     async def test_status_response_has_progress_fields(self, async_client):
         """GET /tasks/{id} includes all Feature-002 progress fields."""
@@ -291,6 +292,7 @@ class TestTaskStatusProgressFields:
 
 @pytest.mark.contract
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
 class TestExpertResultV2Fields:
     def _make_success_task(self):
         return _make_task(task_type="expert_video", status="success")

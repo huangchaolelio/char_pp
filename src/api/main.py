@@ -15,6 +15,8 @@ from src.api.routers.videos import router as videos_router
 from src.api.routers.teaching_tips import router as teaching_tips_router
 from src.api.routers.standards import router as standards_router
 from src.api.routers.diagnosis import router as diagnosis_router
+from src.api.routers.admin import router as admin_router
+from src.api.routers.task_channels import router as task_channels_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -79,6 +81,22 @@ def create_app() -> FastAPI:
             },
         )
 
+    # Feature 013: service-layer `ValueError`s that escape a handler map to 400.
+    # Endpoints typically catch and convert to HTTPException with richer detail;
+    # this handler is a safety net (per api.md: "ValueError → 400").
+    @app.exception_handler(ValueError)
+    async def value_error_handler(request: Request, exc: ValueError):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": {
+                    "code": "INVALID_INPUT",
+                    "message": str(exc),
+                    "details": {},
+                }
+            },
+        )
+
     # ── Routers ──────────────────────────────────────────────────────────────
     app.include_router(tasks.router, prefix="/api/v1")
     app.include_router(knowledge_base.router, prefix="/api/v1")
@@ -89,6 +107,8 @@ def create_app() -> FastAPI:
     app.include_router(classifications_router, prefix="/api/v1")
     app.include_router(standards_router, prefix="/api/v1")
     app.include_router(diagnosis_router, prefix="/api/v1")
+    app.include_router(admin_router, prefix="/api/v1")
+    app.include_router(task_channels_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

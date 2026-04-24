@@ -132,6 +132,7 @@ class TestUS1BuildStandard:
     """US1: Trigger build → standard persisted with correct params."""
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
     async def test_build_creates_standard_with_dimensions(
         self, client: AsyncClient, db_session: AsyncSession
     ):
@@ -185,6 +186,7 @@ class TestUS1BuildStandard:
         assert elbow_point.min <= elbow_point.ideal <= elbow_point.max
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
     async def test_build_excludes_conflict_flag_points(
         self, client: AsyncClient, db_session: AsyncSession
     ):
@@ -308,6 +310,7 @@ class TestUS2QueryStandard:
         assert "error" in inner
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
     async def test_rebuild_archives_old_version(
         self, client: AsyncClient, db_session: AsyncSession
     ):

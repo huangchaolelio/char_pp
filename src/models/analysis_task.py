@@ -20,8 +20,15 @@ from src.db.session import Base
 
 
 class TaskType(str, enum.Enum):
-    expert_video = "expert_video"
-    athlete_video = "athlete_video"
+    """Feature 013 — three mutually exclusive task channels.
+
+    Prior values (``expert_video`` / ``athlete_video``) are removed by
+    Alembic 0012; no in-place mapping exists.
+    """
+
+    video_classification = "video_classification"
+    kb_extraction = "kb_extraction"
+    athlete_diagnosis = "athlete_diagnosis"
 
 
 class TaskStatus(str, enum.Enum):
@@ -89,6 +96,22 @@ class AnalysisTask(Base):
     coach_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("coaches.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Feature 013 — Task pipeline redesign
+    # COS object key for deduplication and idempotency keying;
+    # present for classification & kb_extraction rows, NULL for athlete_diagnosis.
+    cos_object_key: Mapped[Optional[str]] = mapped_column(String(1000), nullable=True)
+    # How this row entered the pipeline: 'single' | 'batch' | 'scan'
+    submitted_via: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default="single", default="single"
+    )
+    # Only set when submitted_via='scan' — points back to the scan_cos_videos task row.
+    parent_scan_task_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("analysis_tasks.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

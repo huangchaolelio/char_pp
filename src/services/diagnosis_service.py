@@ -268,6 +268,88 @@ class DiagnosisService:
                 except OSError:
                     pass
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Feature 013 T040: async entry point for the diagnosis Celery worker.
+    # The legacy ``diagnose(tech_category, video_path)`` remains for sync
+    # callers (``/api/v1/diagnosis``); this wrapper adapts the async Celery
+    # submission flow where tech_category is inferred from the filename.
+    # ──────────────────────────────────────────────────────────────────────
+    async def diagnose_athlete_video(
+        self,
+        session: AsyncSession,
+        task_id: uuid.UUID,
+        video_storage_uri: str,
+        knowledge_base_version: str | None = None,
+    ) -> dict:
+        """Async wrapper for the diagnosis Celery task.
+
+        Behaviour:
+          * ``session`` is ignored when it matches ``self._session`` (the task
+            already owns one); otherwise we temporarily swap it in.
+          * ``tech_category`` is inferred from the filename via
+            :class:`TechClassifier`; falls back to ``general`` when no rule
+            matches (the downstream standard lookup will surface a
+            ``StandardNotFoundError`` that the worker records as a failure).
+          * Returns a dict suitable for the Celery result payload; the full
+            :class:`DiagnosisReportData` object is persisted server-side.
+        """
+        if not video_storage_uri:
+            raise ValueError("video_storage_uri is required")
+
+        # Swap session if caller supplied a different one.
+        prev_session = self._session
+        if session is not None and session is not prev_session:
+            self._session = session
+        try:
+            filename = video_storage_uri.rsplit("/", 1)[-1] or video_storage_uri
+            course_series = (
+                video_storage_uri.rsplit("/", 2)[-2]
+                if "/" in video_storage_uri.rstrip("/")
+                else ""
+            )
+
+            # Best-effort tech_category inference (rule match only; no LLM
+            # fallback here — the sync pipeline handles ambiguity when it
+            # actually processes frames).
+            from src.services.tech_classifier import TechClassifier
+
+            try:
+                classifier = TechClassifier.from_settings()
+                cls_result = classifier.classify(filename, course_series)
+                tech_category = cls_result.tech_category
+            except Exception:  # noqa: BLE001 — never block on classifier config
+                tech_category = "general"
+
+            if tech_category == "unclassified":
+                tech_category = "general"
+
+            logger.info(
+                "diagnose_athlete_video: task_id=%s uri=%s inferred_category=%s kb_ver=%s",
+                task_id, video_storage_uri, tech_category, knowledge_base_version,
+            )
+
+            try:
+                report = await self.diagnose(
+                    tech_category=tech_category, video_path=video_storage_uri
+                )
+            except (StandardNotFoundError, ExtractionFailedError) as exc:
+                # Domain failures surface as dict payload with error — the
+                # worker will still mark the task success=False via the
+                # outer try/except capturing them as Exception.
+                raise
+
+            return {
+                "task_id": str(task_id),
+                "report_id": str(report.report_id),
+                "tech_category": report.tech_category,
+                "standard_version": report.standard_version,
+                "overall_score": report.overall_score,
+                "dimension_count": len(report.dimensions),
+                "knowledge_base_version": knowledge_base_version,
+            }
+        finally:
+            self._session = prev_session
+
     # ---------------------------------------------------------------------------
     # Private helpers
     # ---------------------------------------------------------------------------

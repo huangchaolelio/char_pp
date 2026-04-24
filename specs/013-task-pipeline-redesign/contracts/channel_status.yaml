@@ -1,0 +1,125 @@
+openapi: 3.0.3
+info:
+  title: 通道状态查询 API
+  version: "1.0.0"
+  description: |
+    契约 2：任务通道的运行时状态（容量、占用、剩余、近期完成速率）。
+    实现 FR-018。
+
+paths:
+  /api/v1/task-channels:
+    get:
+      summary: 获取所有通道状态
+      tags: [task-channels]
+      responses:
+        "200":
+          description: 三类通道状态列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  channels:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ChannelSnapshot"
+
+  /api/v1/task-channels/{task_type}:
+    get:
+      summary: 获取指定通道的状态
+      tags: [task-channels]
+      parameters:
+        - in: path
+          name: task_type
+          required: true
+          schema:
+            type: string
+            enum: [video_classification, kb_extraction, athlete_diagnosis]
+      responses:
+        "200":
+          description: 通道快照
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSnapshot"
+        "404":
+          description: 任务类型不存在
+
+  /api/v1/admin/channels/{task_type}:
+    patch:
+      summary: （管理）更新通道配置
+      tags: [admin]
+      parameters:
+        - in: path
+          name: task_type
+          required: true
+          schema:
+            type: string
+            enum: [video_classification, kb_extraction, athlete_diagnosis]
+        - in: header
+          name: X-Admin-Token
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                queue_capacity:
+                  type: integer
+                  minimum: 1
+                concurrency:
+                  type: integer
+                  minimum: 1
+                enabled:
+                  type: boolean
+      responses:
+        "200":
+          description: 更新后的配置
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChannelSnapshot"
+        "403":
+          description: Token 校验失败
+
+components:
+  schemas:
+    ChannelSnapshot:
+      type: object
+      required:
+        - task_type
+        - queue_capacity
+        - current_pending
+        - current_processing
+        - remaining_slots
+        - enabled
+      properties:
+        task_type:
+          type: string
+          enum: [video_classification, kb_extraction, athlete_diagnosis]
+        queue_capacity:
+          type: integer
+          minimum: 1
+        concurrency:
+          type: integer
+          minimum: 1
+        current_pending:
+          type: integer
+          minimum: 0
+        current_processing:
+          type: integer
+          minimum: 0
+        remaining_slots:
+          type: integer
+          minimum: 0
+        enabled:
+          type: boolean
+        recent_completion_rate_per_min:
+          type: number
+          format: float
+          nullable: true
+          description: 近 10 分钟完成速率（条/分钟）

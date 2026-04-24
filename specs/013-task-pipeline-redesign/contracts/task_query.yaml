@@ -1,0 +1,165 @@
+openapi: 3.0.3
+info:
+  title: 任务查询与列表 API
+  version: "1.0.0"
+  description: |
+    契约 4：任务的单体查询与列表分页查询。
+    实现 FR-019 / FR-020。
+
+paths:
+  /api/v1/tasks/{task_id}:
+    get:
+      summary: 获取单个任务详情
+      description: |
+        响应体根据 task_type 返回差异化字段：
+        - video_classification: classification_result
+        - kb_extraction: extracted_segments_count, audio_transcript_preview
+        - athlete_diagnosis: diagnosis_report_id, deviation_score
+      tags: [tasks]
+      parameters:
+        - in: path
+          name: task_id
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        "200":
+          description: 任务详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskDetail"
+        "404":
+          description: 任务不存在
+
+  /api/v1/tasks:
+    get:
+      summary: 任务列表（带过滤与分页）
+      tags: [tasks]
+      parameters:
+        - in: query
+          name: task_type
+          schema:
+            type: string
+            enum: [video_classification, kb_extraction, athlete_diagnosis]
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, processing, success, partial_success, failed, rejected]
+        - in: query
+          name: coach_id
+          schema:
+            type: string
+            format: uuid
+        - in: query
+          name: page
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+        - in: query
+          name: page_size
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+      responses:
+        "200":
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  total:
+                    type: integer
+                  page:
+                    type: integer
+                  page_size:
+                    type: integer
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/TaskDetail"
+
+components:
+  schemas:
+    TaskDetail:
+      type: object
+      required: [id, task_type, status, created_at]
+      properties:
+        id:
+          type: string
+          format: uuid
+        task_type:
+          type: string
+          enum: [video_classification, kb_extraction, athlete_diagnosis]
+        status:
+          type: string
+        cos_object_key:
+          type: string
+          nullable: true
+        coach_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+          nullable: true
+        completed_at:
+          type: string
+          format: date-time
+          nullable: true
+        error_message:
+          type: string
+          nullable: true
+        submitted_via:
+          type: string
+          enum: [single, batch, scan]
+        parent_scan_task_id:
+          type: string
+          format: uuid
+          nullable: true
+        # 差异化字段（按 task_type 选择性返回）
+        classification_result:
+          type: object
+          nullable: true
+          description: video_classification 专用
+          properties:
+            tech_category:
+              type: string
+            confidence:
+              type: number
+              format: float
+        kb_extraction_result:
+          type: object
+          nullable: true
+          description: kb_extraction 专用
+          properties:
+            extracted_segments_count:
+              type: integer
+            audio_transcript_preview:
+              type: string
+            knowledge_base_draft_version:
+              type: string
+              nullable: true
+        diagnosis_result:
+          type: object
+          nullable: true
+          description: athlete_diagnosis 专用
+          properties:
+            diagnosis_report_id:
+              type: string
+              format: uuid
+            deviation_score:
+              type: number
+              format: float
+            knowledge_base_version:
+              type: string

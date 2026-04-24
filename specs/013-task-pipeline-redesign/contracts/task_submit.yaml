@@ -1,0 +1,241 @@
+openapi: 3.0.3
+info:
+  title: 任务提交 API（单条/批量）
+  version: "1.0.0"
+  description: |
+    契约 1：三类任务的单条与批量提交端点。
+    单条等价于 N=1 的批量（FR-008）。
+    限流、幂等、分类前置检查均在此处执行。
+
+paths:
+  /api/v1/tasks/classification:
+    post:
+      summary: 提交单条视频分类任务
+      tags: [tasks-classification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassificationSingleRequest"
+      responses:
+        "200":
+          description: 受理成功（可能含部分拒绝，客户端需检查 items）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResult"
+        "400":
+          description: 参数错误（BATCH_TOO_LARGE 不在此端点）
+        "403":
+          description: 认证或权限失败
+        "503":
+          description: 通道被禁用（CHANNEL_DISABLED）
+
+  /api/v1/tasks/classification/batch:
+    post:
+      summary: 批量提交视频分类任务
+      tags: [tasks-classification]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ClassificationBatchRequest"
+      responses:
+        "200":
+          description: 部分成功受理，详见 items[]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResult"
+        "400":
+          description: |
+            - BATCH_TOO_LARGE: items 长度 > BATCH_MAX_SIZE（默认 100）
+            - INVALID_INPUT: 单条参数非法
+
+  /api/v1/tasks/kb-extraction:
+    post:
+      summary: 提交单条知识库提取任务
+      description: |
+        前置条件：目标视频已在 coach_video_classifications 中有有效 tech_category。
+        未分类则返回 400 CLASSIFICATION_REQUIRED（FR-004a）。
+      tags: [tasks-kb-extraction]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KbExtractionSingleRequest"
+      responses:
+        "200":
+          description: 受理成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResult"
+        "400":
+          description: |
+            - CLASSIFICATION_REQUIRED: 视频未分类
+            - DUPLICATE_TASK: 已有进行中或已成功的同类任务（除非 force=true）
+        "503":
+          description: CHANNEL_DISABLED
+
+  /api/v1/tasks/kb-extraction/batch:
+    post:
+      summary: 批量提交知识库提取任务
+      tags: [tasks-kb-extraction]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KbExtractionBatchRequest"
+      responses:
+        "200":
+          description: 部分成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResult"
+        "400":
+          description: BATCH_TOO_LARGE
+
+  /api/v1/tasks/diagnosis:
+    post:
+      summary: 提交单条运动员诊断任务
+      tags: [tasks-diagnosis]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DiagnosisSingleRequest"
+      responses:
+        "200":
+          description: 受理成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubmissionResult"
+        "400":
+          description: 参数错误或 DUPLICATE_TASK
+        "503":
+          description: CHANNEL_DISABLED
+
+components:
+  schemas:
+    ClassificationSingleRequest:
+      type: object
+      required: [cos_object_key]
+      properties:
+        cos_object_key:
+          type: string
+          maxLength: 1000
+          description: COS 对象键（明文）
+        force:
+          type: boolean
+          default: false
+          description: 重跑已 completed 任务
+
+    ClassificationBatchRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/ClassificationSingleRequest"
+
+    KbExtractionSingleRequest:
+      type: object
+      required: [cos_object_key]
+      properties:
+        cos_object_key:
+          type: string
+          maxLength: 1000
+        enable_audio_analysis:
+          type: boolean
+          default: true
+        audio_language:
+          type: string
+          default: "zh"
+        force:
+          type: boolean
+          default: false
+
+    KbExtractionBatchRequest:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          minItems: 1
+          maxItems: 100
+          items:
+            $ref: "#/components/schemas/KbExtractionSingleRequest"
+
+    DiagnosisSingleRequest:
+      type: object
+      required: [video_storage_uri, knowledge_base_version]
+      properties:
+        video_storage_uri:
+          type: string
+        knowledge_base_version:
+          type: string
+          description: 对比的 KB 版本号
+        cos_object_key:
+          type: string
+          nullable: true
+        force:
+          type: boolean
+          default: false
+
+    SubmissionResult:
+      type: object
+      required: [task_type, accepted_count, rejected_count, items, channel_snapshot]
+      properties:
+        task_type:
+          type: string
+          enum: [video_classification, kb_extraction, athlete_diagnosis]
+        accepted_count:
+          type: integer
+          minimum: 0
+        rejected_count:
+          type: integer
+          minimum: 0
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/SubmissionItem"
+        channel_snapshot:
+          $ref: "./channel_status.yaml#/components/schemas/ChannelSnapshot"
+
+    SubmissionItem:
+      type: object
+      required: [index, status]
+      properties:
+        index:
+          type: integer
+          minimum: 0
+        task_id:
+          type: string
+          format: uuid
+          nullable: true
+        status:
+          type: string
+          enum: [accepted, rejected]
+        rejection_code:
+          type: string
+          enum:
+            - QUEUE_FULL
+            - DUPLICATE_TASK
+            - CLASSIFICATION_REQUIRED
+            - CHANNEL_DISABLED
+            - INVALID_INPUT
+          nullable: true
+        rejection_message:
+          type: string
+          nullable: true

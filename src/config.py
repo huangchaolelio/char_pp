@@ -86,6 +86,12 @@ class Settings(BaseSettings):
     venus_base_url: Optional[str] = None        # venus proxy endpoint (chat/completions)
     venus_model: Optional[str] = None           # model to use via venus proxy
 
+    # Feature 013 — Task pipeline redesign
+    admin_reset_token: str = ""                  # token required to invoke /admin/reset-task-pipeline
+    batch_max_size: int = 100                    # max items per batch submission; larger -> 400 BATCH_TOO_LARGE
+    orphan_task_timeout_seconds: int = 840       # 2 x task_time_limit(420s); processing > this -> orphan recovered
+    channel_config_cache_ttl_s: int = 30         # TTL for TaskChannelService config cache (SC-004)
+
 
 @lru_cache
 def get_settings() -> Settings:

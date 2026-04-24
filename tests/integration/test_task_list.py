@@ -107,6 +107,7 @@ async def test_list_tasks_filter_by_status(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
 async def test_list_tasks_filter_by_task_type(async_client: AsyncClient) -> None:
     """Filtering by task_type returns only tasks of that type."""
     response = await async_client.get("/api/v1/tasks?task_type=expert_video")

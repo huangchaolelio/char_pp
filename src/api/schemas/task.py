@@ -38,6 +38,11 @@ class ExpertVideoRequest(BaseModel):
     )
     # Feature 006: associate coach with this expert video task
     coach_id: Optional[UUID] = Field(None, description="教练 ID（可选），指定后将该任务关联到对应教练")
+    # Queue routing: 'video' for bulk batch submission (default), 'default' for priority single tasks
+    queue: str = Field(
+        "video",
+        description="Celery 队列：'video'（批量默认）或 'default'（优先处理，不受批量任务排队影响）",
+    )
 
 
 # AthleteVideoRequest uses multipart/form-data — parsed in the endpoint directly

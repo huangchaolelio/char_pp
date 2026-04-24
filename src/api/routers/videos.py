@@ -273,7 +273,15 @@ async def batch_submit_classifications(
 
     Only submits videos that pass the filter. Returns list of created task IDs.
     """
-    from src.workers.expert_video_task import process_expert_video
+    # Feature 013: legacy process_expert_video worker deleted. This batch-dispatch
+    # endpoint is superseded by POST /api/v1/tasks/classification/batch + /kb-extraction/batch.
+    raise HTTPException(
+        status_code=410,
+        detail="expert-video batch dispatch is deprecated; use "
+               "/api/v1/tasks/classification/batch + /api/v1/tasks/kb-extraction/batch "
+               "(Feature 013)",
+    )
+    from src.workers.expert_video_task import process_expert_video  # noqa: F401  # pragma: no cover  # type: ignore[unreachable]
 
     # Build filter query
     stmt = select(VideoClassification)

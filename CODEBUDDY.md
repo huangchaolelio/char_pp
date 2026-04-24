@@ -82,8 +82,15 @@ setsid uvicorn src.api.main:app --host 0.0.0.0 --port 8080 --reload &
 # 重启服务（代码修改后必须重启，无热重载）
 pkill -f "uvicorn src.api.main" && setsid uvicorn src.api.main:app --host 0.0.0.0 --port 8080 &
 
-# 启动 Celery Worker
-celery -A src.workers.celery_app worker --loglevel=info --concurrency=2
+# 启动 Celery Worker（四队列物理隔离，Feature 013）
+# Worker 1：分类（concurrency=1，capacity 5）
+setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=1 -Q classification -n classification_worker@%h >> /tmp/celery_classification_worker.log 2>&1 &
+# Worker 2：知识库提取（concurrency=2，capacity 50）
+setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q kb_extraction -n kb_extraction_worker@%h >> /tmp/celery_kb_extraction_worker.log 2>&1 &
+# Worker 3：运动员诊断（concurrency=2，capacity 20）
+setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q diagnosis -n diagnosis_worker@%h >> /tmp/celery_diagnosis_worker.log 2>&1 &
+# Worker 4：默认（COS 扫描 + 清理，concurrency=1）
+setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=1 -Q default -n default_worker@%h >> /tmp/celery_default_worker.log 2>&1 &
 
 # 数据库迁移
 alembic upgrade head
