@@ -134,12 +134,12 @@ description: "Feature-016 视频预处理流水线实施任务清单"
 
 ### US4 测试
 
-- [ ] T038 [P] [US4] 在 `/data/charhuang/char_ai_coding/charhuang_pp_cn/tests/integration/test_preprocessing_batch.py` 写集成测试：mock Celery delay 只观察入队顺序；提交 5 项含 1 项无效 cos_key → 响应 `submitted=4, failed=1`；无效条目 `job_id=null, error_code='COS_KEY_NOT_CLASSIFIED'`
+- [x] T038 [P] [US4] 在 `/data/charhuang/char_ai_coding/charhuang_pp_cn/tests/integration/test_preprocessing_batch.py` 写集成测试：mock Celery delay 只观察入队顺序；提交 5 项含 1 项无效 cos_key → 响应 `submitted=4, failed=1`；无效条目 `job_id=null, error_code='COS_KEY_NOT_CLASSIFIED'`
 
 ### US4 实现
 
-- [ ] T039 [US4] 在 `/data/charhuang/char_ai_coding/charhuang_pp_cn/src/api/routers/tasks.py` 的 `POST /tasks/preprocessing/batch` 完善错误聚合逻辑（T024 已建骨架）：单条 `COS_KEY_NOT_CLASSIFIED` / `CHANNEL_QUEUE_FULL` 不中断批次，聚合到 `results[]` 中 `error_code` + `error_message` 字段；响应 `submitted/reused/failed` 三个计数器准确
-- [ ] T040 [US4] 验证 `task_channel_configs` 的 `preprocessing` 通道配置通过 Feature-013 的 `PATCH /admin/channels/preprocessing` 可热更新（并发从 3 → 5 验证批量速度变化）；不需要新代码，只补充 quickstart §4-batch 的验证步骤（在 quickstart.md 追加 Section 3.5）
+- [x] T039 [US4] 在 `/data/charhuang/char_ai_coding/charhuang_pp_cn/src/api/routers/tasks.py` 的 `POST /tasks/preprocessing/batch` 完善错误聚合逻辑（T024 已建骨架）：单条 `COS_KEY_NOT_CLASSIFIED` / `CHANNEL_QUEUE_FULL` 不中断批次，聚合到 `results[]` 中 `error_code` + `error_message` 字段；响应 `submitted/reused/failed` 三个计数器准确
+- [x] T040 [US4] 验证 `task_channel_configs` 的 `preprocessing` 通道配置通过 Feature-013 的 `PATCH /admin/channels/preprocessing` 可热更新（并发从 3 → 5 验证批量速度变化）；不需要新代码，只补充 quickstart §4-batch 的验证步骤（在 quickstart.md 追加 Section 3.5）
 
 **检查点**: US4 完成；可批量处理教练系列
 

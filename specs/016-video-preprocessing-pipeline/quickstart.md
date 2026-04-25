@@ -177,7 +177,34 @@ curl -X POST http://localhost:8080/api/v1/tasks/preprocessing \
 
 ---
 
-## 4. US1 force=true 覆盖
+## 3.5 US4 — 预处理通道热更新（批量吞吐调优）
+
+Feature-013 的通道机制允许在不重启 Worker 的前提下热调并发与容量。预处理通道初始 `concurrency=3 / capacity=20`，批量场景下可临时上调以加速消化积压。
+
+```bash
+# 查看当前通道状态
+curl -s http://localhost:8080/api/v1/task-channels | jq '.channels[] | select(.task_type=="preprocessing")'
+# {
+#   "task_type": "preprocessing",
+#   "concurrency": 3,
+#   "queue_capacity": 20,
+#   "enabled": true,
+#   ...
+# }
+
+# 把并发从 3 调到 5（需要 ADMIN_RESET_TOKEN）
+curl -X PATCH http://localhost:8080/api/v1/admin/channels/preprocessing \
+  -H "X-Admin-Token: $ADMIN_RESET_TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"concurrency": 5, "queue_capacity": 50}'
+
+# 30 秒内通道配置自动刷新，后续批量提交吞吐翻倍
+```
+
+**注意**: 并发上调受 Worker 进程 `--concurrency` 上限约束。若 Worker 启动时 `--concurrency=3`，即使通道配置为 5，同时跑的任务数仍为 3；需同步重启 Worker 才能真正提速。
+
+---
+
 
 ```bash
 OLD_JOB=$JOB_ID
