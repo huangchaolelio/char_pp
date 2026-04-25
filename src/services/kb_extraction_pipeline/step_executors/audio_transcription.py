@@ -1,19 +1,20 @@
-"""audio_transcription executor (Feature 015) — real Whisper integration.
+"""audio_transcription executor (Feature 016 US2) — consume preprocessed audio.
 
-Pipeline:
+Post-US2 pipeline:
     1. Short-circuit on ``enable_audio_analysis=False`` → ``skipped``.
-    2. Resolve the downloaded video path from the upstream step.
-    3. Extract a 16 kHz mono WAV via ``AudioExtractor.extract_wav``.
-       - No audio stream → ``skipped`` (WHISPER_NO_AUDIO, FR-008).
-       - Other ffmpeg errors → propagate as RuntimeError with
-         ``WHISPER_LOAD_FAILED:`` prefix so the retry policy can retry.
-    4. Run ``SpeechRecognizer.recognize`` inside ``asyncio.to_thread`` — the
-       Whisper inference is CPU/GPU-bound and will block the event loop.
-    5. If the transcript is flagged ``silent`` → ``skipped``
-       (silence_below_snr_threshold, FR-008).
-    6. Serialize the ``TranscriptResult`` via ``write_transcript_artifact``.
-    7. Return rich ``output_summary`` exposing whisper model + language
-       (FR-014).
+    2. Resolve the download directory produced by ``download_video`` (directory
+       artifact path containing ``audio.wav`` if the upstream preprocessing
+       job reported ``has_audio=true``).
+    3. Missing ``audio.wav`` (has_audio=false case) → ``skipped`` with
+       ``WHISPER_NO_AUDIO`` prefix (FR-008).
+    4. Estimate SNR (optional — best-effort, failures are non-fatal).
+    5. Run ``SpeechRecognizer.recognize`` inside ``asyncio.to_thread`` —
+       **device is always forced to 'cpu'** regardless of settings, to avoid
+       GPU OOM on the shared pod (Feature-016 decision).
+    6. If the transcript is flagged ``silent`` → ``skipped``.
+    7. Serialize the ``TranscriptResult`` via ``write_transcript_artifact``.
+    8. Return ``output_summary`` with ``audio_source='cos_preprocessed'`` +
+       ``whisper_device='cpu'`` to advertise the new data path.
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ from src.models.audio_transcript import AudioQualityFlag
 from src.models.extraction_job import ExtractionJob
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
 from src.services import speech_recognizer as _speech_mod
-from src.services.audio_extractor import AudioExtractionError, AudioExtractor
+from src.services.audio_extractor import AudioExtractor
 from src.services.kb_extraction_pipeline.artifact_io import write_transcript_artifact
 from src.services.kb_extraction_pipeline.error_codes import (
     WHISPER_LOAD_FAILED,
@@ -43,24 +44,21 @@ from src.services.kb_extraction_pipeline.error_codes import (
 logger = logging.getLogger(__name__)
 
 
-async def execute(
-    session: AsyncSession,
-    job: ExtractionJob,
-    step: PipelineStep,
-) -> dict[str, Any]:
-    """Run real Whisper transcription over the downloaded video."""
-    if not job.enable_audio_analysis:
-        return {
-            "status": PipelineStepStatus.skipped,
-            "output_summary": {
-                "skipped": True,
-                "skip_reason": "disabled_by_request",
-                "whisper_model": None,
-            },
-            "output_artifact_path": None,
-        }
+# ── Module-level helpers (monkeypatch-friendly) ──────────────────────────────
 
-    video_path_str = (
+
+async def _get_download_dir(session: AsyncSession, job: ExtractionJob) -> Path:
+    """Resolve the download-step artifact directory for ``job``.
+
+    ``download_video`` (post-US2) emits a *directory* path whose contents
+    include ``seg_NNNN.mp4`` segments and optionally ``audio.wav``.
+
+    Raises
+    ------
+    RuntimeError
+        If no successful ``download_video`` step is recorded for this job.
+    """
+    artifact_path = (
         await session.execute(
             select(PipelineStep.output_artifact_path).where(
                 PipelineStep.job_id == job.id,
@@ -68,48 +66,89 @@ async def execute(
             )
         )
     ).scalar_one_or_none()
-    if not video_path_str or not Path(video_path_str).exists():
+    if not artifact_path:
         raise RuntimeError(
             "download_video artifact missing — cannot run audio transcription"
         )
+    path = Path(artifact_path)
+    # Back-compat: older rows stored the file path; accept and walk up.
+    if path.is_file():
+        path = path.parent
+    if not path.is_dir():
+        raise RuntimeError(
+            f"download_video artifact directory does not exist: {path}"
+        )
+    return path
 
-    video_path = Path(video_path_str)
-    job_dir = video_path.parent
-    audio_path = job_dir / "audio.wav"
+
+def _estimate_snr_if_possible(audio_path: Path) -> float | None:
+    """Best-effort SNR estimate; returns ``None`` on any failure.
+
+    The preprocessing-supplied WAV is known-good (validated upstream), but we
+    still guard against format quirks — audio analytics should never fail the
+    transcription step.
+    """
+    try:
+        return AudioExtractor().estimate_snr(audio_path)
+    except Exception as exc:  # pragma: no cover — defensive only
+        logger.warning("audio_transcription: SNR estimate failed: %s", exc)
+        return None
+
+
+# ── Executor ────────────────────────────────────────────────────────────────
+
+
+async def execute(
+    session: AsyncSession,
+    job: ExtractionJob,
+    step: PipelineStep,
+) -> dict[str, Any]:
+    """Run Whisper transcription over the pre-downloaded audio.wav."""
+    if not job.enable_audio_analysis:
+        return {
+            "status": PipelineStepStatus.skipped,
+            "output_summary": {
+                "skipped": True,
+                "skip_reason": "disabled_by_request",
+                "whisper_model": None,
+                "audio_source": "cos_preprocessed",
+                "whisper_device": "cpu",
+            },
+            "output_artifact_path": None,
+        }
 
     settings = get_settings()
 
-    # ── Step 1: Extract WAV (CPU/ffmpeg-bound) ────────────────────────────
-    extractor = AudioExtractor()
-    try:
-        await asyncio.to_thread(extractor.extract_wav, video_path, audio_path)
-    except AudioExtractionError as exc:
-        msg = str(exc).lower()
-        if "no audio" in msg or "no such" in msg:
-            logger.info(
-                "audio_transcription: no audio stream in %s → skipping", video_path
-            )
-            return {
-                "status": PipelineStepStatus.skipped,
-                "output_summary": {
-                    "skipped": True,
-                    "skip_reason": f"{WHISPER_NO_AUDIO}: no_audio_track",
-                    "whisper_model": None,
-                },
-                "output_artifact_path": None,
-            }
-        # Other ffmpeg failures are transient-ish — bubble up so the
-        # retry policy can decide. The error_codes module lists
-        # WHISPER_LOAD_FAILED under I/O retry.
-        raise RuntimeError(format_error(WHISPER_LOAD_FAILED, str(exc))) from exc
+    download_dir = await _get_download_dir(session, job)
+    audio_path = download_dir / "audio.wav"
 
-    # ── Step 2: Estimate SNR (optional observability) ─────────────────────
-    snr_db = await asyncio.to_thread(extractor.estimate_snr, audio_path)
+    # ── Step 1: Missing audio.wav → skipped (has_audio=false upstream) ───
+    if not audio_path.exists():
+        logger.info(
+            "audio_transcription: no audio.wav in %s — upstream has_audio=false; skipping",
+            download_dir,
+        )
+        return {
+            "status": PipelineStepStatus.skipped,
+            "output_summary": {
+                "skipped": True,
+                "skip_reason": format_error(
+                    WHISPER_NO_AUDIO, "preprocessing_has_audio_false"
+                ),
+                "whisper_model": None,
+                "audio_source": "cos_preprocessed",
+                "whisper_device": "cpu",
+            },
+            "output_artifact_path": None,
+        }
 
-    # ── Step 3: Whisper transcription ─────────────────────────────────────
+    # ── Step 2: SNR (observability, best-effort) ─────────────────────────
+    snr_db = await asyncio.to_thread(_estimate_snr_if_possible, audio_path)
+
+    # ── Step 3: Whisper transcription — FORCE CPU (Feature-016 decision) ─
     recognizer = _speech_mod.SpeechRecognizer(
         model_name=settings.whisper_model,
-        device=settings.whisper_device,
+        device="cpu",
     )
     try:
         transcript = await asyncio.to_thread(
@@ -118,14 +157,12 @@ async def execute(
     except Exception as exc:  # Whisper model load or inference failure
         raise RuntimeError(format_error(WHISPER_LOAD_FAILED, str(exc))) from exc
 
-    # Populate SNR on the TranscriptResult so the artifact carries it forward.
     transcript.snr_db = snr_db
 
-    # ── Step 4: Quality-based skipping (FR-008) ───────────────────────────
+    # ── Step 4: Silence check ────────────────────────────────────────────
     if transcript.quality_flag == AudioQualityFlag.silent:
         logger.info(
-            "audio_transcription: silent/unintelligible audio in %s → skipping",
-            video_path,
+            "audio_transcription: silent audio in %s → skipping", audio_path
         )
         return {
             "status": PipelineStepStatus.skipped,
@@ -134,21 +171,23 @@ async def execute(
                 "skip_reason": "silence_below_snr_threshold",
                 "whisper_model": settings.whisper_model,
                 "snr_db": snr_db,
+                "audio_source": "cos_preprocessed",
+                "whisper_device": "cpu",
             },
             "output_artifact_path": None,
         }
 
     # ── Step 5: Serialize transcript.json ────────────────────────────────
-    transcript_path = job_dir / "transcript.json"
+    transcript_path = download_dir / "transcript.json"
     await asyncio.to_thread(
         write_transcript_artifact,
         transcript_path,
-        video_path=str(video_path),
+        video_path=str(download_dir),  # directory — no single source file
         audio_path=str(audio_path),
         transcript_result=transcript,
     )
 
-    # ── Step 6: Return rich summary (FR-014) ─────────────────────────────
+    # ── Step 6: Rich summary ─────────────────────────────────────────────
     transcript_chars = sum(len(s.get("text", "")) for s in transcript.sentences)
     quality_flag_value = (
         transcript.quality_flag.value
@@ -160,6 +199,8 @@ async def execute(
         "status": PipelineStepStatus.success,
         "output_summary": {
             "whisper_model": settings.whisper_model,
+            "whisper_device": "cpu",
+            "audio_source": "cos_preprocessed",
             "language_detected": transcript.language,
             "transcript_chars": transcript_chars,
             "sentences_count": len(transcript.sentences),

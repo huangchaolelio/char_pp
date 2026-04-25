@@ -36,8 +36,12 @@ class TestErrorCodeConstants:
             assert " " not in code
 
     def test_expected_codes_documented(self) -> None:
-        """Data-model.md lists 9 prefixes; drift in either direction breaks
-        the FR-016 contract."""
+        """Data-model lists the prefixes; drift in either direction breaks
+        the FR-016 contract.
+
+        Feature-015 introduced 9 codes; Feature-016 US2 added 2 more
+        (SEGMENT_MISSING, AUDIO_MISSING) for preprocessed-artifact lookup.
+        """
         expected = {
             "VIDEO_QUALITY_REJECTED",
             "POSE_NO_KEYPOINTS",
@@ -48,6 +52,8 @@ class TestErrorCodeConstants:
             "LLM_UNCONFIGURED",
             "LLM_JSON_PARSE",
             "LLM_CALL_FAILED",
+            "SEGMENT_MISSING",
+            "AUDIO_MISSING",
         }
         assert ALL_ERROR_CODES == expected
 

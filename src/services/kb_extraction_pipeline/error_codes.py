@@ -50,6 +50,15 @@ LLM_JSON_PARSE = "LLM_JSON_PARSE"
 #: retries based on the exception type (ConnectionError / TimeoutError).
 LLM_CALL_FAILED = "LLM_CALL_FAILED"
 
+#: Feature-016 — a preprocessed segment referenced by ``video_preprocessing_segments``
+#: is missing from COS (manually deleted / lifecycle policy / upload race).
+#: Not retried — caller must rerun preprocessing with force=true.
+SEGMENT_MISSING = "SEGMENT_MISSING"
+
+#: Feature-016 — ``audio.wav`` referenced by ``video_preprocessing_jobs.audio_cos_object_key``
+#: is missing from COS. Not retried (same remediation as SEGMENT_MISSING).
+AUDIO_MISSING = "AUDIO_MISSING"
+
 
 # The complete set — used by tests to assert coverage of the documented table.
 ALL_ERROR_CODES: frozenset[str] = frozenset({
@@ -62,6 +71,8 @@ ALL_ERROR_CODES: frozenset[str] = frozenset({
     LLM_UNCONFIGURED,
     LLM_JSON_PARSE,
     LLM_CALL_FAILED,
+    SEGMENT_MISSING,
+    AUDIO_MISSING,
 })
 
 

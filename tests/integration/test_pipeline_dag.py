@@ -42,15 +42,41 @@ def _stub_algorithm_executors(monkeypatch) -> None:
     Feature-014 DAG tests use 1-byte placeholder mp4 files that cannot pass
     the real pose/audio quality gates introduced in Feature-015. These tests
     exercise orchestration, not algorithm correctness, so we short-circuit
-    the four heavy executors here.
+    the heavy executors here.
+
+    Feature-016 US2 changed download_video to consume preprocessing segments
+    (not the raw COS object). DAG tests don't seed preprocessing jobs, so
+    stub download_video too.
     """
+    from pathlib import Path as _Path
+
     from src.models.pipeline_step import PipelineStepStatus
     from src.services.kb_extraction_pipeline.step_executors import (
         audio_kb_extract,
         audio_transcription,
+        download_video,
         pose_analysis,
         visual_kb_extract,
     )
+
+    async def _fake_download(session, job, step):
+        from src.config import get_settings as _gs
+        root = _Path(_gs().extraction_artifact_root) / "jobs" / str(job.id)
+        (root / "segments").mkdir(parents=True, exist_ok=True)
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "video_preprocessing_job_id": None,
+                "segments_total": 0,
+                "segments_downloaded": 0,
+                "audio_downloaded": False,
+                "local_cache_hits": 0,
+                "cos_downloads": 0,
+            },
+            "output_artifact_path": str(root),
+        }
+
+    monkeypatch.setattr(download_video, "execute", _fake_download, raising=True)
 
     async def _fake_pose(session, job, step):
         return {

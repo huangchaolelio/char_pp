@@ -54,14 +54,17 @@ class TestVideoQualityGateContract:
     ) -> None:
         """End-to-end: patch video_validator + confirm executor raises
         RuntimeError with the agreed prefix (not the raw VideoQualityRejected)."""
+        from types import SimpleNamespace
+
         from src.services.kb_extraction_pipeline.step_executors import pose_analysis
         from src.services.video_validator import VideoQualityRejected
 
-        # Build a fake step that points at a tmp video file (must exist to
-        # satisfy the executor's pre-check; the content is irrelevant since
-        # we patch validate_video to raise immediately).
-        video_path = tmp_path / "video.mp4"
-        video_path.write_bytes(b"\x00")
+        # Build a fake download_dir with a seg_0000.mp4 present so pose_analysis
+        # can attempt quality-gate on segment 0.
+        download_dir = tmp_path / "download"
+        (download_dir / "segments").mkdir(parents=True)
+        seg0_path = download_dir / "segments" / "seg_0000.mp4"
+        seg0_path.write_bytes(b"\x00")
 
         job = MagicMock()
         job.id = "test-job-quality-gate"
@@ -70,9 +73,19 @@ class TestVideoQualityGateContract:
         step = MagicMock()
         step.output_artifact_path = None
 
-        # Patch get_output_artifact_path_for_step to return our fake video.
+        # Patch _get_video_path to return our fake download_dir (directory).
         async def _patched_resolve_video_path(session, job, step_id=None):
-            return str(video_path)
+            return str(download_dir)
+
+        # US2: pose_analysis also calls _load_preprocessing_view before validate.
+        async def _fake_load_view(session, cos_object_key):
+            return SimpleNamespace(
+                segments=[
+                    SimpleNamespace(segment_index=0, start_ms=0, end_ms=180_000),
+                ],
+                original_meta=None,
+                audio_cos_object_key=None,
+            )
 
         # Patch validate_video to always reject.
         def _fake_validate(path):
@@ -84,12 +97,16 @@ class TestVideoQualityGateContract:
         from src.services import video_validator as vv_mod
         monkeypatch.setattr(vv_mod, "validate_video", _fake_validate, raising=True)
 
-        # Pose_analysis reads the upstream artifact via a DB query. Patch
-        # that path resolver directly on the executor module.
         monkeypatch.setattr(
             pose_analysis,
             "_get_video_path",
             _patched_resolve_video_path,
+            raising=False,
+        )
+        monkeypatch.setattr(
+            pose_analysis,
+            "_load_preprocessing_view",
+            _fake_load_view,
             raising=False,
         )
 
