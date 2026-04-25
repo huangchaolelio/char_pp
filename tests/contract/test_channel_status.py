@@ -64,7 +64,8 @@ class TestChannelStatusContract:
             async def _side(_db, tt: TaskType):
                 return _snap(tt, cap={"classification": 5,
                                       "kb_extraction": 50,
-                                      "athlete_diagnosis": 20}.get(tt.value, 5))
+                                      "athlete_diagnosis": 20,
+                                      "video_preprocessing": 20}.get(tt.value, 5))
 
             inst.get_snapshot = AsyncMock(side_effect=_side)
 
@@ -72,10 +73,12 @@ class TestChannelStatusContract:
         assert response.status_code == 200, response.text
         body = response.json()
         assert "channels" in body
-        assert len(body["channels"]) == 3
+        # Feature-016 adds the preprocessing channel, bringing the total to 4.
+        assert len(body["channels"]) == 4
         types = {c["task_type"] for c in body["channels"]}
         assert types == {
-            "video_classification", "kb_extraction", "athlete_diagnosis"
+            "video_classification", "kb_extraction",
+            "athlete_diagnosis", "video_preprocessing",
         }
         for ch in body["channels"]:
             assert set(ch.keys()) >= {

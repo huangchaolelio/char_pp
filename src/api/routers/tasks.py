@@ -1307,3 +1307,124 @@ async def submit_diagnosis_batch(
     return await _f13_submit(
         db, _F13TaskType.athlete_diagnosis, items, submitted_via="batch"
     )
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# Feature 016 — Video preprocessing pipeline
+#
+# ``POST /tasks/preprocessing``      — single-video preprocessing submission
+# ``POST /tasks/preprocessing/batch``— batch submission with per-item isolation
+#
+# Uses its own service layer (preprocessing_service) because the
+# ``video_preprocessing_jobs`` table is separate from ``analysis_tasks``. The
+# preprocessing channel is a 5th TaskType (Feature-013 channel model reused).
+# ═════════════════════════════════════════════════════════════════════════════
+
+from src.api.schemas.preprocessing import (  # noqa: E402
+    PreprocessingBatchItemResult as _PrepBatchItem,
+    PreprocessingBatchSubmitRequest as _PrepBatchRequest,
+    PreprocessingBatchSubmitResponse as _PrepBatchResponse,
+    PreprocessingSubmitRequest as _PrepRequest,
+    PreprocessingSubmitResponse as _PrepResponse,
+)
+from src.services import preprocessing_service as _preprocessing_service  # noqa: E402
+
+
+def _preprocessing_enqueue_task(job_id) -> None:
+    """Dispatch a Celery task so the worker picks it up."""
+    from src.workers.preprocessing_task import preprocess_video as _task
+    _task.delay(str(job_id))
+
+
+@router.post(
+    "/tasks/preprocessing",
+    response_model=_PrepResponse,
+    status_code=200,
+    summary="Submit a single coach video for preprocessing",
+)
+async def submit_preprocessing(
+    body: _PrepRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _PrepResponse:
+    try:
+        outcome = await _preprocessing_service.create_or_reuse(
+            db,
+            cos_object_key=body.cos_object_key,
+            force=body.force,
+            idempotency_key=body.idempotency_key,
+        )
+    except _preprocessing_service.CosKeyNotClassifiedError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "COS_KEY_NOT_CLASSIFIED", "message": str(exc)}},
+        ) from exc
+    except _preprocessing_service.ChannelQueueFullError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "CHANNEL_QUEUE_FULL", "message": str(exc)}},
+        ) from exc
+
+    await db.commit()
+    if not outcome.reused:
+        _preprocessing_enqueue_task(outcome.job_id)
+
+    return _PrepResponse(
+        job_id=outcome.job_id,
+        status=outcome.status,
+        reused=outcome.reused,
+        cos_object_key=outcome.cos_object_key,
+        segment_count=outcome.segment_count,
+        has_audio=outcome.has_audio,
+        started_at=outcome.started_at,
+        completed_at=outcome.completed_at,
+    )
+
+
+@router.post(
+    "/tasks/preprocessing/batch",
+    response_model=_PrepBatchResponse,
+    status_code=200,
+    summary="Batch-submit coach videos for preprocessing",
+)
+async def submit_preprocessing_batch(
+    body: _PrepBatchRequest,
+    db: AsyncSession = Depends(get_db),
+) -> _PrepBatchResponse:
+    items = [(it.cos_object_key, it.force) for it in body.items]
+    try:
+        results = await _preprocessing_service.create_or_reuse_batch(
+            db, items=items,
+        )
+    except _preprocessing_service.BatchTooLargeError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail={"error": {"code": "BATCH_TOO_LARGE", "message": str(exc)}},
+        ) from exc
+
+    await db.commit()
+
+    # Enqueue only fresh (non-reused, non-error) jobs.
+    for item in results:
+        if item.job_id is not None and not item.reused and item.error_code is None:
+            _preprocessing_enqueue_task(item.job_id)
+
+    submitted = sum(1 for r in results if r.error_code is None)
+    reused = sum(1 for r in results if r.reused)
+    failed = sum(1 for r in results if r.error_code is not None)
+
+    return _PrepBatchResponse(
+        submitted=submitted,
+        reused=reused,
+        failed=failed,
+        results=[
+            _PrepBatchItem(
+                cos_object_key=r.cos_object_key,
+                job_id=r.job_id,
+                status=r.status,
+                reused=r.reused,
+                error_code=r.error_code,
+                error_message=r.error_message,
+            )
+            for r in results
+        ],
+    )

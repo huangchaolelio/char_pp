@@ -24,11 +24,14 @@ class TaskType(str, enum.Enum):
 
     Prior values (``expert_video`` / ``athlete_video``) are removed by
     Alembic 0012; no in-place mapping exists.
+
+    Feature-016 adds ``video_preprocessing`` as a fourth channel.
     """
 
     video_classification = "video_classification"
     kb_extraction = "kb_extraction"
     athlete_diagnosis = "athlete_diagnosis"
+    video_preprocessing = "video_preprocessing"
 
 
 class TaskStatus(str, enum.Enum):

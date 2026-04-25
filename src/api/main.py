@@ -18,6 +18,7 @@ from src.api.routers.diagnosis import router as diagnosis_router
 from src.api.routers.admin import router as admin_router
 from src.api.routers.task_channels import router as task_channels_router
 from src.api.routers.extraction_jobs import router as extraction_jobs_router
+from src.api.routers.video_preprocessing import router as video_preprocessing_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -111,6 +112,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router, prefix="/api/v1")
     app.include_router(task_channels_router, prefix="/api/v1")
     app.include_router(extraction_jobs_router, prefix="/api/v1")
+    app.include_router(video_preprocessing_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

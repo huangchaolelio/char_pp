@@ -26,6 +26,7 @@ def create_celery_app() -> Celery:
             "src.workers.kb_extraction_task",
             "src.workers.athlete_diagnosis_task",
             "src.workers.housekeeping_task",
+            "src.workers.preprocessing_task",
         ],
     )
 
@@ -55,6 +56,7 @@ def create_celery_app() -> Celery:
             Queue("kb_extraction"),   # classified video -> knowledge (cap 50, conc 2)
             Queue("diagnosis"),       # athlete video -> deviations   (cap 20, conc 2)
             Queue("default"),         # scan_cos_videos + housekeeping (admin/low-priority)
+            Queue("preprocessing"),   # Feature-016: coach video -> standardised segments (cap 20, conc 3)
         ),
         task_default_queue="default",
         task_routes={
@@ -64,6 +66,7 @@ def create_celery_app() -> Celery:
             "src.workers.athlete_diagnosis_task.diagnose_athlete": {"queue": "diagnosis"},
             "src.workers.housekeeping_task.cleanup_expired_tasks": {"queue": "default"},
             "src.workers.housekeeping_task.cleanup_intermediate_artifacts": {"queue": "default"},
+            "src.workers.preprocessing_task.preprocess_video": {"queue": "preprocessing"},
         },
         # Beat schedule for data retention cleanup
         beat_schedule={
