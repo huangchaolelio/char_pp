@@ -149,8 +149,8 @@ description: "Feature-016 视频预处理流水线实施任务清单"
 
 **目的**: 清理、周期任务扩展、文档同步。
 
-- [ ] T041 扩展 `/data/charhuang/char_ai_coding/charhuang_pp_cn/src/workers/housekeeping_task.py` 的 `cleanup_intermediate_artifacts` 任务：新增扫描 `${EXTRACTION_ARTIFACT_ROOT}/preprocessing/{job_id}/` 目录，`max(mtime, atime) > now - 1h` 则延期（R8），否则满足 `now - mtime > PREPROCESSING_LOCAL_RETENTION_HOURS` 即删除整个目录；确保与 Feature-015 的 `{job_id}/pose.json` 清理路径隔离（各自独立，互不误删）
-- [ ] T042 [P] 扩展 `/data/charhuang/char_ai_coding/charhuang_pp_cn/src/workers/orphan_recovery.py`：新增预处理 job 的孤儿扫描（`video_preprocessing_jobs.status='running' AND now - started_at > ORPHAN_TASK_TIMEOUT_SECONDS` → 置 failed with `error_message='orphan_recovered'`）
+- [x] T041 扩展 `/data/charhuang/char_ai_coding/charhuang_pp_cn/src/workers/housekeeping_task.py` 的 `cleanup_intermediate_artifacts` 任务：新增扫描 `${EXTRACTION_ARTIFACT_ROOT}/preprocessing/{job_id}/` 目录，`max(mtime, atime) > now - 1h` 则延期（R8），否则满足 `now - mtime > PREPROCESSING_LOCAL_RETENTION_HOURS` 即删除整个目录；确保与 Feature-015 的 `{job_id}/pose.json` 清理路径隔离（各自独立，互不误删）
+- [x] T042 [P] 扩展 `/data/charhuang/char_ai_coding/charhuang_pp_cn/src/workers/orphan_recovery.py`：新增预处理 job 的孤儿扫描（`video_preprocessing_jobs.status='running' AND now - started_at > ORPHAN_TASK_TIMEOUT_SECONDS` → 置 failed with `error_message='orphan_recovered'`）
 - [ ] T043 [P] 在 `/data/charhuang/char_ai_coding/charhuang_pp_cn/docs/architecture.md` 追加 Feature-016 章节：架构图（视频预处理层 + KB 提取消费层）、数据流、关键决策（R1/R3/R7/R9）、新通道 `preprocessing` 的位置
 - [ ] T044 [P] 在 `/data/charhuang/char_ai_coding/charhuang_pp_cn/docs/features.md` 追加 Feature-016 章节：用户故事、API 列表、配置项、依赖关系（继承 F-013/014/015）
 - [ ] T045 [P] 更新 `/data/charhuang/char_ai_coding/charhuang_pp_cn/CODEBUDDY.md` 的 "活跃 Features" 表：新增 `016 | 视频预处理流水线 | POST /tasks/preprocessing, GET /video-preprocessing/{id}`；更新 `.codebuddy/rules/workflow.md` 的"服务启动"章节追加第 5 个 preprocessing worker 启动命令；更新"核心配置"章节的配置表追加 5 项

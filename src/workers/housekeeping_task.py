@@ -161,4 +161,81 @@ def cleanup_intermediate_artifacts() -> dict:
         result["dirs_removed"],
         result["artifact_paths_cleared"],
     )
+
+    # Feature 016 (T041): clean up preprocessing local artifact dirs.
+    # ``${EXTRACTION_ARTIFACT_ROOT}/preprocessing/{pp_job_id}/`` is populated
+    # by the preprocessing worker and reused by the KB extraction download
+    # step (hard-link cache). Retention is decoupled from extraction jobs:
+    # we key on filesystem mtime so any still-active consumer keeps it warm.
+    pp_result = asyncio.run(_cleanup_preprocessing_local())
+    result.update(pp_result)
+    logger.info(
+        "cleanup_preprocessing_local: scanned=%s dirs_rm=%s skipped_recent=%s",
+        pp_result.get("preprocessing_scanned", 0),
+        pp_result.get("preprocessing_dirs_removed", 0),
+        pp_result.get("preprocessing_skipped_recent", 0),
+    )
     return result
+
+
+async def _cleanup_preprocessing_local() -> dict:
+    """Feature 016 / T041 — sweep ``preprocessing/<pp_job_id>/`` dirs.
+
+    Removal criteria (per research.md R8):
+      1. Directory exists under ``${EXTRACTION_ARTIFACT_ROOT}/preprocessing/``.
+      2. ``max(mtime, atime)`` of the directory > 1 hour ago. Newer dirs are
+         kept — a KB extraction may still be hard-linking from them.
+      3. ``mtime`` > ``preprocessing_local_retention_hours`` ago (default 24h)
+         → delete the whole dir tree.
+
+    Isolated from the Feature-015 ``<job_id>/`` KB-extraction dirs because
+    we only touch the ``preprocessing/`` subtree.
+    """
+    import shutil
+    from pathlib import Path
+
+    settings = get_settings()
+    root = Path(settings.extraction_artifact_root) / "preprocessing"
+    if not root.exists():
+        return {
+            "preprocessing_scanned": 0,
+            "preprocessing_dirs_removed": 0,
+            "preprocessing_skipped_recent": 0,
+        }
+
+    now_epoch = datetime.now(tz=timezone.utc).timestamp()
+    retention_s = settings.preprocessing_local_retention_hours * 3600
+    active_window_s = 3600  # 1 hour grace for in-flight consumers
+
+    scanned = removed = skipped_recent = 0
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        scanned += 1
+        try:
+            stat = entry.stat()
+        except OSError:
+            continue
+
+        last_touch = max(stat.st_mtime, stat.st_atime)
+        # Still within active-consumer grace window → keep.
+        if now_epoch - last_touch < active_window_s:
+            skipped_recent += 1
+            continue
+
+        # Outside retention window → delete.
+        if now_epoch - stat.st_mtime > retention_s:
+            try:
+                shutil.rmtree(entry)
+                removed += 1
+            except OSError as exc:
+                logger.warning(
+                    "cleanup_preprocessing_local: failed to rm %s: %s",
+                    entry, exc,
+                )
+
+    return {
+        "preprocessing_scanned": scanned,
+        "preprocessing_dirs_removed": removed,
+        "preprocessing_skipped_recent": skipped_recent,
+    }
