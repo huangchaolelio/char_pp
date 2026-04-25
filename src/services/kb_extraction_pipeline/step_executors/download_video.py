@@ -124,13 +124,14 @@ async def execute(
                 f"segment_index={seg.segment_index} cos_object_key={seg.cos_object_key!r}",
             ))
 
-    if view.has_audio and view.audio_cos_object_key:
-        if not await asyncio.to_thread(
-            _cos_object_exists, view.audio_cos_object_key,
+    if view.has_audio and view.audio:
+        audio_key = view.audio.get("cos_object_key")
+        if audio_key and not await asyncio.to_thread(
+            _cos_object_exists, audio_key,
         ):
             raise RuntimeError(format_error(
                 AUDIO_MISSING,
-                f"cos_object_key={view.audio_cos_object_key!r}",
+                f"cos_object_key={audio_key!r}",
             ))
 
     # ── 2. Fetch segments (local cache first) ─────────────────────────────
@@ -164,32 +165,33 @@ async def execute(
 
     # ── 3. Fetch audio.wav ────────────────────────────────────────────────
     audio_downloaded = False
-    if view.has_audio and view.audio_cos_object_key:
-        target_audio = job_dir / "audio.wav"
-        expected_size = view.audio_size_bytes or 0
-        if target_audio.exists() and (
-            expected_size == 0 or target_audio.stat().st_size == expected_size
-        ):
-            local_cache_hits += 1
-        else:
-            pp_audio = _preprocessing_local_path(view.job_id, audio=True)
-            if pp_audio.exists() and (
-                expected_size == 0 or pp_audio.stat().st_size == expected_size
+    if view.has_audio and view.audio:
+        audio_key = view.audio.get("cos_object_key")
+        expected_size = int(view.audio.get("size_bytes") or 0)
+        if audio_key:
+            target_audio = job_dir / "audio.wav"
+            if target_audio.exists() and (
+                expected_size == 0 or target_audio.stat().st_size == expected_size
             ):
-                try:
-                    if target_audio.exists():
-                        target_audio.unlink()
-                    target_audio.hardlink_to(pp_audio)
-                except (OSError, AttributeError):
-                    shutil.copyfile(pp_audio, target_audio)
                 local_cache_hits += 1
             else:
-                await asyncio.to_thread(
-                    _download_cos_to_file,
-                    view.audio_cos_object_key, target_audio,
-                )
-                cos_downloads += 1
-        audio_downloaded = True
+                pp_audio = _preprocessing_local_path(view.job_id, audio=True)
+                if pp_audio.exists() and (
+                    expected_size == 0 or pp_audio.stat().st_size == expected_size
+                ):
+                    try:
+                        if target_audio.exists():
+                            target_audio.unlink()
+                        target_audio.hardlink_to(pp_audio)
+                    except (OSError, AttributeError):
+                        shutil.copyfile(pp_audio, target_audio)
+                    local_cache_hits += 1
+                else:
+                    await asyncio.to_thread(
+                        _download_cos_to_file, audio_key, target_audio,
+                    )
+                    cos_downloads += 1
+            audio_downloaded = True
 
     segments_total = len(view.segments)
 

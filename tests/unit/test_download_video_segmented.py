@@ -40,8 +40,7 @@ async def test_download_video_raises_segment_missing(tmp_path, monkeypatch):
         return SimpleNamespace(
             job_id=uuid4(),
             has_audio=True,
-            audio_cos_object_key="preprocessed/x/audio.wav",
-            audio_size_bytes=1000,
+            audio={"cos_object_key": "preprocessed/x/audio.wav", "size_bytes": 1000},
             segments=[
                 _seg(0, 0, 100, "preprocessed/x/seg_0000.mp4"),
                 _seg(1, 180_000, 100, "preprocessed/x/seg_0001.mp4"),
@@ -79,8 +78,7 @@ async def test_download_video_raises_audio_missing(tmp_path, monkeypatch):
         return SimpleNamespace(
             job_id=uuid4(),
             has_audio=True,
-            audio_cos_object_key="preprocessed/x/audio.wav",
-            audio_size_bytes=1000,
+            audio={"cos_object_key": "preprocessed/x/audio.wav", "size_bytes": 1000},
             segments=[_seg(0, 0, 100, "preprocessed/x/seg_0000.mp4")],
         )
     monkeypatch.setattr(
@@ -125,8 +123,7 @@ async def test_download_video_local_cache_hit(tmp_path, monkeypatch):
         return SimpleNamespace(
             job_id=pp_job_id,
             has_audio=True,
-            audio_cos_object_key="preprocessed/x/audio.wav",
-            audio_size_bytes=1000,
+            audio={"cos_object_key": "preprocessed/x/audio.wav", "size_bytes": 1000},
             segments=[
                 _seg(0, 0, 100, "preprocessed/x/seg_0000.mp4"),
                 _seg(1, 180_000, 100, "preprocessed/x/seg_0001.mp4"),
