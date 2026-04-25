@@ -156,13 +156,17 @@ class TaskChannelService:
     async def get_all_snapshots(
         self, session: AsyncSession
     ) -> list[ChannelLiveSnapshot]:
-        """Snapshot for every known channel. Order: classification → kb → diagnosis."""
+        """Snapshot for every known channel.
+
+        Order: classification → kb → diagnosis → preprocessing (Feature-016).
+        """
         return [
             await self.get_snapshot(session, tt)
             for tt in (
                 TaskType.video_classification,
                 TaskType.kb_extraction,
                 TaskType.athlete_diagnosis,
+                TaskType.video_preprocessing,
             )
         ]
 

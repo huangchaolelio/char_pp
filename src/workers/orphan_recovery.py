@@ -85,9 +85,57 @@ async def sweep_orphan_tasks() -> int:
             pipeline_orphans = await _sweep_pipeline_step_orphans(
                 session, step_cutoff
             )
-            return count + pipeline_orphans
+            # Feature 016 (T042): sweep stuck preprocessing jobs.
+            preprocessing_orphans = await _sweep_preprocessing_orphans(
+                session, cutoff
+            )
+            return count + pipeline_orphans + preprocessing_orphans
     finally:
         await engine.dispose()
+
+
+async def _sweep_preprocessing_orphans(
+    session: AsyncSession, cutoff: datetime
+) -> int:
+    """Feature 016 / T042 — reclaim ``video_preprocessing_jobs`` rows stuck
+    in ``running`` past ``ORPHAN_TASK_TIMEOUT_SECONDS``.
+
+    Each reclaimed job:
+      - flips to ``failed`` with ``error_message='orphan_recovered'``
+      - sets ``completed_at`` to now
+
+    Returns the number of preprocessing jobs reclaimed. No cascade needed —
+    segments rows are small and intentionally kept for audit.
+    """
+    from src.models.video_preprocessing_job import (  # noqa: PLC0415
+        VideoPreprocessingJob,
+    )
+
+    stmt = (
+        update(VideoPreprocessingJob)
+        .where(
+            VideoPreprocessingJob.status == "running",
+            VideoPreprocessingJob.started_at.isnot(None),
+            VideoPreprocessingJob.started_at < cutoff,
+        )
+        .values(
+            status="failed",
+            completed_at=datetime.now(tz=timezone.utc),
+            error_message="orphan_recovered",
+        )
+        .returning(VideoPreprocessingJob.id)
+    )
+    result = await session.execute(stmt)
+    reclaimed = result.fetchall()
+    await session.commit()
+
+    if reclaimed:
+        logger.warning(
+            "orphan recovery: reclaimed %d stale preprocessing job(s) "
+            "older than cutoff %s",
+            len(reclaimed), cutoff.isoformat(),
+        )
+    return len(reclaimed)
 
 
 async def _sweep_pipeline_step_orphans(

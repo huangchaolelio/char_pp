@@ -99,6 +99,13 @@ class Settings(BaseSettings):
     extraction_success_retention_hours: int = 24      # cleanup after success (Q5)
     extraction_failed_retention_hours: int = 168      # 7d cleanup after failure (Q5)
 
+    # Feature 016 — Video preprocessing pipeline
+    video_preprocessing_segment_duration_s: int = 180     # Feature-007 实证分段秒数
+    video_preprocessing_target_fps: int = 30              # 标准化目标帧率
+    video_preprocessing_target_short_side: int = 720      # 标准化目标短边像素
+    preprocessing_local_retention_hours: int = 24         # 本地温缓存保留时长（success/failed 统一）
+    preprocessing_upload_concurrency: int = 2             # ThreadPoolExecutor max_workers
+
 
 @lru_cache
 def get_settings() -> Settings:

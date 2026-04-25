@@ -20,6 +20,7 @@
 - [Feature-013 任务管道重新设计](#feature-013-任务管道重新设计)
 - [Feature-014 知识库提取流水线化](#feature-014-知识库提取流水线化)
 - [Feature-015 真实算法接入（知识库提取流水线）](#feature-015-真实算法接入知识库提取流水线)
+- [Feature-016 视频预处理流水线](#feature-016-视频预处理流水线)
 
 ---
 
@@ -564,4 +565,80 @@ Feature-015 不新增路由。运维使用的命令行工具：
 详见 `specs/015-kb-pipeline-real-algorithms/verification.md`：
 - CI 自动化覆盖 SC-001（visual/audio 部分）+ SC-004（结构化错误码）
 - SC-002 / SC-003 / SC-005 / SC-006 需要部署环境 + 真实视频集回归
+
+---
+
+## Feature-016 视频预处理流水线
+
+**状态：已完成**  
+**规范：** `specs/016-video-preprocessing-pipeline/`
+
+### 背景
+
+Feature-015 部署烟测（2026-04-25）暴露两个核心问题：
+
+1. **内存峰值不可控**：`pose_analysis` 对整段大视频一次性 `estimate_pose` 触发 OOM-killed（pod memcg 64 GB）；Feature-007 已用“180s 分段 + 顺序处理”成功绕开，但 Feature-015 未继承
+2. **重复计算**：rerun / 多 tech_category 并行提取每次都要重新下载 + 转码 + 切分，浪费带宽和 CPU
+3. **Whisper OOM**：torch CUDA 初始化占 58 GB 虚地址擞 pod memcg
+
+### 功能描述
+
+在 KB 提取前新增预处理阶段：下载 → probe + 质量门禁 → 转码标准化 → 按 180s 切分 → 流式并发上传 COS + 同步产出整段 16 kHz mono WAV。产物按 `job_id` 隔离写入 `preprocessed/{cos_key}/jobs/{job_id}/`。
+
+### 核心能力
+
+- **新第五个通道 `preprocessing`**（3 并发 / 容量 20，可热更新）
+- **流式切分 + 并发上传**：ffmpeg 顺序切段 + `ThreadPoolExecutor(max_workers=2)` 并发上传；主线程不被上传阻塞（沿用 Feature-007 commit `8713543` 实证模式）
+- **作业级隔离**：`force=true` 覆盖 → 旧 job 标 `superseded`（保留 DB 审计） + 同步删除旧 COS 对象；新 job 放独立子目录避免并发读写竞争
+- **质量门禁前移**：probe 阶段即调 `validate_video`，fps / 分辨率不达标立即 `VIDEO_QUALITY_REJECTED:` failed，不进转码/分段/上传
+- **本地 24h 温缓存**：`EXTRACTION_ARTIFACT_ROOT/preprocessing/{job_id}/` 统一保留 24h（success / failed 不区分）；beat 每小时扫描，删前检查 mtime/atime 防止误删
+- **COS 存在性门禁 + 本地优先读取**：KB 提取消费预处理产物时，先 COS head 校验存在防止幽灵数据，通过后本地优先 → 缺失再从 COS 下载
+- **懒检测产物丢失**：KB 提取下载 404 → `SEGMENT_MISSING:` / `AUDIO_MISSING:`；运维手动 `force=true` 重建恢复；不引入主动 verify 基础设施
+- **Whisper 强制 CPU**：预处理一次性产出 16 kHz mono WAV；`audio_transcription` 直接从 COS 拉音频喂 Whisper，无需从视频实时提取
+
+### 4 个 step executor 改造（仅数据入口层）
+
+| Executor | Feature-016 改造 |
+|----------|-----------------|
+| `pose_analysis` | 按 segments 表迭代单段 `estimate_pose`，累积 frames 到 pose.json；单段 RSS < 整体 50% |
+| `audio_transcription` | 从 COS 拉 `audio.wav` 直接喂 Whisper（CPU small，1–2 GB RSS） |
+| `visual_kb_extract` / `audio_kb_extract` / `merge_kb` | 不变 |
+
+### 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/v1/tasks/preprocessing` | 单条视频预处理提交（支持 `force`） |
+| `POST` | `/api/v1/tasks/preprocessing/batch` | 批量提交（上限 100，部分成功语义） |
+| `GET` | `/api/v1/video-preprocessing/{job_id}` | 审计查询：原视频元数据 + 标准化参数 + 音频 + 分段列表 |
+
+### 数据模型
+
+- `video_preprocessing_jobs`：作业顶级容器（status ∈ running/success/failed/superseded；partial unique index on `cos_object_key WHERE status='success'`）
+- `video_preprocessing_segments`：每段一条记录，`(job_id, segment_index)` 唯一；`job_id` CASCADE DELETE
+- `coach_video_classifications.preprocessed: bool`（新增字段）：至少一次 success 即置 true
+
+### 配置项（.env / Settings）
+
+| 键 | 默认值 | 说明 |
+|-----|--------|------|
+| `VIDEO_PREPROCESSING_SEGMENT_DURATION_S` | 180 | 分段秒数阈值（Feature-007 实证值） |
+| `VIDEO_PREPROCESSING_TARGET_FPS` | 30 | 标准化目标帧率 |
+| `VIDEO_PREPROCESSING_TARGET_SHORT_SIDE` | 720 | 标准化目标短边像素 |
+| `PREPROCESSING_LOCAL_RETENTION_HOURS` | 24 | 本地产物保留时长 |
+| `PREPROCESSING_UPLOAD_CONCURRENCY` | 2 | ThreadPoolExecutor max_workers |
+
+### 结构化错误前缀（8 类）
+
+`VIDEO_DOWNLOAD_FAILED:` / `VIDEO_PROBE_FAILED:` / `VIDEO_QUALITY_REJECTED:` / `VIDEO_CODEC_UNSUPPORTED:` / `VIDEO_TRANSCODE_FAILED:` / `VIDEO_SPLIT_FAILED:` / `VIDEO_UPLOAD_FAILED:` / `AUDIO_EXPORT_FAILED:`；KB 提取消费侧新增：`SEGMENT_MISSING:` / `AUDIO_MISSING:`
+
+### 性能指标（SC）
+
+- SC-001：10 分钟大视频端到端无 OOM / SIGKILL
+- SC-002：`pose_analysis` 单段峰值 RSS < 原视频整体处理峰值 50%
+- SC-003：同视频第 N 次 KB 提取（N≥2）耗时相比第 1 次降低 ≥ 30%
+- SC-004：预处理失败率 ≤ 5%（排除源编码不支持）
+- SC-005：分段时长误差 < 1 秒，累计误差 < 原时长 1%
+- SC-006：预处理耗时 ≤ 原视频时长 × 5
+- SC-007：100% 失败带结构化错误前缀
 

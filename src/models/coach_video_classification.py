@@ -54,6 +54,12 @@ class CoachVideoClassification(Base):
     duration_s: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     name_source: Mapped[str] = mapped_column(String(10), nullable=False, default="map")
     kb_extracted: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # Feature-016: set to true when at least one VideoPreprocessingJob with
+    # status='success' exists for this cos_object_key. Kept independent of
+    # kb_extracted so ops can query "preprocessed but not yet KB-extracted".
+    preprocessed: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
     )
@@ -81,5 +87,6 @@ class CoachVideoClassification(Base):
         Index("idx_cvclf_coach", "coach_name"),
         Index("idx_cvclf_tech", "tech_category"),
         Index("idx_cvclf_kb", "kb_extracted"),
+        Index("idx_cvclf_preprocessed", "preprocessed"),
         Index("idx_cvclf_coach_tech", "coach_name", "tech_category"),
     )

@@ -129,6 +129,11 @@ alembic revision --autogenerate -m "描述"
 | `EXTRACTION_ARTIFACT_ROOT` | Worker 本地中间文件根目录，默认 `/tmp/coaching-advisor/jobs`（Feature-014）|
 | `EXTRACTION_SUCCESS_RETENTION_HOURS` | 成功作业中间结果保留，默认 24（Feature-014）|
 | `EXTRACTION_FAILED_RETENTION_HOURS` | 失败作业中间结果保留，默认 168（7 天，Feature-014）|
+| `VIDEO_PREPROCESSING_SEGMENT_DURATION_S` | 预处理分段时长，默认 180 秒（Feature-016）|
+| `VIDEO_PREPROCESSING_TARGET_FPS` | 标准化目标帧率，默认 30（Feature-016）|
+| `VIDEO_PREPROCESSING_TARGET_SHORT_SIDE` | 标准化目标短边像素，默认 720（Feature-016）|
+| `PREPROCESSING_LOCAL_RETENTION_HOURS` | 预处理本地温缓存保留时长，默认 24（Feature-016）|
+| `PREPROCESSING_UPLOAD_CONCURRENCY` | COS 上传 ThreadPool 并发，默认 2（Feature-016）|
 
 📖 COS 存储与教练-目录映射：[.codebuddy/rules/cos-storage.md](.codebuddy/rules/cos-storage.md)
 
@@ -163,7 +168,7 @@ alembic revision --autogenerate -m "描述"
 
 ---
 
-## 活跃 Features（001~015，均已完成）
+## 活跃 Features（001~016，均已完成）
 
 | # | Feature | 核心 API |
 |---|---------|----------|
@@ -182,6 +187,7 @@ alembic revision --autogenerate -m "描述"
 | 013 | 任务管道重新设计 | `POST /tasks/{classification|kb-extraction|diagnosis}`, `GET /task-channels`, `PATCH /admin/channels/{type}`, `POST /admin/reset-task-pipeline` |
 | 014 | 知识库提取流水线化（DAG + 并行） | `GET /extraction-jobs`, `GET /extraction-jobs/{id}`, `POST /extraction-jobs/{id}/rerun`（扩展 `POST /tasks/kb-extraction`）|
 | 015 | 真实算法接入（知识库提取流水线） | 无新 API；4 个 executor 接入 Feature-002 算法；`scripts/run_reference_regression.py` 回归工具 |
+| 016 | 视频预处理流水线（标准化 + 分段） | `POST /tasks/preprocessing`, `POST /tasks/preprocessing/batch`, `GET /video-preprocessing/{id}`；KB 提取消费预处理产物（长视频 OOM 防护） |
 
 📖 产品功能详情：[docs/features.md](docs/features.md)
 📖 技术架构：[docs/architecture.md](docs/architecture.md)

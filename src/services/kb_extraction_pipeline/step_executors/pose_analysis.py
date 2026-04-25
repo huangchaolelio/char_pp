@@ -1,16 +1,29 @@
-"""pose_analysis executor (Feature 015) — real YOLOv8 / MediaPipe integration.
+"""pose_analysis executor (Feature 015 + Feature-016 US2 rewrite).
 
-Pipeline:
-    1. Resolve the local video path from the upstream ``download_video`` step.
-    2. Gate the video through Feature-002's quality validator. A ``VideoQualityRejected``
-       exception is translated into a ``VIDEO_QUALITY_REJECTED:`` prefixed
-       ``RuntimeError`` so operations can grep for it (FR-006 / FR-016).
-    3. Run ``pose_estimator.estimate_pose`` inside ``asyncio.to_thread`` to
-       keep the event loop free for the parallel ``audio_transcription`` sibling.
-    4. Serialise the frame list to ``<job_dir>/pose.json`` via
-       ``artifact_io.write_pose_artifact`` for ``visual_kb_extract`` to consume.
-    5. Return a rich ``output_summary`` exposing the real backend + video meta
-       (FR-014).
+Pre-US2 behavior: consumed a single ``video.mp4`` and ran one pose-estimator
+pass over the full clip. The clip-level decode + full CUDA graph allocation
+could OOM the 64 GB pod on long videos.
+
+US2 behavior: consumes the segmented output from the new ``download_video``
+executor:
+  - ``download_video`` now emits ``output_artifact_path`` = **directory** that
+    contains ``segments/seg_NNNN.mp4`` + (optional) ``audio.wav``;
+  - We load the corresponding ``video_preprocessing`` view via
+    ``preprocessing_service`` to recover each segment's ``start_ms`` (needed
+    to rebase frame timestamps onto the original-video timeline);
+  - Iterate segments in order, call ``estimate_pose`` per segment (ships
+    frames with segment-local timestamps), rebase to global timeline, and
+    accumulate into one list;
+  - Serialise the accumulated frames to ``<job_dir>/pose.json`` (unchanged
+    contract with visual_kb_extract);
+  - Report ``segments_processed`` / ``segments_failed`` + backend in
+    ``output_summary`` (observability — FR-014).
+
+Error behavior:
+  - ``video_validator.validate_video`` still runs (on segment 0) as a cheap
+    quality gate — mis-classified videos are rejected before any pose work.
+  - Per-segment ``estimate_pose`` failures still abort the whole step — we
+    have no sensible "partial pose.json" story for KB extraction.
 """
 
 from __future__ import annotations
@@ -26,7 +39,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.config import get_settings
 from src.models.extraction_job import ExtractionJob
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
-from src.services import pose_estimator, video_validator
+from src.services import pose_estimator, preprocessing_service, video_validator
 from src.services.kb_extraction_pipeline.artifact_io import write_pose_artifact
 from src.services.kb_extraction_pipeline.error_codes import (
     POSE_NO_KEYPOINTS,
@@ -38,15 +51,17 @@ from src.services.kb_extraction_pipeline.error_codes import (
 logger = logging.getLogger(__name__)
 
 
+# ── Module-level helpers (monkeypatch targets) ──────────────────────────────
+
 async def _get_video_path(
     session: AsyncSession,
     job: ExtractionJob,
     step_id: Any | None = None,
 ) -> str:
-    """Resolve the local video artifact path from the upstream download step.
+    """Resolve the local download_video artifact from the upstream step.
 
-    Split out as a module-level helper so unit tests can monkeypatch it
-    without mocking the whole SQLAlchemy async session.
+    In the US2 world this is a **directory**, not a file. Kept the same
+    signature (return str) for backward compat with the earlier test suite.
     """
     artifact_path = (
         await session.execute(
@@ -63,62 +78,139 @@ async def _get_video_path(
     return str(artifact_path)
 
 
+async def _load_preprocessing_view(session: AsyncSession, cos_object_key: str):
+    """Load the success preprocessing view (for segment timing metadata)."""
+    row = await preprocessing_service._fetch_success_job(session, cos_object_key)
+    if row is None:
+        raise RuntimeError(
+            f"no success preprocessing job for {cos_object_key!r}"
+        )
+    view = await preprocessing_service.get_job_view(session, row.id)
+    if view is None:  # pragma: no cover
+        raise RuntimeError(f"preprocessing job {row.id} view unavailable")
+    return view
+
+
+# ── Main executor ───────────────────────────────────────────────────────────
+
 async def execute(
     session: AsyncSession,
     job: ExtractionJob,
     step: PipelineStep,
 ) -> dict[str, Any]:
-    """Run real pose estimation over the downloaded video."""
-    video_path = await _get_video_path(session, job, getattr(step, "id", None))
-    video_path_obj = Path(video_path)
+    """Run pose estimation over each preprocessed segment, accumulating frames."""
+    download_dir_str = await _get_video_path(
+        session, job, getattr(step, "id", None),
+    )
+    download_dir = Path(download_dir_str)
+
+    # download_video now emits a directory. Legacy path (single file) still
+    # supported for tests not yet migrated.
+    if download_dir.is_file():
+        download_dir = download_dir.parent
 
     settings = get_settings()
 
-    # ── Step 1: validate_video (fast, CPU-bound) ──────────────────────────────
-    try:
-        video_meta = await asyncio.to_thread(video_validator.validate_video, video_path_obj)
-    except video_validator.VideoQualityRejected as exc:
-        details = _format_validator_details(exc)
-        raise RuntimeError(format_error(VIDEO_QUALITY_REJECTED, details)) from exc
+    # Load preprocessing view for segment timing.
+    view = await _load_preprocessing_view(session, job.cos_object_key)
 
-    # ── Step 2: estimate_pose (CPU/GPU-bound) ────────────────────────────────
-    frames = await asyncio.to_thread(pose_estimator.estimate_pose, video_path_obj)
-
-    if not frames:
+    segments = sorted(view.segments, key=lambda s: s.segment_index)
+    if not segments:  # pragma: no cover — defensive
         raise RuntimeError(
-            format_error(POSE_NO_KEYPOINTS, "estimate_pose returned 0 frames")
+            f"preprocessing view has 0 segments for {job.cos_object_key!r}"
         )
 
-    # ── Step 3: serialise to pose.json for visual_kb_extract ─────────────────
-    out_path = video_path_obj.parent / "pose.json"
-    meta_dict = {
-        "fps": float(video_meta.fps),
-        "width": int(video_meta.width),
-        "height": int(video_meta.height),
-        "duration_seconds": float(video_meta.duration_seconds),
-        "frame_count": int(video_meta.frame_count),
-    }
+    # Quality gate on segment 0 (cheap — ffprobe on first 3 minutes).
+    seg0_path = download_dir / "segments" / f"seg_{segments[0].segment_index:04d}.mp4"
+    try:
+        video_meta = await asyncio.to_thread(
+            video_validator.validate_video, seg0_path,
+        )
+    except video_validator.VideoQualityRejected as exc:
+        raise RuntimeError(
+            format_error(VIDEO_QUALITY_REJECTED, _format_validator_details(exc))
+        ) from exc
+
+    # ── Iterate segments, accumulate frames ──────────────────────────────
+    all_frames: list = []
+    segments_processed = 0
+    segments_failed = 0
+
+    for seg in segments:
+        seg_path = download_dir / "segments" / f"seg_{seg.segment_index:04d}.mp4"
+        if not seg_path.exists():
+            segments_failed += 1
+            raise RuntimeError(
+                f"segment file missing in job dir: {seg_path} "
+                f"(segment_index={seg.segment_index})"
+            )
+
+        seg_frames = await asyncio.to_thread(pose_estimator.estimate_pose, seg_path)
+
+        # Rebase timestamps onto original-video timeline.
+        offset_ms = int(seg.start_ms)
+        for frame in seg_frames:
+            if hasattr(frame, "timestamp_ms") and frame.timestamp_ms is not None:
+                frame.timestamp_ms = int(frame.timestamp_ms) + offset_ms
+
+        all_frames.extend(seg_frames)
+        segments_processed += 1
+
+    if not all_frames:
+        raise RuntimeError(
+            format_error(
+                POSE_NO_KEYPOINTS,
+                f"estimate_pose returned 0 frames across {segments_processed} segments",
+            )
+        )
+
+    # ── Serialise accumulated pose to pose.json ──────────────────────────
+    out_path = download_dir / "pose.json"
+
+    # Assemble meta from the preprocessing view (authoritative for the full
+    # original-video duration), falling back to segment 0 probe if missing.
+    if view.original_meta:
+        meta_dict = {
+            "fps": float(view.original_meta.get("fps") or video_meta.fps),
+            "width": int(view.original_meta.get("width") or video_meta.width),
+            "height": int(view.original_meta.get("height") or video_meta.height),
+            "duration_seconds": float(
+                (view.original_meta.get("duration_ms") or 0) / 1000
+                or video_meta.duration_seconds
+            ),
+            "frame_count": int(video_meta.frame_count),
+        }
+    else:
+        meta_dict = {
+            "fps": float(video_meta.fps),
+            "width": int(video_meta.width),
+            "height": int(video_meta.height),
+            "duration_seconds": float(video_meta.duration_seconds),
+            "frame_count": int(video_meta.frame_count),
+        }
+
     backend = _resolve_effective_backend(settings.pose_backend)
 
     await asyncio.to_thread(
         write_pose_artifact,
         out_path,
-        video_path=str(video_path_obj),
+        video_path=str(download_dir),
         video_meta=meta_dict,
         backend=backend,
-        frames=frames,
+        frames=all_frames,
     )
 
-    # ── Step 4: output summary (FR-014) ──────────────────────────────────────
     return {
         "status": PipelineStepStatus.success,
         "output_summary": {
-            "keypoints_frame_count": len(frames),
+            "keypoints_frame_count": len(all_frames),
             "detected_segments": 0,  # visual_kb_extract fills the real count
             "backend": backend,
             "video_duration_sec": meta_dict["duration_seconds"],
             "fps": meta_dict["fps"],
             "resolution": f"{meta_dict['width']}x{meta_dict['height']}",
+            "segments_processed": segments_processed,
+            "segments_failed": segments_failed,
         },
         "output_artifact_path": str(out_path),
     }
@@ -135,12 +227,7 @@ def _format_validator_details(exc: video_validator.VideoQualityRejected) -> str:
 
 
 def _resolve_effective_backend(requested: str) -> str:
-    """Return the backend actually used by ``pose_estimator``.
-
-    ``pose_estimator._detect_backend`` is a private helper; we call it to keep
-    ``output_summary.backend`` accurate even when ``pose_backend='auto'``.
-    Falls back to the raw setting if the helper signature changes.
-    """
+    """Return the backend actually used by ``pose_estimator``."""
     try:
         return pose_estimator._detect_backend(requested)  # type: ignore[attr-defined]
     except Exception:  # pragma: no cover — defensive
