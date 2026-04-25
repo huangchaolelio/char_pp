@@ -91,8 +91,12 @@ def _frame_to_dict(frame: FramePoseResult) -> dict[str, Any]:
         "timestamp_ms": frame.timestamp_ms,
         "frame_confidence": frame.frame_confidence,
         # Keypoint indices are ints → serialise as strings for JSON compatibility.
+        # pose_estimator assigns None for keypoints below the visibility threshold;
+        # those are skipped so asdict() only ever runs on real dataclass instances.
         "keypoints": {
-            str(idx): asdict(kp) for idx, kp in frame.keypoints.items()
+            str(idx): asdict(kp)
+            for idx, kp in frame.keypoints.items()
+            if kp is not None
         },
     }
 

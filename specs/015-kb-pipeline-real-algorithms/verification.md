@@ -11,7 +11,7 @@
 
 | # | 标准 | 自动化方式 | 状态 | 实测值 / 证据 | 备注 |
 |---|------|-----------|------|--------------|------|
-| SC-001 (visual) | 视觉路 ≥2 条目 | `tests/integration/test_visual_kb_real.py` | ✓ PASS | 合成 pose.json → visual_kb_extract 产出 ≥1 条目，backend≠scaffold | CI 每次 PR 跑 |
+| SC-001 (visual) | 视觉路 ≥2 条目 | `tests/integration/test_visual_kb_real.py` + 部署烟测 | ✓ PASS | 合成 pose.json → visual_kb_extract 产出 ≥1 条目；**部署烟测**（2026-04-25）：真实 YOLOv8 T4 GPU 对 25 MB / 112s 正手攻球视频产出 4 条 ExpertTechPoint，全流程 30.9s | CI 每次 PR 跑；部署实证已完成 |
 | SC-001 (audio)  | 音频路 ≥1 条目 | `tests/integration/test_audio_kb_real.py` | ✓ PASS | mocked TranscriptTechParser → 1 条 `source_type='audio'` 含 `raw_text_span` | 真实讲解视频验证走 US3 回归 |
 | SC-002 | 10 分钟视频 ≤ F-002 ×90% | `run_reference_regression.py --measure-wallclock` | ☐ TODO | — | 需要部署环境 + manifest 填入 `baseline_f002_seconds`；脚本会计算比值并标 PASS/FAIL |
 | SC-003 | 参考视频条目数 ∈ 预定义范围 | `run_reference_regression.py`（manifest 模式） | ☐ TODO | — | 结构已就位，CI 用 mock HTTP 验证（`test_real_algorithms_regression.py` 3 路径全绿） |
@@ -25,14 +25,59 @@
 
 | 测试文件 | 用例数 | 说明 |
 |---------|--------|------|
-| `tests/unit/test_artifact_parsers.py` | 12 | pose.json / transcript.json 读写往返 + 容错（FR-002 / FR-007 / Q4）|
+| `tests/unit/test_artifact_parsers.py` | 13 | pose.json / transcript.json 读写往返 + 容错（FR-002 / FR-007 / Q4）；含 `test_writer_skips_none_keypoints_from_pose_estimator`（2026-04-25 烟测发现的 None 过滤回归测试）|
 | `tests/unit/test_error_codes.py` | 7 | 9 个错误码常量 + `format_error()` 合约（FR-016）|
 | `tests/unit/test_video_quality_gate.py` | 3 | `VideoQualityRejected → VIDEO_QUALITY_REJECTED:` 前缀翻译（FR-006）|
 | `tests/unit/test_audio_kb_llm_gate.py` | 1 | Venus/OpenAI 均未配置 → `LLM_UNCONFIGURED:` fail fast（FR-011）|
 | `tests/integration/test_visual_kb_real.py` | 2 | 合成 pose → visual_kb_extract 产出 + 空 frames 降级（SC-001 视觉）|
 | `tests/integration/test_audio_kb_real.py` | 2 | 合成 transcript → kb_items(audio) + 上游 skipped 传播（FR-009/FR-010/FR-012）|
 | `tests/integration/test_real_algorithms_regression.py` | 7 | MockTransport 驱动回归脚本 happy path / 越界 / 失败作业 / MD 渲染 / CLI 退出码 |
-| **合计** | **34** | |
+| **合计** | **35** | |
+
+---
+
+## 部署烟测记录
+
+### 2026-04-25 — 首次真实视频端到端验证
+
+**视频**：`全套技术教学大合集_源动力沙指导250节/17_正手攻球小碎步（17）_1080p.mp4`（25.1 MB / 1920×1080 / 30fps / 112.2s）
+
+**配置**：Celery `--pool=threads --concurrency=1 -Q kb_extraction`；`enable_audio_analysis=false`（视觉路单独验证）
+
+**结果（task_id=74611ada-b629-4a0e-9123-fc2a75a85da0）**：
+
+| 步骤 | 状态 | 耗时 | 关键产出 |
+|------|------|------|----------|
+| `download_video` | success | 1.83s | 从 COS 拉下 25.1 MB |
+| `pose_analysis` | success | **28.62s** | YOLOv8 Tesla T4 GPU 推理，3366 帧关键点，backend=yolov8 |
+| `audio_transcription` | skipped | 0.01s | 按预期 `disabled_by_request` |
+| `visual_kb_extract` | success | 0.34s | 243 动作段 → 958 raw kb_items |
+| `audio_kb_extract` | skipped | - | 上游传播 |
+| `merge_kb` | success | 0.03s | **4 条 ExpertTechPoint 入库**，`kb_extracted=TRUE` |
+
+**总耗时**：**30.9 秒**（视频本身 112s，吞吐比 3.6×）
+
+**入库的 4 条 ExpertTechPoint**（真实算法产出）：
+
+| dimension | action_type | [min, ideal, max] | 单位 | 置信度 |
+|-----------|------------|------|-----|--------|
+| contact_timing | backhand_push | [800, 900, 1000] | ms | 0.85 |
+| elbow_angle | backhand_push | [115.37°, 120.80°, 125.91°] | ° | 0.85 |
+| swing_trajectory | backhand_push | [0.42, 0.50, 0.57] | ratio | 0.85 |
+| weight_transfer | forehand_attack | [0.11, 0.14, 0.16] | ratio | 0.70 |
+
+**关键观察**：
+- 视频被 Feature-008 分类器归为 `forehand_attack`，但真实 action_classifier 在逐段分析时多数段落判为 `backhand_push`（0.85 置信度）—— 表明真实算法在运行，不是走 `job.tech_category` fallback
+- `merge_kb.degraded_mode=True`：只有视觉数据（音频关闭），kb_merger 走单源降级路径
+
+**发现并修复的 bug**：
+- `artifact_io._frame_to_dict()` 对 `pose_estimator` 返回的 `None` keypoint（低于 visibility 阈值）调 `asdict(None)` 抛 `TypeError`
+- 修复：加 `if kp is not None` 过滤 + 新增回归测试 `test_writer_skips_none_keypoints_from_pose_estimator`
+- CI 测试盲区原因：合成 fixture 只用 valid `Keypoint` 实例
+
+**踩过的坑（基础设施层，不属于 F-015 代码）**：
+1. Celery prefork pool + torch CUDA 初始化会使单进程 anon RSS 达 58 GB，撞 pod 64 GB memcg 限制被 OOM-killed。改 `--pool=threads` 后消除
+2. 长视频（10+ 分钟）需要分段处理避免单次 estimate_pose 内存峰值（历史 Feature-007 用 180s 分段 + ThreadPoolExecutor）—— 当前 Feature-015 没实现分段，建议作为后续 Feature 规划
 
 ---
 
@@ -75,3 +120,4 @@
 | 日期 | 变更 |
 |------|------|
 | 2026-04-25 | 初始版本：CI 自动化部分就位，部署部分列 TODO |
+| 2026-04-25 | 首次真实视频端到端烟测通过（SC-001 visual 实证），发现并修复 artifact_io None-keypoint bug |

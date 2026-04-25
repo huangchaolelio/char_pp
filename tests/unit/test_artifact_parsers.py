@@ -63,6 +63,32 @@ class TestPoseArtifactRoundTrip:
         assert roundtrip[0].keypoints[11].visibility == 0.88
         assert roundtrip[1].keypoints[12].y == 0.5
 
+    def test_writer_skips_none_keypoints_from_pose_estimator(self, tmp_path) -> None:
+        """Real pose_estimator assigns ``None`` for keypoints below the
+        visibility threshold. ``asdict()`` would crash on those, so the
+        writer must skip them silently (regression for Feature-015 smoke
+        test failure: "asdict() should be called on dataclass instances")."""
+        path = tmp_path / "pose.json"
+        frame = FramePoseResult(
+            frame_index=0,
+            timestamp_ms=0,
+            frame_confidence=0.7,
+            keypoints={
+                11: Keypoint(x=0.5, y=0.5, z=0.0, visibility=0.9),
+                12: None,  # below-threshold keypoint, as returned by pose_estimator
+                14: Keypoint(x=0.6, y=0.6, z=0.0, visibility=0.8),
+            },
+        )
+        # Must not raise.
+        write_pose_artifact(
+            path, video_path="/tmp/v.mp4", video_meta={}, backend="yolov8",
+            frames=[frame],
+        )
+        _, _, roundtrip = read_pose_artifact(path)
+        assert len(roundtrip) == 1
+        # Only the two non-None keypoints survived.
+        assert set(roundtrip[0].keypoints.keys()) == {11, 14}
+
 
 class TestPoseArtifactTolerantRead:
     def test_missing_top_level_keys_use_defaults(self, tmp_path) -> None:
