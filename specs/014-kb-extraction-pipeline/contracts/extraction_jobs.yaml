@@ -1,0 +1,198 @@
+openapi: 3.0.3
+info:
+  title: 知识库提取作业 API (Feature-014)
+  version: "1.0.0"
+  description: |
+    Extraction Job 级别的查询 / 重跑 / 列表接口。
+    作业提交入口仍为 Feature-013 的 `POST /api/v1/tasks/kb-extraction`（不在本 yaml 范围）。
+
+    实现 FR-003 / FR-005 / FR-023。
+
+paths:
+  /api/v1/extraction-jobs:
+    get:
+      summary: 作业列表（分页 + 状态过滤）
+      tags: [extraction-jobs]
+      parameters:
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [pending, running, success, failed]
+      responses:
+        "200":
+          description: 分页列表
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [total, page, page_size, items]
+                properties:
+                  total: { type: integer }
+                  page: { type: integer }
+                  page_size: { type: integer }
+                  items:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ExtractionJobSummary"
+
+  /api/v1/extraction-jobs/{job_id}:
+    get:
+      summary: 单作业详情（含子任务 + 冲突计数）
+      description: |
+        返回作业整体状态 + 6 个子任务的完整清单与执行时间线。
+        响应时间 p95 ≤ 1 秒（SC-001）。
+      tags: [extraction-jobs]
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 作业详情
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExtractionJobDetail"
+        "404":
+          description: 作业不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+
+  /api/v1/extraction-jobs/{job_id}/rerun:
+    post:
+      summary: 重跑失败作业
+      description: |
+        仅 status=failed 的作业可重跑。
+        重置所有 failed + skipped 子任务为 pending；success 子任务保留。
+        超过中间结果保留期时（24h/7d），返回 409 提示必须强制从头开始。
+      tags: [extraction-jobs]
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                force_from_scratch:
+                  type: boolean
+                  default: false
+                  description: 中间结果已过期时，设为 true 从 download_video 开始整条重跑
+      responses:
+        "202":
+          description: 重跑已入队
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [job_id, status, reset_steps]
+                properties:
+                  job_id: { type: string, format: uuid }
+                  status: { type: string, enum: [running] }
+                  reset_steps:
+                    type: array
+                    items: { type: string }
+                    description: 被重置为 pending 的子任务 step_type 列表
+        "409":
+          description: 作业状态不允许重跑 / 中间结果过期
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "404":
+          description: 作业不存在
+
+components:
+  schemas:
+    ExtractionJobSummary:
+      type: object
+      required: [job_id, cos_object_key, tech_category, status, created_at]
+      properties:
+        job_id: { type: string, format: uuid }
+        analysis_task_id: { type: string, format: uuid }
+        cos_object_key: { type: string }
+        tech_category: { type: string }
+        status:
+          type: string
+          enum: [pending, running, success, failed]
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+        conflict_count: { type: integer, minimum: 0 }
+
+    ExtractionJobDetail:
+      allOf:
+        - $ref: "#/components/schemas/ExtractionJobSummary"
+        - type: object
+          required: [steps, progress, error_message]
+          properties:
+            worker_hostname: { type: string, nullable: true }
+            enable_audio_analysis: { type: boolean }
+            audio_language: { type: string }
+            force: { type: boolean }
+            superseded_by_job_id: { type: string, format: uuid, nullable: true }
+            intermediate_cleanup_at: { type: string, format: date-time, nullable: true }
+            error_message: { type: string, nullable: true }
+            progress:
+              type: object
+              required: [total_steps, completed_steps, failed_steps, skipped_steps]
+              properties:
+                total_steps: { type: integer }
+                completed_steps: { type: integer }
+                failed_steps: { type: integer }
+                skipped_steps: { type: integer }
+                percent: { type: number, minimum: 0, maximum: 100 }
+            steps:
+              type: array
+              items: { $ref: "#/components/schemas/PipelineStep" }
+            rerun_hint:
+              type: string
+              nullable: true
+              description: 当作业 failed 时，返回运维提示：超过保留期请用 force_from_scratch
+
+    PipelineStep:
+      type: object
+      required: [id, step_type, status, depends_on]
+      properties:
+        id: { type: string, format: uuid }
+        step_type:
+          type: string
+          enum: [download_video, pose_analysis, audio_transcription, visual_kb_extract, audio_kb_extract, merge_kb]
+        status:
+          type: string
+          enum: [pending, running, success, failed, skipped]
+        depends_on:
+          type: array
+          items: { type: string }
+          description: 前置子任务 step_type 清单
+        retry_count: { type: integer, minimum: 0 }
+        error_message: { type: string, nullable: true }
+        output_summary: { type: object, nullable: true }
+        output_artifact_path: { type: string, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        duration_ms: { type: integer, nullable: true }
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, nullable: true }

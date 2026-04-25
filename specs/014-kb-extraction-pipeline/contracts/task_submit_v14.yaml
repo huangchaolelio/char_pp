@@ -1,0 +1,115 @@
+openapi: 3.0.3
+info:
+  title: 知识库提取 — 作业提交（Feature-014 扩展 Feature-013）
+  version: "1.0.0"
+  description: |
+    扩展 Feature-013 的 `POST /api/v1/tasks/kb-extraction` 端点。
+    Feature-013 的请求/响应结构保持 100% 向后兼容。
+    Feature-014 新增可选字段 `force`；接受后内部创建 ExtractionJob + 6 个 PipelineStep。
+
+    本 yaml 只展示 Feature-014 对现有端点的增量；其它字段（cos_object_key / enable_audio_analysis / audio_language 等）
+    参见 `specs/013-task-pipeline-redesign/contracts/task_submit.yaml`。
+
+paths:
+  /api/v1/tasks/kb-extraction:
+    post:
+      summary: 提交 KB 提取任务（Feature-014 扩展）
+      tags: [tasks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/KbExtractionSingleRequestV14"
+      responses:
+        "202":
+          description: 任务已接受，作业已创建
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/KbExtractionAcceptedV14"
+        "400":
+          description: 分类前置校验失败 / force 参数冲突
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "409":
+          description: 幂等冲突（已存在活跃作业，非 force）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorResponse" }
+        "429":
+          description: 通道容量满（QUEUE_FULL，与 Feature-013 一致）
+
+components:
+  schemas:
+    KbExtractionSingleRequestV14:
+      type: object
+      required: [cos_object_key]
+      properties:
+        cos_object_key:
+          type: string
+          description: 已分类的教练视频 COS 路径（由 Feature-013 ClassificationGateService 校验）
+        enable_audio_analysis:
+          type: boolean
+          default: true
+          description: 为 false 时 audio_transcription / audio_kb_extract 子任务直接 skipped
+        audio_language:
+          type: string
+          default: zh
+        force:
+          type: boolean
+          default: false
+          description: |
+            true 时允许对已成功的作业强制新建；旧作业标 superseded，旧冲突项 UPDATE superseded_by_job_id。
+            false（默认）时，已成功的活跃作业返回 409（DUPLICATE_TASK + existing_job_id）。
+
+    KbExtractionAcceptedV14:
+      type: object
+      required: [task_id, job_id, status, cos_object_key, steps_created]
+      properties:
+        task_id:
+          type: string
+          format: uuid
+          description: Feature-013 analysis_task_id（保留兼容）
+        job_id:
+          type: string
+          format: uuid
+          description: Feature-014 ExtractionJob ID（新）
+        status:
+          type: string
+          enum: [pending]
+        cos_object_key:
+          type: string
+        steps_created:
+          type: integer
+          description: 已创建的 PipelineStep 数（固定 6）
+        estimated_completion_seconds:
+          type: integer
+          description: 典型预估 5-40 分钟区间
+
+    ErrorResponse:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - CLASSIFICATION_REQUIRED
+                - DUPLICATE_TASK
+                - CHANNEL_DISABLED
+                - BATCH_TOO_LARGE
+                - QUEUE_FULL
+            message: { type: string }
+            details:
+              type: object
+              nullable: true
+              description: |
+                DUPLICATE_TASK 返回 existing_task_id + existing_job_id 便于客户端直接查询
+              properties:
+                existing_task_id: { type: string, format: uuid }
+                existing_job_id: { type: string, format: uuid }

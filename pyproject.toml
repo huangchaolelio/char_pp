@@ -34,6 +34,8 @@ dependencies = [
     "jieba>=0.42.1",
     # LLM API (Feature 005)
     "openai>=1.0.0",
+    # Retry policy for I/O-heavy pipeline steps (Feature 014)
+    "tenacity>=8.2.0",
 ]
 
 [project.optional-dependencies]

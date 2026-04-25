@@ -214,6 +214,64 @@ pending → processing → success
 
 ---
 
+## 知识库提取流水线（Feature 014）
+
+Feature-013 的 `kb_extraction` 通道原本只是占位 stub（翻转 `kb_extracted=True`）。Feature-014 将单条 KB 提取重建为**有向无环图（DAG）**，在 Worker 内部用 asyncio 并行调度 6 个子步骤。
+
+### DAG 定义
+
+```
+download_video
+    ├─▶ pose_analysis ──▶ visual_kb_extract ─┐
+    └─▶ audio_transcription ──▶ audio_kb_extract ─┤
+                                                  ▼
+                                              merge_kb
+```
+
+- **wave 1**：`download_video`（I/O）
+- **wave 2**：`pose_analysis` ∥ `audio_transcription`（CPU ∥ I/O）
+- **wave 3**：`visual_kb_extract` ∥ `audio_kb_extract`（CPU ∥ I/O）
+- **wave 4**：`merge_kb`（合并 + 冲突分离入 `kb_conflicts`）
+
+### 执行模型
+
+- 一次 Celery `extract_kb` 任务 = 一个 `ExtractionJob` = 1 个 `kb_extraction` 通道槽位（FR-015）
+- 作业内部并行由 `asyncio.gather` + 独立 `AsyncSession`/分支实现；**不新占通道名额**
+- 作业级超时 45 min（`extraction_job_timeout_seconds`），单步超时 10 min（`extraction_step_timeout_seconds`）
+- I/O 步骤（download/audio_transcription/audio_kb_extract）自动重试 3 次 × 30 s（tenacity）；CPU 步骤首次失败即 failed
+
+### 与 Feature-013 通道的关系
+
+- `AnalysisTask.extraction_job_id` 建立反向关联；`analysis_tasks` 行一对一映射 `extraction_jobs`
+- 通道计数按 `analysis_tasks.status ∈ {pending, processing}` → 按**作业数**，不随子步骤放大
+- rerun 复用原 `analysis_tasks.id`，不消耗新通道容量（FR-016）
+
+### 冲突分离
+
+- 视觉 + 音频两路提取同 dimension，差异 > 10% → 写入 `kb_conflicts` 表等待审核
+- **冲突项不进主 KB**（`expert_tech_points`），非冲突条目正常入库
+- `force=true` 覆盖旧作业时，旧冲突项自动打 `superseded_by_job_id`
+
+### 局部重跑
+
+- `POST /api/v1/extraction-jobs/{job_id}/rerun`（仅 failed 作业）
+- 默认只重置 failed + 下游 skipped 的 step；success step 保留 artifact + output_summary（FR-005）
+- `force_from_scratch=true` 重置 **所有** step（本地 artifact 已被清理时必须使用）
+
+### 中间结果保留
+
+- success 作业：24 小时（`extraction_success_retention_hours`）
+- failed 作业：7 天（`extraction_failed_retention_hours`）
+- Celery beat 每小时触发 `cleanup_intermediate_artifacts` 删除本地目录 + 清空 artifact path（output_summary 保留供审计）
+
+### Worker 孤儿恢复
+
+- Worker 启动时 `celeryd_after_setup` sweep：
+  - `analysis_tasks.status='processing' AND started_at < now-840s` → failed
+  - `pipeline_steps.status='running' AND started_at < now-600s` → failed + skipped 传播 + 作业/任务标 failed
+
+---
+
 ## 存储系统
 
 ### PostgreSQL

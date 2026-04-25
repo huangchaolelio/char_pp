@@ -33,10 +33,11 @@ setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --lo
 # Celery 任务
 
 - `classify_video`（`src.workers.classification_task`）：单条教练视频 → tech_category，静态路由到 `classification` 队列
-- `extract_kb`（`src.workers.kb_extraction_task`）：已分类视频 → 知识库条目，静态路由到 `kb_extraction` 队列
+- `extract_kb`（`src.workers.kb_extraction_task`）：已分类视频 → DAG Orchestrator（6 子步骤并行），静态路由到 `kb_extraction` 队列（Feature-014）
 - `diagnose_athlete`（`src.workers.athlete_diagnosis_task`）：运动员视频 → 偏差+建议，静态路由到 `diagnosis` 队列
 - `scan_cos_videos`（`src.workers.classification_task`）：COS 全量扫描，静态路由到 `default` 队列
-- `cleanup_expired_tasks`（`src.workers.housekeeping_task`）：周期性清理过期任务，beat 驱动，`default` 队列
+- `cleanup_expired_tasks`（`src.workers.housekeeping_task`）：周期性清理过期任务，beat 驱动每日一次，`default` 队列
+- `cleanup_intermediate_artifacts`（`src.workers.housekeeping_task`）：清理过期 KB 提取中间结果，beat 驱动每小时一次，`default` 队列（Feature-014）
 
 # 队列说明
 

@@ -2,6 +2,8 @@
 
 乒乓球 AI 智能教练系统 — 后端分析服务。最后更新：2026-04-24
 
+> **规范体系**：本文件是入口速查手册；分模块细则在 `.codebuddy/rules/*.md`，按文件路径自动加载。章节末尾的"📖"链接指向更深入的规范。
+
 ---
 
 ## 项目概述
@@ -35,22 +37,20 @@ charhuang_pp_cn/
 ├── src/
 │   ├── api/
 │   │   ├── main.py               # FastAPI 应用入口，端口 8080
-│   │   ├── routers/              # 9 个路由模块 (tasks, knowledge_base, videos,
-│   │   │                         #   classifications, coaches, standards,
-│   │   │                         #   diagnosis, teaching_tips, calibration)
-│   │   └── schemas/              # 7 个 Pydantic 请求/响应模型
-│   ├── models/                   # 19 个 SQLAlchemy ORM 模型
-│   ├── services/                 # 25 个业务服务模块
+│   │   ├── routers/              # 10 个路由模块（见 .codebuddy/rules/api.md）
+│   │   └── schemas/              # 8 个 Pydantic 请求/响应模型
+│   ├── models/                   # 22 个 SQLAlchemy ORM 模型
+│   ├── services/                 # 26 个业务服务模块 + kb_extraction_pipeline/ 子包
 │   ├── workers/
 │   │   ├── celery_app.py
 │   │   ├── classification_task.py    # 分类 + COS 扫描（Feature-013）
-│   │   ├── kb_extraction_task.py     # 教练视频知识库提取（Feature-013）
+│   │   ├── kb_extraction_task.py     # DAG Orchestrator 入口（Feature-014）
 │   │   ├── athlete_diagnosis_task.py # 运动员视频诊断（Feature-013）
-│   │   ├── housekeeping_task.py      # 周期清理过期任务
-│   │   └── orphan_recovery.py        # Worker 启动 sweep 超时任务
+│   │   ├── housekeeping_task.py      # 周期清理（过期任务 + 过期中间结果）
+│   │   └── orphan_recovery.py        # Worker 启动 sweep 孤儿任务 + 孤儿 pipeline_steps
 │   ├── db/
 │   │   ├── session.py            # async_session_factory
-│   │   └── migrations/           # Alembic 迁移（0001~0012）
+│   │   └── migrations/           # Alembic 迁移（0001~0013）
 │   ├── config/
 │   │   ├── video_classification.yaml  # 12 教练规则 + 21 类技术规则
 │   │   └── keywords/tech_hint_keywords.json
@@ -58,16 +58,20 @@ charhuang_pp_cn/
 ├── config/
 │   ├── coach_directory_map.json  # COS 目录名 → 教练姓名静态映射（20 条）
 │   └── tech_classification_rules.json  # 21 类技术关键词规则（顺序敏感）
-├── specs/                        # 功能规范（001~012，均已完成）
+├── specs/                        # Feature 规范（001~014）
 ├── docs/
 │   ├── architecture.md           # 技术架构文档
 │   └── features.md               # 产品功能文档
 ├── tests/                        # unit / integration / contract
-├── .codebuddy/skills/refresh-docs/ # 刷新文档 skill
+├── .codebuddy/
+│   ├── rules/                    # 分模块开发规范（api/code-style/cos/db/file-org/tech/workflow）
+│   └── skills/refresh-docs/      # 刷新文档 skill
 ├── pyproject.toml
 ├── alembic.ini
 └── .env                          # 不提交到 git
 ```
+
+📖 目录职责速查：[.codebuddy/rules/file-organization.md](.codebuddy/rules/file-organization.md)
 
 ---
 
@@ -78,21 +82,11 @@ charhuang_pp_cn/
 source /opt/conda/envs/coaching/bin/activate
 # 或直接指定：/opt/conda/envs/coaching/bin/python3.11
 
-# 启动 API 服务
-setsid uvicorn src.api.main:app --host 0.0.0.0 --port 8080 --reload &
+# 启动 API 服务（代码修改后必须重启，无热重载）
+pkill -f "uvicorn src.api.main" && setsid /opt/conda/envs/coaching/bin/uvicorn src.api.main:app --host 0.0.0.0 --port 8080 >> /tmp/uvicorn.log 2>&1 &
 
-# 重启服务（代码修改后必须重启，无热重载）
-pkill -f "uvicorn src.api.main" && setsid uvicorn src.api.main:app --host 0.0.0.0 --port 8080 &
-
-# 启动 Celery Worker（四队列物理隔离，Feature 013）
-# Worker 1：分类（concurrency=1，capacity 5）
-setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=1 -Q classification -n classification_worker@%h >> /tmp/celery_classification_worker.log 2>&1 &
-# Worker 2：知识库提取（concurrency=2，capacity 50）
-setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q kb_extraction -n kb_extraction_worker@%h >> /tmp/celery_kb_extraction_worker.log 2>&1 &
-# Worker 3：运动员诊断（concurrency=2，capacity 20）
-setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=2 -Q diagnosis -n diagnosis_worker@%h >> /tmp/celery_diagnosis_worker.log 2>&1 &
-# Worker 4：默认（COS 扫描 + 清理，concurrency=1）
-setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=1 -Q default -n default_worker@%h >> /tmp/celery_default_worker.log 2>&1 &
+# 启动 4 个 Celery Worker（物理隔离：classification / kb_extraction / diagnosis / default）
+# → 详细启动命令见 .codebuddy/rules/workflow.md
 
 # 数据库迁移
 alembic upgrade head
@@ -106,6 +100,8 @@ alembic revision --autogenerate -m "描述"
 # 安装依赖
 /opt/conda/envs/coaching/bin/pip install -e ".[dev]"
 ```
+
+📖 服务启动与 Celery 队列细节：[.codebuddy/rules/workflow.md](.codebuddy/rules/workflow.md)
 
 ---
 
@@ -125,97 +121,49 @@ alembic revision --autogenerate -m "描述"
 | `OPENAI_API_KEY` / `OPENAI_MODEL` | OpenAI fallback |
 | `WHISPER_MODEL` | 默认 `small`（中文）|
 | `POSE_BACKEND` | `auto`（YOLOv8 GPU → MediaPipe CPU）|
+| `ADMIN_RESET_TOKEN` | 管理员重置 / 通道热更新 token（Feature-013）|
+| `BATCH_MAX_SIZE` | 批量提交单次上限，默认 100（Feature-013）|
+| `ORPHAN_TASK_TIMEOUT_SECONDS` | 孤儿任务判定阈值，默认 840（Feature-013）|
+| `EXTRACTION_JOB_TIMEOUT_SECONDS` | KB 提取作业级超时，默认 2700（Feature-014）|
+| `EXTRACTION_STEP_TIMEOUT_SECONDS` | KB 提取单步超时，默认 600（Feature-014）|
+| `EXTRACTION_ARTIFACT_ROOT` | Worker 本地中间文件根目录，默认 `/tmp/coaching-advisor/jobs`（Feature-014）|
+| `EXTRACTION_SUCCESS_RETENTION_HOURS` | 成功作业中间结果保留，默认 24（Feature-014）|
+| `EXTRACTION_FAILED_RETENTION_HOURS` | 失败作业中间结果保留，默认 168（7 天，Feature-014）|
+
+📖 COS 存储与教练-目录映射：[.codebuddy/rules/cos-storage.md](.codebuddy/rules/cos-storage.md)
 
 ---
 
-## 代码风格
+## 代码风格（速览）
 
-### Python
-- **类型注解**：所有函数参数和返回值必须有类型注解（Python 3.10+ union 写法 `X | None`）
-- **异步优先**：数据库操作全部用 `async/await` + `async_session_factory`
-- **Pydantic v2**：Schema 模型用 `model_config = ConfigDict(...)`，禁止 v1 语法
-- **枚举**：技术类别用 `TECH_CATEGORIES` 枚举（定义在 `src/services/tech_classifier.py`），禁止用字符串字面量散落代码
-- **服务层**：业务逻辑放 `src/services/`，路由层只做参数校验和响应组装，不含业务逻辑
+- **类型注解**：`X | None`（Python 3.10+ union），禁止 `Optional[X]`
+- **异步优先**：DB 操作全部 `async/await`，禁止同步 session
+- **Pydantic v2**：`model_config = ConfigDict(...)`，禁止 v1 的 `class Config`
+- **分层**：业务逻辑只放 `src/services/`；路由层只做参数校验 + 响应组装；Celery 调 service 层
 - **错误处理**：服务层抛 `ValueError` / 自定义异常，路由层统一转 `HTTPException`
-- **日志**：用标准 `logging`，不用 `print`
+- **日志**：标准 `logging` 模块，禁止 `print`
 
-### 数据库
-- 所有模型继承 `Base`，表名蛇形命名
-- 关联关系必须有外键约束，索引声明在模型内
-- 迁移文件命名：`NNNN_描述.py`（Alembic 自动生成）
-- **不用同步 session**，统一用 `AsyncSession`
-
-### API
-- 版本前缀统一：`/api/v1/`
-- 路由文件对应一个资源（coaches, videos, tasks...），不混搭
-- 分页参数统一：`page` + `page_size`（默认 20，最大 100）
-- 响应体统一包装：成功返回数据本身或 `{"data": ..., "total": N}`
+📖 完整代码风格细则：[.codebuddy/rules/code-style.md](.codebuddy/rules/code-style.md)
+📖 API 设计规范（路由前缀、分页、错误码）：[.codebuddy/rules/api.md](.codebuddy/rules/api.md)
+📖 数据库模型与迁移规范：[.codebuddy/rules/database.md](.codebuddy/rules/database.md)
 
 ---
 
 ## 关键设计决策
 
-### 两张视频分类表并存
-| 表 | 来源 Feature | 维护者 | 说明 |
-|----|-------------|--------|------|
-| `video_classifications` | Feature-004 | `VideoClassifierService` + refresh API | 老表，yaml 规则分类，12 教练 |
-| `coach_video_classifications` | Feature-008 | `CosClassificationScanner` | 新表，COS 全量，21 类技术 + `kb_extracted` 字段 |
+- **两张视频分类表并存**：`video_classifications`（Feature-004，yaml 规则）+ `coach_video_classifications`（Feature-008，COS 全量 + `kb_extracted` 字段），**禁止合并**
+- **LLM 调用优先级**：Venus Proxy → OpenAI fallback，统一封装在 `src/services/llm_client.py`
+- **姿态估计降级**：`POSE_BACKEND=auto` 时 YOLOv8 GPU → MediaPipe CPU
+- **COS 扫描**：分页 `MaxKeys=1000` + 零字节文件跳过 + 增量比对 `cos_object_key`
+- **四队列物理隔离**（Feature-013）：classification / kb_extraction / diagnosis / default，一队列一 Worker
+- **KB 提取 DAG**（Feature-014）：`download → (pose ∥ audio_transcribe) → (visual_kb ∥ audio_kb) → merge_kb`；作业级占 1 个通道槽位，内部 asyncio 并行
 
-两表并行维护，不合并。
-
-### 教练-目录映射规则
-- 一个 COS 目录 = 一个独立教练实体
-- 同 base_name 的多目录：第 1 个保持原名，后续加 `_2`、`_3` 后缀
-- bio 来源：目录名本身
-- 静态映射：`config/coach_directory_map.json`（20 条目录 → 姓名）
-
-### LLM 调用优先级
-Venus Proxy（`VENUS_TOKEN`）优先 → OpenAI fallback。两者共用 OpenAI 接口格式。
-
-### 姿态估计降级策略
-`auto` 模式：YOLOv8 GPU（首选，COCO AP≈50.4）→ MediaPipe CPU（fallback，33 关键点）
-
-### COS 视频扫描
-- 全量：`COS_VIDEO_ALL_COCAH` 前缀分页列举（`MaxKeys=1000`，循环 `NextMarker`）
-- 增量：对比已存在 `cos_object_key`，只处理新增
-- 零字节文件（目录占位符）自动跳过
+📖 分类与知识库工作流细节：[.codebuddy/rules/tech-classification.md](.codebuddy/rules/tech-classification.md)
+📖 LLM / 姿态估计 / Celery 任务 / 队列：[.codebuddy/rules/workflow.md](.codebuddy/rules/workflow.md)
 
 ---
 
-## 文件组织规则
-
-- **新脚本/分析文件**：放 `specs/NNN-xxx/scripts/` 或 `specs/NNN-xxx/research.md`，不得散落根目录
-- **临时调试文件**：仅用 `/tmp/`，不提交 git
-- **新 Feature 规范**：遵循 `specs/speckit.constitution.md` 结构（spec.md + plan.md + data-model.md + tasks.md）
-- **文档**：放 `docs/`，用 `/refresh-docs` skill 自动更新
-
----
-
-## 21 类技术分类（TECH_CATEGORIES）
-
-```
-forehand_push_long       forehand_attack          forehand_topspin
-forehand_topspin_backspin forehand_loop_fast      forehand_loop_high
-forehand_flick           backhand_attack          backhand_topspin
-backhand_topspin_backspin backhand_flick          backhand_push
-serve                    receive                   footwork
-forehand_backhand_transition  defense             penhold_reverse
-stance_posture           general                   unclassified
-```
-
-> `tech_classification_rules.json` 规则**顺序敏感**：精细类（如 `forehand_topspin_backspin`）必须在通用类（如 `forehand_topspin`）之前。
-
----
-
-## 知识库提取工作流
-
-1. 查询待处理视频：`GET /api/v1/classifications?tech_category=X&kb_extracted=false`
-2. 提交任务：`POST /api/v1/tasks`（expert 类型）
-3. 任务完成后标记：`PATCH /api/v1/classifications/{id}` 设 `kb_extracted=true`
-
----
-
-## 活跃 Features（001~013，均已完成）
+## 活跃 Features（001~014，均已完成）
 
 | # | Feature | 核心 API |
 |---|---------|----------|
@@ -232,6 +180,10 @@ stance_posture           general                   unclassified
 | 011 | 运动员动作诊断 | `POST /diagnosis`, `GET /diagnosis/{id}` |
 | 012 | 全量任务查询接口 | `GET /tasks?page=1&page_size=20&status=X` |
 | 013 | 任务管道重新设计 | `POST /tasks/{classification|kb-extraction|diagnosis}`, `GET /task-channels`, `PATCH /admin/channels/{type}`, `POST /admin/reset-task-pipeline` |
+| 014 | 知识库提取流水线化（DAG + 并行） | `GET /extraction-jobs`, `GET /extraction-jobs/{id}`, `POST /extraction-jobs/{id}/rerun`（扩展 `POST /tasks/kb-extraction`）|
+
+📖 产品功能详情：[docs/features.md](docs/features.md)
+📖 技术架构：[docs/architecture.md](docs/architecture.md)
 
 ---
 

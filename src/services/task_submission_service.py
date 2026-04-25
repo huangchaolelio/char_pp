@@ -278,6 +278,30 @@ class TaskSubmissionService:
             to_enqueue.append((new_id, item))
             remaining -= 1
 
+            # Feature 014: for kb_extraction, seed an ExtractionJob + 6 PipelineSteps
+            # in the SAME transaction so the Celery worker can always resolve
+            # ``analysis_tasks.extraction_job_id`` as soon as it picks the task up.
+            if task_type == TaskType.kb_extraction:
+                from src.services.kb_extraction_pipeline.orchestrator import (
+                    Orchestrator as _F14Orchestrator,
+                )
+
+                await _F14Orchestrator.create_job(
+                    session,
+                    analysis_task_id=new_id,
+                    cos_object_key=item.cos_object_key or "",
+                    tech_category=(item.task_kwargs or {}).get(
+                        "tech_category", "unclassified"
+                    ),
+                    enable_audio_analysis=bool(
+                        (item.task_kwargs or {}).get("enable_audio_analysis", True)
+                    ),
+                    audio_language=str(
+                        (item.task_kwargs or {}).get("audio_language", "zh")
+                    ),
+                    force=bool((item.task_kwargs or {}).get("force", False)),
+                )
+
         await session.commit()
 
         # Enqueue Celery tasks AFTER commit — if a row exists but enqueue fails,

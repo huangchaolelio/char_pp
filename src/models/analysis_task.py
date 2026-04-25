@@ -116,6 +116,15 @@ class AnalysisTask(Base):
         index=True,
     )
 
+    # Feature 014 — KB extraction pipeline: links a kb_extraction task to its
+    # DAG ``extraction_jobs`` row (1:1). NULL for non-kb_extraction rows and
+    # for legacy Feature-013 stub rows created before Feature-014.
+    extraction_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("extraction_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
     # Relationships
     coach: Mapped[Optional["Coach"]] = relationship(
         "Coach",

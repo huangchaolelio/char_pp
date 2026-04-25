@@ -72,3 +72,93 @@ def cleanup_expired_tasks() -> dict:
     count = asyncio.run(_run_cleanup())
     logger.info("Data retention cleanup: physically deleted %d expired tasks", count)
     return {"deleted_count": count}
+
+
+@shared_task(
+    name="src.workers.housekeeping_task.cleanup_intermediate_artifacts",
+    bind=False,
+)
+def cleanup_intermediate_artifacts() -> dict:
+    """Feature 014: remove local artifact dirs whose retention window expired.
+
+    For each ``extraction_jobs`` row with
+    ``intermediate_cleanup_at < now()``:
+      - Delete ``<extraction_artifact_root>/<job_id>/`` on the local FS.
+      - NULL out ``pipeline_steps.output_artifact_path`` so a later rerun
+        correctly takes the force_from_scratch branch (the file is gone).
+      - NULL out ``extraction_jobs.intermediate_cleanup_at`` so we don't
+        process the row again.
+
+    The ``output_summary`` JSONB is kept — it's small and useful for audits.
+    """
+    import shutil
+    from pathlib import Path
+
+    from sqlalchemy import update as _sql_update
+
+    async def _run() -> dict:
+        settings = get_settings()
+        root = Path(settings.extraction_artifact_root)
+        factory = _make_session_factory()
+
+        now = datetime.now(tz=timezone.utc)
+
+        async with factory() as session:
+            from src.models.extraction_job import ExtractionJob
+            from src.models.pipeline_step import PipelineStep
+            from sqlalchemy import select as _select
+
+            expired = (
+                await session.execute(
+                    _select(ExtractionJob.id).where(
+                        ExtractionJob.intermediate_cleanup_at.is_not(None),
+                        ExtractionJob.intermediate_cleanup_at <= now,
+                    )
+                )
+            ).scalars().all()
+
+            dirs_removed = 0
+            paths_cleared = 0
+            for job_id in expired:
+                job_dir = root / str(job_id)
+                if job_dir.exists():
+                    try:
+                        shutil.rmtree(job_dir)
+                        dirs_removed += 1
+                    except OSError as exc:
+                        logger.warning(
+                            "cleanup_intermediate_artifacts: failed to rm %s: %s",
+                            job_dir, exc,
+                        )
+
+                res = await session.execute(
+                    _sql_update(PipelineStep)
+                    .where(
+                        PipelineStep.job_id == job_id,
+                        PipelineStep.output_artifact_path.is_not(None),
+                    )
+                    .values(output_artifact_path=None)
+                )
+                paths_cleared += res.rowcount or 0
+
+                await session.execute(
+                    _sql_update(ExtractionJob)
+                    .where(ExtractionJob.id == job_id)
+                    .values(intermediate_cleanup_at=None)
+                )
+
+            await session.commit()
+            return {
+                "expired_jobs_processed": len(expired),
+                "dirs_removed": dirs_removed,
+                "artifact_paths_cleared": paths_cleared,
+            }
+
+    result = asyncio.run(_run())
+    logger.info(
+        "cleanup_intermediate_artifacts: processed=%s dirs_rm=%s paths_cleared=%s",
+        result["expired_jobs_processed"],
+        result["dirs_removed"],
+        result["artifact_paths_cleared"],
+    )
+    return result

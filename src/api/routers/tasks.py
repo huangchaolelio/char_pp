@@ -1125,7 +1125,16 @@ async def submit_kb_extraction(
             },
         )
 
+    # Feature 014: carry tech_category + force into task_kwargs so the
+    # submission service can seed the ExtractionJob + 6 PipelineSteps in the
+    # same DB transaction as the analysis_tasks INSERT.
+    tech_category = await gate.get_tech_category(db, body.cos_object_key)
     item = _f13_submission_from_kb_req(body)
+    item.task_kwargs = {
+        **item.task_kwargs,
+        "tech_category": tech_category or "unclassified",
+        "force": body.force,
+    }
     return await _f13_submit(
         db, _F13TaskType.kb_extraction, [item], submitted_via="single"
     )
@@ -1207,7 +1216,17 @@ async def submit_kb_extraction_batch(
     gate_rejections: list[_F13SubmissionItem] = []
     for idx, req in enumerate(body.items):
         if await gate.check_classified(db, req.cos_object_key):
-            classified_items.append(_f13_submission_from_kb_req(req))
+            item = _f13_submission_from_kb_req(req)
+            # Feature 014: inject tech_category + force so submit_batch can
+            # seed ExtractionJob rows in the same transaction.
+            item.task_kwargs = {
+                **item.task_kwargs,
+                "tech_category": (
+                    await gate.get_tech_category(db, req.cos_object_key)
+                ) or "unclassified",
+                "force": getattr(req, "force", False),
+            }
+            classified_items.append(item)
             classified_original_index.append(idx)
         else:
             current = await gate.get_tech_category(db, req.cos_object_key)

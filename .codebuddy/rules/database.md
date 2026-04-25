@@ -28,4 +28,4 @@ paths: src/models/**/*.py, src/db/**/*.py
 
 # 迁移版本
 
-当前最新迁移：`0011`。新增模型必须创建对应迁移文件后才能上线。
+当前最新迁移：`0013_kb_extraction_pipeline`（Feature-014，新增 `extraction_jobs` / `pipeline_steps` / `kb_conflicts` 三表 + `analysis_tasks.extraction_job_id` 列）。新增模型必须创建对应迁移文件后才能上线。

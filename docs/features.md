@@ -18,6 +18,7 @@
 - [Feature-011 运动员动作诊断](#feature-011-运动员动作诊断)
 - [Feature-012 全量任务查询接口](#feature-012-全量任务查询接口)
 - [Feature-013 任务管道重新设计](#feature-013-任务管道重新设计)
+- [Feature-014 知识库提取流水线化](#feature-014-知识库提取流水线化)
 
 ---
 
@@ -447,3 +448,64 @@ python specs/013-task-pipeline-redesign/scripts/reset_task_pipeline.py --dry-run
 # 执行重置
 python specs/013-task-pipeline-redesign/scripts/reset_task_pipeline.py --confirm
 ```
+
+---
+
+## Feature-014 知识库提取流水线化
+
+**状态：已完成（US1–US5 + 阶段 8 完善）**  
+**规范：** `specs/014-kb-extraction-pipeline/`
+
+### 功能描述
+
+将 Feature-013 遗留的 `kb_extraction` 最小 stub 重建为**有向无环图（DAG）流水线**：一次 KB 提取作业自动拆解为 6 个子任务，无依赖分支并行执行，补齐 Feature-002 遗失的"视频直提专业知识库"能力（姿态序列 → 视觉路 + 音频讲解 → LLM 抽取 → 冲突分离入审核表）。
+
+### 核心能力
+
+- **DAG 子任务编排**：`download_video → (pose ∥ audio_transcribe) → (visual_kb ∥ audio_kb) → merge_kb`
+- **作业级通道计数**：一作业 = 1 个 `kb_extraction` 槽位，子步骤并行**不外扩**通道预算（FR-015）
+- **双路知识提取 + 冲突分离**：视觉路 + 音频路两路产出 → 差异 >10% 进独立 `kb_conflicts` 表，非冲突条目进 `expert_tech_points`
+- **降级模式**：音频路失败不阻塞主流程，`merge_kb` 仅合入视觉条目
+- **局部重跑**：`POST /extraction-jobs/{id}/rerun` 只重置 failed + 下游 skipped 步骤，success step 的 artifact + output_summary 直接复用
+- **force 覆盖**：`force=true` 覆盖已 success 作业时，旧冲突项自动标 `superseded_by_job_id` 隐藏审核队列
+- **分层超时**：作业级 45 min + 单步级 10 min（`asyncio.wait_for`）
+- **分层重试**：I/O 步骤（download/audio 转写/audio_kb LLM）3 次 × 30 s（tenacity）；CPU 步骤不重试
+- **中间结果保留期**：success 24 h / failed 7 天；Celery beat 每小时清理过期
+- **孤儿步骤恢复**：Worker 启动 sweep `pipeline_steps.status='running' AND started_at < now-600s` → failed + 传播 skipped + 作业标 failed
+
+### 关键 API
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `POST` | `/api/v1/tasks/kb-extraction` | 提交单条 KB 提取（Feature-013 保留，内部扩展创建 ExtractionJob + 6 steps） |
+| `GET` | `/api/v1/extraction-jobs` | 分页列表（`page/page_size/status` 过滤，page_size 上限 100） |
+| `GET` | `/api/v1/extraction-jobs/{job_id}` | 单作业详情（子任务清单 + 依赖图 + 进度 + 冲突计数） |
+| `POST` | `/api/v1/extraction-jobs/{job_id}/rerun` | 重跑失败作业（可选 `force_from_scratch`） |
+
+### 配置项（.env）
+
+| 键 | 默认值 | 说明 |
+|-----|--------|------|
+| `EXTRACTION_JOB_TIMEOUT_SECONDS` | 2700 | 作业级超时（45 min） |
+| `EXTRACTION_STEP_TIMEOUT_SECONDS` | 600 | 单步超时（10 min） |
+| `EXTRACTION_ARTIFACT_ROOT` | `/tmp/coaching-advisor/jobs` | Worker 本地中间文件根目录 |
+| `EXTRACTION_SUCCESS_RETENTION_HOURS` | 24 | 成功作业中间结果保留 |
+| `EXTRACTION_FAILED_RETENTION_HOURS` | 168 | 失败作业中间结果保留（7 天） |
+
+### 数据模型
+
+- `extraction_jobs`：作业顶级容器（status / worker_hostname / force / superseded_by_job_id / intermediate_cleanup_at）
+- `pipeline_steps`：6 行/作业，step_type 枚举 + status + output_summary JSONB + output_artifact_path
+- `kb_conflicts`：维度粒度冲突表（visual_value / audio_value / resolution 字段）
+- `analysis_tasks` 新增 `extraction_job_id` FK（SET NULL on delete）
+
+### 冲突审核协议
+
+- `kb_conflicts.resolved_at IS NULL AND superseded_by_job_id IS NULL` → 待审核
+- 审核字段预留：`resolved_by` / `resolution` (`use_visual` | `use_audio` | `use_custom` | `reject_both`) / `resolution_value`
+- 审核 UI/API 不在本 Feature 范围，仅提供存储层
+
+### 新 Celery beat
+
+- `cleanup-extraction-artifacts`：每小时一次，扫描 `extraction_jobs.intermediate_cleanup_at <= now()`，删本地目录 + 清空 `output_artifact_path`
+

@@ -63,12 +63,18 @@ def create_celery_app() -> Celery:
             "src.workers.kb_extraction_task.extract_kb": {"queue": "kb_extraction"},
             "src.workers.athlete_diagnosis_task.diagnose_athlete": {"queue": "diagnosis"},
             "src.workers.housekeeping_task.cleanup_expired_tasks": {"queue": "default"},
+            "src.workers.housekeeping_task.cleanup_intermediate_artifacts": {"queue": "default"},
         },
         # Beat schedule for data retention cleanup
         beat_schedule={
             "cleanup-expired-tasks": {
                 "task": "src.workers.housekeeping_task.cleanup_expired_tasks",
                 "schedule": 86400,  # daily
+            },
+            # Feature 014: remove local artifact dirs whose retention expired.
+            "cleanup-extraction-artifacts": {
+                "task": "src.workers.housekeeping_task.cleanup_intermediate_artifacts",
+                "schedule": 3600,  # hourly
             },
         },
     )

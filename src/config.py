@@ -92,6 +92,13 @@ class Settings(BaseSettings):
     orphan_task_timeout_seconds: int = 840       # 2 x task_time_limit(420s); processing > this -> orphan recovered
     channel_config_cache_ttl_s: int = 30         # TTL for TaskChannelService config cache (SC-004)
 
+    # Feature 014 — KB extraction pipeline (DAG + parallel)
+    extraction_job_timeout_seconds: int = 2700        # 45min job-level timeout (FR-020)
+    extraction_step_timeout_seconds: int = 600        # 10min per-step timeout (FR-020)
+    extraction_artifact_root: str = "/tmp/coaching-advisor/jobs"  # intermediate FS root (R3)
+    extraction_success_retention_hours: int = 24      # cleanup after success (Q5)
+    extraction_failed_retention_hours: int = 168      # 7d cleanup after failure (Q5)
+
 
 @lru_cache
 def get_settings() -> Settings:

@@ -1,15 +1,12 @@
-"""Celery task: knowledge-base extraction for a classified coach video (Feature 013).
+"""Celery task: knowledge-base extraction for a classified coach video.
 
-Routed to the ``kb_extraction`` queue (capacity 50, concurrency 2).
+Feature 013 entry point; Feature 014 makes it a thin wrapper that delegates
+all DAG work to :class:`Orchestrator`.
 
-Flow:
-  1. Mark ``analysis_tasks`` row as ``processing`` with ``started_at=now()``.
-  2. Delegate to ``KbExtractionService.extract_knowledge`` (wired in US3/T038/T039).
-  3. On completion, mark ``success`` and store the resulting KB version (when applicable).
-  4. On failure, mark ``failed`` and surface the truncated error message.
-
-The heavy lifting (video download, audio transcription, LLM tip extraction) lives
-in the service layer; the Celery task here is intentionally thin.
+Routed to the ``kb_extraction`` queue (capacity 50, concurrency 2). A single
+Celery task = one *ExtractionJob* = one slot on the channel. The orchestrator
+fans out into 6 sub-steps via asyncio internally; the channel accounting
+stays on the job level (FR-015).
 """
 
 from __future__ import annotations
@@ -20,7 +17,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from celery import shared_task
-from sqlalchemy import update
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 logger = logging.getLogger(__name__)
@@ -37,46 +34,50 @@ def _make_session_factory():
         max_overflow=2,
         pool_pre_ping=True,
     )
-    return async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False, autoflush=False)
+    return async_sessionmaker(
+        engine, class_=AsyncSession, expire_on_commit=False, autoflush=False
+    )
 
 
-async def _run_extract(
-    task_id: str,
-    cos_object_key: str,
-    enable_audio_analysis: bool,
-    audio_language: str,
-) -> dict:
+async def _run_extract(task_id: str, cos_object_key: str) -> dict:
+    """Drive the F-014 Orchestrator against the ExtractionJob for this task_id."""
     from src.models.analysis_task import AnalysisTask, TaskStatus
+    from src.models.extraction_job import ExtractionJob, ExtractionJobStatus
+    from src.services.kb_extraction_pipeline.orchestrator import Orchestrator
 
     factory = _make_session_factory()
     async with factory() as session:
+        # Flip the parent analysis_tasks row to processing.
         await session.execute(
             update(AnalysisTask)
             .where(AnalysisTask.id == UUID(task_id))
-            .values(status=TaskStatus.processing, started_at=datetime.now(timezone.utc))
+            .values(
+                status=TaskStatus.processing,
+                started_at=datetime.now(timezone.utc),
+            )
         )
         await session.commit()
 
-        try:
-            from src.services.kb_extraction_service import KbExtractionService
-
-            svc = KbExtractionService()
-            summary = await svc.extract_knowledge(
-                session=session,
-                cos_object_key=cos_object_key,
-                enable_audio_analysis=enable_audio_analysis,
-                audio_language=audio_language,
-            )
-
+        # Resolve the ExtractionJob linked to this task.
+        job_id = (
             await session.execute(
-                update(AnalysisTask)
-                .where(AnalysisTask.id == UUID(task_id))
-                .values(status=TaskStatus.success, completed_at=datetime.now(timezone.utc))
+                select(AnalysisTask.extraction_job_id).where(
+                    AnalysisTask.id == UUID(task_id)
+                )
             )
-            await session.commit()
-            return {"task_id": task_id, "status": "success", **summary}
+        ).scalar_one_or_none()
+        if job_id is None:
+            raise RuntimeError(
+                f"analysis_task {task_id} has no extraction_job_id "
+                "(Feature-014 create_job was not called by the submission router)"
+            )
 
-        except Exception as exc:  # noqa: BLE001
+        orchestrator = Orchestrator()
+        try:
+            final = await orchestrator.run(session, job_id)
+        except Exception as exc:  # noqa: BLE001 — record then re-raise
+            logger.exception("orchestrator crashed for job=%s err=%s", job_id, exc)
+            # Mark the parent analysis task failed so the channel frees up.
             await session.execute(
                 update(AnalysisTask)
                 .where(AnalysisTask.id == UUID(task_id))
@@ -89,13 +90,43 @@ async def _run_extract(
             await session.commit()
             raise
 
+        # Mirror the terminal job state onto the analysis_tasks row so the
+        # Feature-013 channel service stops counting it as processing.
+        if final == ExtractionJobStatus.success:
+            parent_status = TaskStatus.success
+        else:
+            parent_status = TaskStatus.failed
+        # Pull the job's error_message so the parent row surfaces it too.
+        error_message = (
+            await session.execute(
+                select(ExtractionJob.error_message).where(ExtractionJob.id == job_id)
+            )
+        ).scalar_one_or_none()
+        await session.execute(
+            update(AnalysisTask)
+            .where(AnalysisTask.id == UUID(task_id))
+            .values(
+                status=parent_status,
+                completed_at=datetime.now(timezone.utc),
+                error_message=error_message,
+            )
+        )
+        await session.commit()
+
+        return {
+            "task_id": task_id,
+            "job_id": str(job_id),
+            "status": final.value,
+        }
+
 
 @shared_task(
     bind=True,
     name="src.workers.kb_extraction_task.extract_kb",
-    max_retries=2,
-    default_retry_delay=30,
+    max_retries=0,  # F-014: retries are handled inside the orchestrator.
     acks_late=True,
+    soft_time_limit=2800,  # job timeout (2700s) + 100s grace
+    time_limit=2820,
 )
 def extract_kb(
     self,
@@ -104,23 +135,29 @@ def extract_kb(
     enable_audio_analysis: bool = True,
     audio_language: str = "zh",
 ) -> dict:
-    """Extract knowledge base entries from a classified coach video.
+    """Extract knowledge-base entries from a classified coach video.
 
-    Pre-condition: ``coach_video_classifications.tech_category`` for this
-    ``cos_object_key`` must be non-null and != 'unclassified' (enforced at
-    submission time by ``ClassificationGateService``).
+    Pre-conditions:
+      - ``coach_video_classifications.tech_category`` must be non-null and
+        != 'unclassified' for this ``cos_object_key`` (enforced by the
+        submission router's ClassificationGateService).
+      - ``analysis_tasks.extraction_job_id`` must already be populated by the
+        submission router calling ``Orchestrator.create_job`` in the same
+        transaction as the INSERT into ``analysis_tasks``.
     """
+    # ``enable_audio_analysis`` / ``audio_language`` are persisted on the
+    # ExtractionJob row by the submission router; we accept them as kwargs
+    # only for backwards compatibility with the Feature-013 call signature.
+    _ = (enable_audio_analysis, audio_language)
     logger.info(
-        "extract_kb started: task_id=%s cos_object_key=%s audio=%s lang=%s celery_task=%s",
-        task_id, cos_object_key, enable_audio_analysis, audio_language, self.request.id,
+        "extract_kb started: task_id=%s cos_object_key=%s celery_task=%s",
+        task_id,
+        cos_object_key,
+        self.request.id,
     )
     try:
-        return asyncio.run(
-            _run_extract(task_id, cos_object_key, enable_audio_analysis, audio_language)
-        )
+        return asyncio.run(_run_extract(task_id, cos_object_key))
     except Exception as exc:
         logger.exception("extract_kb failed: task_id=%s error=%s", task_id, exc)
-        try:
-            raise self.retry(exc=exc)
-        except self.MaxRetriesExceededError:
-            return {"task_id": task_id, "status": "failed", "error": str(exc)}
+        # No Celery-level retry — orchestrator already persisted the failure.
+        return {"task_id": task_id, "status": "failed", "error": str(exc)[:2000]}

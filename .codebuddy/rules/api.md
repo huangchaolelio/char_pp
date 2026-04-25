@@ -10,7 +10,7 @@ paths: src/api/**/*.py
 - 分页参数统一：`page`（从 1 开始）+ `page_size`（默认 20，最大 100）
 - 响应体统一包装：成功返回数据本身，或 `{"data": [...], "total": N}`
 
-# 现有路由模块（9 个）
+# 现有路由模块（10 个）
 
 | 文件 | 前缀 | 说明 |
 |------|------|------|
@@ -23,6 +23,7 @@ paths: src/api/**/*.py
 | `diagnosis.py` | `/api/v1/diagnosis` | 运动员同步诊断（60s 超时，Feature-011） |
 | `teaching_tips.py` | `/api/v1/teaching-tips` | 教学建议（Feature-005） |
 | `calibration.py` | `/api/v1/calibration` | 多教练知识库对比（Feature-006） |
+| `extraction_jobs.py` | `/api/v1/extraction-jobs` | KB 提取作业 DAG 状态查询与重跑（Feature-014） |
 
 # 错误响应
 
