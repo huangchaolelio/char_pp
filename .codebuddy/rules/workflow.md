@@ -28,6 +28,9 @@ setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --lo
 
 # Worker 4：默认队列（COS 扫描 + 清理，并发=1）
 setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=1 -Q default -n default_worker@%h >> /tmp/celery_default_worker.log 2>&1 &
+
+# Worker 5（Feature-016）：视频预处理队列（并发=3，含 ffmpeg + COS 上传）
+setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --loglevel=info --concurrency=3 -Q preprocessing -n preprocessing_worker@%h >> /tmp/celery_preprocessing_worker.log 2>&1 &
 ```
 
 # Celery 任务
@@ -37,7 +40,8 @@ setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --lo
 - `diagnose_athlete`（`src.workers.athlete_diagnosis_task`）：运动员视频 → 偏差+建议，静态路由到 `diagnosis` 队列
 - `scan_cos_videos`（`src.workers.classification_task`）：COS 全量扫描，静态路由到 `default` 队列
 - `cleanup_expired_tasks`（`src.workers.housekeeping_task`）：周期性清理过期任务，beat 驱动每日一次，`default` 队列
-- `cleanup_intermediate_artifacts`（`src.workers.housekeeping_task`）：清理过期 KB 提取中间结果，beat 驱动每小时一次，`default` 队列（Feature-014）
+- `cleanup_intermediate_artifacts`（`src.workers.housekeeping_task`）：清理过期 KB 提取中间结果 + 预处理本地温缓存（Feature-016 T041），beat 驱动每小时一次，`default` 队列
+- `preprocess_video`（`src.workers.preprocessing_task`）：视频下载 → probe → 转码标准化 → 分段 → 并发上传 COS（Feature-016）
 
 # 队列说明
 
@@ -46,7 +50,8 @@ setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app worker --lo
 | `classification` | classification_worker | 1 | 5 | `classify_video`（单条分类） |
 | `kb_extraction` | kb_extraction_worker | 2 | 50 | `extract_kb`（需 tech_category 非空） |
 | `diagnosis` | diagnosis_worker | 2 | 20 | `diagnose_athlete` |
-| `default` | default_worker | 1 | — | `scan_cos_videos` + `cleanup_expired_tasks` |
+| `default` | default_worker | 1 | — | `scan_cos_videos` + `cleanup_expired_tasks` + `cleanup_intermediate_artifacts` |
+| `preprocessing` | preprocessing_worker | 3 | 20 | `preprocess_video`（Feature-016） |
 
 > 通道容量/并发可在 `task_channel_configs` 表中热更新（PATCH `/api/v1/admin/channels/{task_type}`），配置 30 秒内生效。
 

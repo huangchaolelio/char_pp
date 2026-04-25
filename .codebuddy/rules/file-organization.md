@@ -11,7 +11,7 @@ alwaysApply: true
 
 # 新 Feature 编号规则
 
-下一个 Feature 编号为 `016`（001–015 均已完成）。Feature 目录命名格式：`specs/NNN-kebab-case-name/`
+下一个 Feature 编号为 `017`（001–016 均已完成）。Feature 目录命名格式：`specs/NNN-kebab-case-name/`
 
 # 目录职责速查
 
