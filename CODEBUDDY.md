@@ -1,6 +1,6 @@
 # charhuang_pp_cn 开发指南
 
-乒乓球 AI 智能教练系统 — 后端分析服务。最后更新：2026-04-24
+乒乓球 AI 智能教练系统 — 后端分析服务。最后更新：2026-04-25
 
 > **规范体系**：本文件是入口速查手册；分模块细则在 `.codebuddy/rules/*.md`，按文件路径自动加载。章节末尾的"📖"链接指向更深入的规范。
 
@@ -163,7 +163,7 @@ alembic revision --autogenerate -m "描述"
 
 ---
 
-## 活跃 Features（001~014，均已完成）
+## 活跃 Features（001~015，均已完成）
 
 | # | Feature | 核心 API |
 |---|---------|----------|
@@ -181,6 +181,7 @@ alembic revision --autogenerate -m "描述"
 | 012 | 全量任务查询接口 | `GET /tasks?page=1&page_size=20&status=X` |
 | 013 | 任务管道重新设计 | `POST /tasks/{classification|kb-extraction|diagnosis}`, `GET /task-channels`, `PATCH /admin/channels/{type}`, `POST /admin/reset-task-pipeline` |
 | 014 | 知识库提取流水线化（DAG + 并行） | `GET /extraction-jobs`, `GET /extraction-jobs/{id}`, `POST /extraction-jobs/{id}/rerun`（扩展 `POST /tasks/kb-extraction`）|
+| 015 | 真实算法接入（知识库提取流水线） | 无新 API；4 个 executor 接入 Feature-002 算法；`scripts/run_reference_regression.py` 回归工具 |
 
 📖 产品功能详情：[docs/features.md](docs/features.md)
 📖 技术架构：[docs/architecture.md](docs/architecture.md)

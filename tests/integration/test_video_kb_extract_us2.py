@@ -155,6 +155,53 @@ def _install_fake_cos(monkeypatch) -> None:
     )
 
 
+def _install_fake_upstream_executors(monkeypatch) -> None:
+    """Stub pose_analysis and audio_transcription so DAG tests don't need real
+    video content. The downstream visual/audio kb executors are patched
+    separately via ``_patch_visual_and_audio_items``."""
+    from src.models.pipeline_step import PipelineStepStatus
+    from src.services.kb_extraction_pipeline.step_executors import (
+        pose_analysis,
+        audio_transcription,
+    )
+
+    async def _fake_pose(session, job, step):
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "keypoints_frame_count": 0,
+                "detected_segments": 0,
+                "backend": "test_fixture",
+            },
+            "output_artifact_path": None,
+        }
+
+    async def _fake_audio_trans(session, job, step):
+        if not job.enable_audio_analysis:
+            return {
+                "status": PipelineStepStatus.skipped,
+                "output_summary": {
+                    "skipped": True,
+                    "skip_reason": "disabled_by_request",
+                    "whisper_model": None,
+                },
+                "output_artifact_path": None,
+            }
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "whisper_model": "test",
+                "language_detected": "zh",
+                "transcript_chars": 0,
+                "skipped": False,
+                "skip_reason": None,
+            },
+            "output_artifact_path": None,
+        }
+
+    monkeypatch.setattr(pose_analysis, "execute", _fake_pose, raising=True)
+    monkeypatch.setattr(audio_transcription, "execute", _fake_audio_trans, raising=True)
+
 
 def _patch_scratch_dir(monkeypatch, tmp_path) -> None:
     settings = get_settings()
@@ -231,6 +278,7 @@ class TestVisualAndAudioKbExtractE2E:
         task_id, cos_key = seeded_kb_task
         _install_fake_cos(monkeypatch)
         _patch_scratch_dir(monkeypatch, tmp_path)
+        _install_fake_upstream_executors(monkeypatch)
 
         # Visual carries a dimension that the audio path doesn't touch
         # (visual-only). Audio carries a different dimension (audio-only).
@@ -322,6 +370,7 @@ class TestConflictMerge:
         task_id, cos_key = seeded_kb_task
         _install_fake_cos(monkeypatch)
         _patch_scratch_dir(monkeypatch, tmp_path)
+        _install_fake_upstream_executors(monkeypatch)
 
         await _patch_visual_and_audio_items(
             monkeypatch,
@@ -405,6 +454,7 @@ class TestAudioUnavailableFallback:
         task_id, cos_key = seeded_kb_task
         _install_fake_cos(monkeypatch)
         _patch_scratch_dir(monkeypatch, tmp_path)
+        _install_fake_upstream_executors(monkeypatch)
 
         await _patch_visual_and_audio_items(
             monkeypatch,

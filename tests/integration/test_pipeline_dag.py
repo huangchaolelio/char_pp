@@ -36,6 +36,108 @@ from src.services.kb_extraction_pipeline.orchestrator import Orchestrator
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 
+def _stub_algorithm_executors(monkeypatch) -> None:
+    """Stub Feature-015 algorithm executors with scaffold-style returns.
+
+    Feature-014 DAG tests use 1-byte placeholder mp4 files that cannot pass
+    the real pose/audio quality gates introduced in Feature-015. These tests
+    exercise orchestration, not algorithm correctness, so we short-circuit
+    the four heavy executors here.
+    """
+    from src.models.pipeline_step import PipelineStepStatus
+    from src.services.kb_extraction_pipeline.step_executors import (
+        audio_kb_extract,
+        audio_transcription,
+        pose_analysis,
+        visual_kb_extract,
+    )
+
+    async def _fake_pose(session, job, step):
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "keypoints_frame_count": 0,
+                "detected_segments": 0,
+                "backend": "test_fixture",
+            },
+            "output_artifact_path": None,
+        }
+
+    async def _fake_audio_trans(session, job, step):
+        if not job.enable_audio_analysis:
+            return {
+                "status": PipelineStepStatus.skipped,
+                "output_summary": {
+                    "skipped": True,
+                    "skip_reason": "disabled_by_request",
+                    "whisper_model": None,
+                },
+                "output_artifact_path": None,
+            }
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "whisper_model": "test",
+                "language_detected": "zh",
+                "transcript_chars": 0,
+                "skipped": False,
+                "skip_reason": None,
+            },
+            "output_artifact_path": None,
+        }
+
+    async def _fake_visual(session, job, step):
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "kb_items": [],
+                "kb_items_count": 0,
+                "source_type": "visual",
+                "tech_category": job.tech_category,
+                "backend": "test_fixture",
+            },
+            "output_artifact_path": None,
+        }
+
+    async def _fake_audio_kb(session, job, step):
+        from sqlalchemy import select
+        from src.models.pipeline_step import PipelineStep, StepType
+
+        upstream = (
+            await session.execute(
+                select(PipelineStep).where(
+                    PipelineStep.job_id == job.id,
+                    PipelineStep.step_type == StepType.audio_transcription,
+                )
+            )
+        ).scalar_one()
+        if upstream.status == PipelineStepStatus.skipped:
+            return {
+                "status": PipelineStepStatus.skipped,
+                "output_summary": {
+                    "skipped": True,
+                    "skip_reason": "audio_transcription_skipped",
+                    "kb_items": [],
+                },
+                "output_artifact_path": None,
+            }
+        return {
+            "status": PipelineStepStatus.success,
+            "output_summary": {
+                "kb_items": [],
+                "kb_items_count": 0,
+                "source_type": "audio",
+                "llm_model": "test_fixture",
+            },
+            "output_artifact_path": None,
+        }
+
+    monkeypatch.setattr(pose_analysis, "execute", _fake_pose, raising=True)
+    monkeypatch.setattr(audio_transcription, "execute", _fake_audio_trans, raising=True)
+    monkeypatch.setattr(visual_kb_extract, "execute", _fake_visual, raising=True)
+    monkeypatch.setattr(audio_kb_extract, "execute", _fake_audio_kb, raising=True)
+
+
 @pytest_asyncio.fixture
 async def session_factory():
     settings = get_settings()
@@ -164,6 +266,7 @@ class TestPipelineDag:
         # Stub out the algorithm executors — the 1-byte fake video can't pass
         # Feature-015 pose/audio real-algorithm gates; this test focuses on
         # DAG orchestration, not algorithm correctness.
+        _stub_algorithm_executors(monkeypatch)
 
         # Use a scratch artifact dir per test to stay hermetic.
         settings = get_settings()
@@ -229,6 +332,7 @@ class TestPipelineDag:
         monkeypatch.setattr(
             cos_mod, "_get_cos_client", lambda: (_FakeClient(), "test-bucket"), raising=True
         )
+        _stub_algorithm_executors(monkeypatch)
         settings = get_settings()
         monkeypatch.setattr(settings, "extraction_artifact_root", str(tmp_path), raising=False)
 

@@ -1,0 +1,44 @@
+{
+  "_comment": "Feature-015 T016 — reference video manifest for US3 regression. Ops fills in real COS keys + expected item-count ranges before running run_reference_regression.py. Field contract lives in specs/015-kb-pipeline-real-algorithms/data-model.md § '参考视频集 manifest'.",
+  "_field_guide": {
+    "name": "Human label used in verification.md rows (no spaces recommended).",
+    "cos_object_key": "Absolute COS key under COS_VIDEO_ALL_COCAH or a fixtures/ path uploaded by ops.",
+    "tech_category": "One of TECH_CATEGORIES in src/services/tech_classifier.py. Job's expected tech_category.",
+    "expected_items_min": "Integer >=1. Lower bound of total kb_items (visual+audio+merged) the pipeline must produce.",
+    "expected_items_max": "Integer >=expected_items_min. Upper bound.",
+    "has_speech": "bool — if true, the video has coach voice-over; only such videos contribute to SC-006 (audio-path success rate) denominator.",
+    "baseline_f002_seconds": "Optional float. Feature-002 legacy pipeline wallclock baseline in seconds. When present, --measure-wallclock compares ratio vs this baseline (SC-002 target: <=0.9x)."
+  },
+  "videos": [
+    {
+      "name": "forehand_topspin_sample_1",
+      "cos_object_key": "TODO-ops/fill-with-real-cos-key.mp4",
+      "tech_category": "forehand_topspin",
+      "expected_items_min": 3,
+      "expected_items_max": 25,
+      "has_speech": true,
+      "baseline_f002_seconds": null,
+      "notes": "TODO-ops: 15-30s clear forehand topspin with coach voice-over."
+    },
+    {
+      "name": "backhand_push_sample_1",
+      "cos_object_key": "TODO-ops/fill-with-real-cos-key.mp4",
+      "tech_category": "backhand_push",
+      "expected_items_min": 2,
+      "expected_items_max": 20,
+      "has_speech": true,
+      "baseline_f002_seconds": null,
+      "notes": "TODO-ops: 10-20s backhand push with clear hip rotation."
+    },
+    {
+      "name": "serve_silent_sample_1",
+      "cos_object_key": "TODO-ops/fill-with-real-cos-key.mp4",
+      "tech_category": "serve",
+      "expected_items_min": 1,
+      "expected_items_max": 15,
+      "has_speech": false,
+      "baseline_f002_seconds": null,
+      "notes": "TODO-ops: serve demo without commentary — exercises visual-only path."
+    }
+  ]
+}

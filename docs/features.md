@@ -1,6 +1,6 @@
 # 产品功能文档
 
-> 最后更新：2026-04-24
+> 最后更新：2026-04-25
 
 ## 目录
 
@@ -19,6 +19,7 @@
 - [Feature-012 全量任务查询接口](#feature-012-全量任务查询接口)
 - [Feature-013 任务管道重新设计](#feature-013-任务管道重新设计)
 - [Feature-014 知识库提取流水线化](#feature-014-知识库提取流水线化)
+- [Feature-015 真实算法接入（知识库提取流水线）](#feature-015-真实算法接入知识库提取流水线)
 
 ---
 
@@ -508,4 +509,59 @@ python specs/013-task-pipeline-redesign/scripts/reset_task_pipeline.py --confirm
 ### 新 Celery beat
 
 - `cleanup-extraction-artifacts`：每小时一次，扫描 `extraction_jobs.intermediate_cleanup_at <= now()`，删本地目录 + 清空 `output_artifact_path`
+
+---
+
+## Feature-015 真实算法接入（知识库提取流水线）
+
+### 背景
+
+Feature-014 交付了 DAG 编排 + 并行 + 冲突分离 + 重跑 + 通道兼容的完整骨架，但 4 个 step executor（`pose_analysis` / `audio_transcription` / `visual_kb_extract` / `audio_kb_extract`）是 scaffold——读写空 artifact、产出 `note="scaffold_output_pending_..."`。Feature-015 只做"接线"：把 scaffold 替换为 Feature-002 既有算法模块的真实调用。
+
+### 交付范围
+
+**改造 4 个 executor**：
+1. `pose_analysis` 接入 `video_validator.validate_video` + `pose_estimator.estimate_pose`（YOLOv8 GPU / MediaPipe CPU）
+2. `audio_transcription` 接入 `AudioExtractor.extract_wav` + `SpeechRecognizer.recognize`（Whisper）
+3. `visual_kb_extract` 接入 `action_segmenter` + `action_classifier` + `tech_extractor`（4 维度规则抽取）
+4. `audio_kb_extract` 接入 `TranscriptTechParser` + `LlmClient`（Venus → OpenAI fallback）
+
+**新增辅助模块**：
+- `src/services/kb_extraction_pipeline/artifact_io.py`：`pose.json` / `transcript.json` 读写 + 容错解析（FR-002/FR-007/Q4）
+- `src/services/kb_extraction_pipeline/error_codes.py`：9 个结构化错误码前缀 + `format_error()` 工具（FR-016）
+
+**不变**：数据库 schema（无迁移）、API 路由、Celery 任务注册、包依赖、算法阈值。
+
+### 核心 API
+
+Feature-015 不新增路由。运维使用的命令行工具：
+
+| 工具 | 用途 |
+|------|------|
+| `specs/015-kb-pipeline-real-algorithms/scripts/run_reference_regression.py --manifest <json> --output <md>` | US3 回归：manifest 模式，比对 `expected_items_min..max` |
+| `--random-sample N` | 从 `/classifications?kb_extracted=false` 抽 N 个视频做批次采样（SC-005 / SC-006 口径）|
+| `--measure-wallclock` | US4：比对真实耗时 vs manifest 中 `baseline_f002_seconds`（SC-002 ≤0.9×）|
+
+### 可观测性输出（FR-014）
+
+每个 executor 的 `pipeline_steps.output_summary` 暴露真实算法后端，不再是 `"scaffold"`：
+
+- `pose_analysis`：`backend=yolov8|mediapipe`、`fps`、`resolution`、`keypoints_frame_count`
+- `audio_transcription`：`whisper_model`、`language_detected`、`snr_db`、`quality_flag`、`transcript_chars`
+- `visual_kb_extract`：`backend=action_segmenter+tech_extractor`、`segments_processed`、`segments_skipped_low_confidence`
+- `audio_kb_extract`：`llm_model`、`llm_backend=venus|openai`、`parsed_segments_total`、`dropped_low_confidence`、`dropped_reference_notes`
+
+### 错误码前缀
+
+失败时 `pipeline_steps.error_message` 以 `<CODE>: <details>` 格式开头，便于 `grep` 映射到 runbook。9 个前缀详见 `docs/architecture.md § Feature-015`。
+
+### 参考视频 manifest
+
+`specs/015-kb-pipeline-real-algorithms/reference_videos.json`：3 条占位条目，运维填真实 COS key + 预期条目数范围 + 可选的 Feature-002 耗时基线。
+
+### 验证状态
+
+详见 `specs/015-kb-pipeline-real-algorithms/verification.md`：
+- CI 自动化覆盖 SC-001（visual/audio 部分）+ SC-004（结构化错误码）
+- SC-002 / SC-003 / SC-005 / SC-006 需要部署环境 + 真实视频集回归
 

@@ -8,6 +8,62 @@
 
 ## [Unreleased]
 
+### Feature-015 — 真实算法接入（知识库提取流水线）
+
+**目标**：把 Feature-014 交付的 4 个 step executor scaffold 替换为 Feature-002 既有算法模块的真实调用。零数据库迁移、零新依赖、零算法改动——只是把已有乐高积木按 Feature-014 定义的 artifact 契约接起来。
+
+#### 新增
+
+- **4 个 executor 真实接入**（`src/services/kb_extraction_pipeline/step_executors/`）：
+  - `pose_analysis.py` → `video_validator.validate_video` + `pose_estimator.estimate_pose`
+  - `audio_transcription.py` → `AudioExtractor.extract_wav` + `SpeechRecognizer.recognize`
+  - `visual_kb_extract.py` → `action_segmenter` + `action_classifier` + `tech_extractor`
+  - `audio_kb_extract.py` → `TranscriptTechParser` + `LlmClient`（Venus → OpenAI fallback）
+  - 所有 CPU/HTTP 阻塞调用用 `asyncio.to_thread` 包装，满足 Feature-014 wave 内并行约束
+- **artifact I/O 辅助模块**：`src/services/kb_extraction_pipeline/artifact_io.py`
+  - `write_pose_artifact` / `read_pose_artifact`：序列化/容错解析 `pose.json`（Q4）
+  - `write_transcript_artifact` / `read_transcript_artifact`：序列化/容错解析 `transcript.json`
+- **结构化错误码模块**：`src/services/kb_extraction_pipeline/error_codes.py`
+  - 9 个错误码前缀常量（`VIDEO_QUALITY_REJECTED` / `POSE_NO_KEYPOINTS` / `POSE_MODEL_LOAD_FAILED` / `WHISPER_LOAD_FAILED` / `WHISPER_NO_AUDIO` / `ACTION_CLASSIFY_FAILED` / `LLM_UNCONFIGURED` / `LLM_JSON_PARSE` / `LLM_CALL_FAILED`）+ `format_error()` 工具（FR-016）
+- **参考视频回归脚本**：`specs/015-kb-pipeline-real-algorithms/scripts/run_reference_regression.py`
+  - manifest 模式 + `--random-sample N` 模式
+  - `--measure-wallclock` 开关，比对真实耗时 vs `baseline_f002_seconds`（SC-002）
+  - 输出 Markdown 表格 → `verification.md`
+  - 退出码：0=全绿 / 1=任一失败
+- **参考视频 manifest 模板**：`specs/015-kb-pipeline-real-algorithms/reference_videos.json`（3 条占位记录）
+
+#### 数据迁移
+
+- **无**。Feature-015 不新增表、不改 schema，完全复用 Feature-014 已有 `extraction_jobs` / `pipeline_steps` / `kb_conflicts`。
+
+#### 配置项
+
+- **无新增 `.env` 字段**。沿用 Feature-002 的 `POSE_BACKEND` / `WHISPER_MODEL` / `WHISPER_DEVICE` / `VENUS_TOKEN` / `VENUS_BASE_URL` / `VENUS_MODEL` / `OPENAI_API_KEY` / `OPENAI_BASE_URL`。
+
+#### 测试覆盖（34 项新增）
+
+- **单元**（23 项）：
+  - `tests/unit/test_artifact_parsers.py`（12）：pose.json / transcript.json 读写往返 + 容错
+  - `tests/unit/test_error_codes.py`（7）：9 个错误码常量 + `format_error()`
+  - `tests/unit/test_video_quality_gate.py`（3）：`VIDEO_QUALITY_REJECTED:` 前缀翻译
+  - `tests/unit/test_audio_kb_llm_gate.py`（1）：LLM 未配置 fail fast
+- **集成**（11 项）：
+  - `tests/integration/test_visual_kb_real.py`（2）：合成 pose → visual_kb_extract（SC-001 visual）
+  - `tests/integration/test_audio_kb_real.py`（2）：合成 transcript → audio_kb_extract + upstream skipped 传播
+  - `tests/integration/test_real_algorithms_regression.py`（7）：MockTransport 驱动回归脚本 happy path / 越界 / 失败 / MD 渲染 / CLI 退出码
+
+#### 破坏性变更
+
+- **Feature-014 DAG 测试调整**：`test_pipeline_dag.py` / `test_video_kb_extract_us2.py` 对 1 字节 mp4 占位符的执行路径需要新增 `_stub_algorithm_executors` / `_install_fake_upstream_executors` helper，因为真实 executor 不再接受空视频。已在本 Feature 的 PR 中同步更新这两个测试。
+
+#### 文档
+
+- 新增 `specs/015-kb-pipeline-real-algorithms/`（spec / plan / research / data-model / quickstart / tasks / verification / scripts / reference_videos.json / checklists）
+- `docs/architecture.md § Feature-015 真实算法接入`（executor 算法接线表 + 错误码表 + 回归脚本说明）
+- `docs/features.md § Feature-015`（交付范围、可观测性、验证状态）
+
+---
+
 ### Feature-014 — 知识库提取流水线化（已完成，US1–US5 + 阶段 8 完善）
 
 **目标**：把 Feature-013 遗留的 `kb_extraction` 最小存根改造为有向无环图（DAG）流水线，补齐 Feature-002 遗失的"视频直提专业 KB"能力（视觉 + 音频双路 + 冲突分离）。

@@ -270,6 +270,39 @@ download_video
   - `analysis_tasks.status='processing' AND started_at < now-840s` → failed
   - `pipeline_steps.status='running' AND started_at < now-600s` → failed + skipped 传播 + 作业/任务标 failed
 
+### Feature-015 真实算法接入
+
+Feature-014 交付了完整 DAG 骨架，但 4 个 step executor 是 scaffold（产出 `note="scaffold_output_pending_..."`）。Feature-015 替换为 Feature-002 既有算法模块的真实调用，不改 DAG 结构、不新增依赖、不加数据库迁移。
+
+**Executor 算法接线**：
+
+| Executor | 调用链 | 产出 artifact |
+|----------|--------|--------------|
+| `pose_analysis` | `video_validator.validate_video` → `pose_estimator.estimate_pose` | `pose.json`（33 关键点 × 帧数）|
+| `audio_transcription` | `AudioExtractor.extract_wav` → `SpeechRecognizer.recognize` | `audio.wav` + `transcript.json` |
+| `visual_kb_extract` | `action_segmenter.segment_actions` → `action_classifier.classify_segment` → `tech_extractor.extract_tech_points` | `kb_items`（内存，传 merger） |
+| `audio_kb_extract` | `TranscriptTechParser.parse` → `LlmClient`（Venus → OpenAI fallback） | `kb_items`（含 `raw_text_span`） |
+
+所有 CPU/HTTP 阻塞调用都用 `asyncio.to_thread` 包装，满足 Feature-014 wave 内并行约束。
+
+**结构化错误码**（`src/services/kb_extraction_pipeline/error_codes.py`，FR-016）：
+
+| 前缀 | step | 是否重试 |
+|------|------|---------|
+| `VIDEO_QUALITY_REJECTED:` | pose_analysis | 否（fps/分辨率不达标） |
+| `POSE_NO_KEYPOINTS:` | pose_analysis | 否（估计器返回空） |
+| `POSE_MODEL_LOAD_FAILED:` | pose_analysis | I/O 重试 |
+| `WHISPER_LOAD_FAILED:` | audio_transcription | I/O 重试 |
+| `WHISPER_NO_AUDIO:` | audio_transcription | 不进 `error_message`，走 skipped |
+| `ACTION_CLASSIFY_FAILED:` | visual_kb_extract | 否 |
+| `LLM_UNCONFIGURED:` | audio_kb_extract | 否（Venus + OpenAI 均未配置）|
+| `LLM_JSON_PARSE:` | audio_kb_extract | 否（格式问题）|
+| `LLM_CALL_FAILED:` | audio_kb_extract | I/O 重试 |
+
+**artifact JSON 契约**：`pose.json` / `transcript.json` 无 schema 版本，读端容错（spec Q4）— `src/services/kb_extraction_pipeline/artifact_io.py` 的 `read_*_artifact` 缺字段用默认值、未知顶层键 ignore、畸形条目跳过。
+
+**参考视频集回归**：`specs/015-kb-pipeline-real-algorithms/scripts/run_reference_regression.py` 对 manifest（`reference_videos.json`）驱动端到端流水线并生成 `verification.md` 表格；`--measure-wallclock` 开关加 `Baseline(s) / Ratio vs Baseline` 列，支撑 SC-002 耗时基线对比（要求 ≤ 0.9× Feature-002 旧流程）。
+
 ---
 
 ## 存储系统
