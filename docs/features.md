@@ -1,6 +1,6 @@
 # 产品功能文档
 
-> 最后更新：2026-04-25
+> 最后更新：2026-04-28
 
 ## 目录
 
@@ -21,6 +21,7 @@
 - [Feature-014 知识库提取流水线化](#feature-014-知识库提取流水线化)
 - [Feature-015 真实算法接入（知识库提取流水线）](#feature-015-真实算法接入知识库提取流水线)
 - [Feature-016 视频预处理流水线](#feature-016-视频预处理流水线)
+- [Feature-017 API 规范化](#feature-017-api-规范化)
 
 ---
 
@@ -138,7 +139,7 @@
 
 ### 关键 API
 
-> ⚠️ **Feature-017 更新**：下表中 `/api/v1/videos/classifications*` 系列**已于 2026-04-27 下线**，
+> ⚠️ **Feature-017 更新**：下表中 `/api/v1/videos/classifications*` 系列**已于 2026-04-28 下线**，
 > 请改用 `/api/v1/classifications*`（Feature-008）。旧路径返回 `404 + ENDPOINT_RETIRED`，
 > `error.details.successor` 含替代路径。详见 `specs/017-api-standardization/contracts/retirement-ledger.md`。
 

@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-04-25
+> 最后更新：2026-04-28
 
 ## 目录
 
@@ -57,12 +57,12 @@
 │                                                   │
 │  中间件：Request-ID、性能计时、全局异常处理         │
 │                                                   │
-│  路由：/api/v1/                                   │
-│    tasks  knowledge-base  videos  coaches         │
-│    classifications  standards  diagnosis          │
-│    teaching-tips  calibration                    │
-│    task-channels  admin  extraction-jobs          │
+│  路由：/api/v1/（Feature-017 规范化后）              │
+│    tasks  knowledge-base  classifications  coaches│
+│    standards  teaching-tips  calibration          │
+│    extraction-jobs  task-channels  admin          │
 │    video-preprocessing                            │
+│    _retired（哨兵：7 条已下线接口 → 404 ENDPOINT_RETIRED）│
 └────────────┬──────────────────┬───────────────────┘
              │ asyncpg           │ Celery send_task
 ┌────────────▼──────┐  ┌────────▼─────────────────┐
