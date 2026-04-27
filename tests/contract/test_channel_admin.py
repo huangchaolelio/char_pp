@@ -1,9 +1,10 @@
 """Contract tests for channel admin PATCH endpoint (Feature 013 US5 T050).
 
 Covers ``PATCH /api/v1/admin/channels/{task_type}``:
-  * Happy path with valid ``X-Admin-Token`` → 200 with updated snapshot.
-  * Missing/invalid token → 403 ``ADMIN_TOKEN_INVALID``.
-  * Unknown ``task_type`` → 400 ``INVALID_INPUT``.
+  * Happy path with valid ``X-Admin-Token`` → 200 with updated snapshot in ``body["data"]``.
+  * Missing/invalid token → **401** ``ADMIN_TOKEN_INVALID``（Feature-017：从 403 校正为 401）.
+  * Unknown ``task_type`` → **400** ``INVALID_ENUM_VALUE``（Feature-017：
+    从 ``INVALID_INPUT`` 细化为枚举专用错误码）.
   * Validation: ``queue_capacity`` / ``concurrency`` must be >0 (422).
   * ``enabled: false`` toggle is accepted.
   * Response carries ``X-Admin-Operation: true``.
@@ -96,8 +97,10 @@ class TestChannelAdminContract:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["task_type"] == "kb_extraction"
-        assert body["queue_capacity"] == 80
+        assert body["success"] is True
+        data = body["data"]
+        assert data["task_type"] == "kb_extraction"
+        assert data["queue_capacity"] == 80
         assert response.headers.get("X-Admin-Operation") == "true"
         inst.update_config.assert_called_once()
         kwargs = inst.update_config.call_args.kwargs
@@ -127,23 +130,25 @@ class TestChannelAdminContract:
             )
 
         assert response.status_code == 200
-        assert response.json()["enabled"] is False
+        assert response.json()["data"]["enabled"] is False
 
-    def test_missing_token_returns_403(self, client_with_token):
+    def test_missing_token_returns_401(self, client_with_token):
         response = client_with_token.patch(
             "/api/v1/admin/channels/kb_extraction",
             json={"queue_capacity": 10},
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["error"]["code"] == "ADMIN_TOKEN_INVALID"
+        assert response.status_code == 401
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "ADMIN_TOKEN_INVALID"
 
-    def test_wrong_token_returns_403(self, client_with_token):
+    def test_wrong_token_returns_401(self, client_with_token):
         response = client_with_token.patch(
             "/api/v1/admin/channels/kb_extraction",
             json={"queue_capacity": 10},
             headers={"X-Admin-Token": "wrong-token"},
         )
-        assert response.status_code == 403
+        assert response.status_code == 401
 
     def test_invalid_task_type_returns_400(self, client_with_token):
         response = client_with_token.patch(
@@ -152,7 +157,10 @@ class TestChannelAdminContract:
             headers={"X-Admin-Token": ADMIN_TOKEN},
         )
         assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "INVALID_INPUT"
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INVALID_ENUM_VALUE"
+        assert body["error"]["details"]["field"] == "task_type"
 
     def test_zero_capacity_rejected_422(self, client_with_token):
         response = client_with_token.patch(
@@ -194,4 +202,6 @@ class TestChannelAdminContract:
                 headers={"X-Admin-Token": ADMIN_TOKEN},
             )
         assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "INVALID_INPUT"
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INVALID_INPUT"

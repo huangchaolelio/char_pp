@@ -3,15 +3,19 @@
 Read-only audit endpoint that returns full metadata for one preprocessing
 job: original_meta + target_standard + audio descriptor + segment list.
 See contracts/get_preprocessing_job.md.
+
+Feature-017：响应体统一切换为 ``SuccessEnvelope``（章程 v1.4.0 原则 IX）。
 """
 
 from __future__ import annotations
 
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
+from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.api.schemas.preprocessing import (
     PreprocessingAudioView,
     PreprocessingJobResponse,
@@ -28,17 +32,18 @@ router = APIRouter(tags=["video-preprocessing"])
 
 @router.get(
     "/video-preprocessing/{job_id}",
-    response_model=PreprocessingJobResponse,
+    response_model=SuccessEnvelope[PreprocessingJobResponse],
     summary="Get full metadata for one preprocessing job",
 )
 async def get_preprocessing_job(
     job_id: UUID,
     db: AsyncSession = Depends(get_db),
-) -> PreprocessingJobResponse:
+) -> SuccessEnvelope[PreprocessingJobResponse]:
     view = await _preprocessing_service.get_job_view(db, job_id)
     if view is None:
-        raise HTTPException(
-            status_code=404, detail="video_preprocessing job not found",
+        raise AppException(
+            ErrorCode.PREPROCESSING_JOB_NOT_FOUND,
+            details={"resource_id": str(job_id)},
         )
 
     original = None
@@ -51,7 +56,7 @@ async def get_preprocessing_job(
     if view.audio:
         audio = PreprocessingAudioView(**view.audio)
 
-    return PreprocessingJobResponse(
+    return ok(PreprocessingJobResponse(
         job_id=view.job_id,
         cos_object_key=view.cos_object_key,
         status=view.status,
@@ -75,7 +80,7 @@ async def get_preprocessing_job(
             )
             for s in view.segments
         ],
-    )
+    ))
 
 
 # ── Exposed to the contract test as an AsyncMock target ─────────────────────

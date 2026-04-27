@@ -1,12 +1,12 @@
 """Contract tests for channel status endpoints (Feature 013 US5 T049).
 
-Covers:
-  * ``GET /api/v1/task-channels`` — returns ``{"channels": [3 snapshots]}``.
-  * ``GET /api/v1/task-channels/{task_type}`` — single channel snapshot;
-    404 for unknown ``task_type``.
+Feature-017 已全量切换到 ``SuccessEnvelope`` / ``ErrorEnvelope``：
+  * ``GET /api/v1/task-channels`` — returns ``{success, data=[...snapshots], meta}``.
+  * ``GET /api/v1/task-channels/{task_type}`` — single channel snapshot包在 data 字段中;
+    400 + ``INVALID_ENUM_VALUE`` for unknown ``task_type``（架构 v1.4.0 修正：
+    枚举非法值属于客户端错误，不是“资源不存在”，状态码从 404 改为 400）.
 
-Mocks ``TaskChannelService`` so these run without a DB; asserts the wire
-shape matches ``contracts/channel_status.yaml``.
+Mocks ``TaskChannelService`` so these run without a DB.
 """
 
 from __future__ import annotations
@@ -72,15 +72,18 @@ class TestChannelStatusContract:
             response = client.get("/api/v1/task-channels")
         assert response.status_code == 200, response.text
         body = response.json()
-        assert "channels" in body
+        # Feature-017：从返回 ``{"channels":[...]}`` 改为 SuccessEnvelope。
+        assert body["success"] is True
+        assert body["meta"] is None  # 非分页接口
+        channels = body["data"]
         # Feature-016 adds the preprocessing channel, bringing the total to 4.
-        assert len(body["channels"]) == 4
-        types = {c["task_type"] for c in body["channels"]}
+        assert len(channels) == 4
+        types = {c["task_type"] for c in channels}
         assert types == {
             "video_classification", "kb_extraction",
             "athlete_diagnosis", "video_preprocessing",
         }
-        for ch in body["channels"]:
+        for ch in channels:
             assert set(ch.keys()) >= {
                 "task_type", "queue_capacity", "concurrency",
                 "current_pending", "current_processing", "remaining_slots",
@@ -99,16 +102,24 @@ class TestChannelStatusContract:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["task_type"] == "kb_extraction"
-        assert body["queue_capacity"] == 50
-        assert body["current_pending"] == 3
-        assert body["remaining_slots"] == 47
-        assert body["enabled"] is True
+        assert body["success"] is True
+        data = body["data"]
+        assert data["task_type"] == "kb_extraction"
+        assert data["queue_capacity"] == 50
+        assert data["current_pending"] == 3
+        assert data["remaining_slots"] == 47
+        assert data["enabled"] is True
 
-    def test_unknown_task_type_returns_404(self, client):
+    def test_unknown_task_type_returns_400(self, client):
+        """Feature-017：枚举非法值 → 400 + INVALID_ENUM_VALUE（而非旧的 404 + TASK_TYPE_NOT_FOUND）."""
         response = client.get("/api/v1/task-channels/unknown_type")
-        assert response.status_code == 404
-        assert response.json()["detail"]["error"]["code"] == "TASK_TYPE_NOT_FOUND"
+        assert response.status_code == 400
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INVALID_ENUM_VALUE"
+        assert body["error"]["details"]["field"] == "task_type"
+        assert body["error"]["details"]["value"] == "unknown_type"
+        assert "video_classification" in body["error"]["details"]["allowed"]
 
     def test_classification_channel(self, client):
         with patch(
@@ -120,7 +131,9 @@ class TestChannelStatusContract:
             )
             response = client.get("/api/v1/task-channels/video_classification")
         assert response.status_code == 200
-        assert response.json()["task_type"] == "video_classification"
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"]["task_type"] == "video_classification"
 
     def test_diagnosis_channel(self, client):
         with patch(
@@ -132,5 +145,7 @@ class TestChannelStatusContract:
             )
             response = client.get("/api/v1/task-channels/athlete_diagnosis")
         assert response.status_code == 200
-        assert response.json()["task_type"] == "athlete_diagnosis"
-        assert response.json()["queue_capacity"] == 20
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"]["task_type"] == "athlete_diagnosis"
+        assert body["data"]["queue_capacity"] == 20

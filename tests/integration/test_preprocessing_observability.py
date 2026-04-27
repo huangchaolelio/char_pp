@@ -223,12 +223,15 @@ class TestPreprocessingObservability:
     contract-compliant responses."""
 
     async def test_c1_success_job_full_fields(self, client, seeded_jobs):
-        """Contract C1: success job → 200, all fields populated, segments sorted."""
+        """Contract C1: success job → 200, all fields populated, segments sorted
+        （Feature-017：业务载荷位于 ``body["data"]`` 信封内）."""
         job_id = seeded_jobs["success"]
         resp = await client.get(f"/api/v1/video-preprocessing/{job_id}")
         assert resp.status_code == 200, resp.text
 
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["job_id"] == str(job_id)
         assert body["status"] == "success"
         assert body["force"] is False
@@ -263,7 +266,9 @@ class TestPreprocessingObservability:
         resp = await client.get(f"/api/v1/video-preprocessing/{job_id}")
         assert resp.status_code == 200
 
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["status"] == "failed"
         assert body["error_message"].startswith("VIDEO_QUALITY_REJECTED:")
         assert body["target_standard"] is None
@@ -279,7 +284,9 @@ class TestPreprocessingObservability:
         resp = await client.get(f"/api/v1/video-preprocessing/{job_id}")
         assert resp.status_code == 200
 
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["status"] == "running"
         assert body["completed_at"] is None
         assert body["segments"] == []
@@ -287,10 +294,12 @@ class TestPreprocessingObservability:
         assert body["audio"] is None
 
     async def test_c4_unknown_id_404(self, client):
-        """Contract C4: non-existent UUID → 404."""
+        """Contract C4: non-existent UUID → 404，错误信封体."""
         resp = await client.get(f"/api/v1/video-preprocessing/{uuid.uuid4()}")
         assert resp.status_code == 404
-        assert "not found" in resp.json()["detail"].lower()
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "PREPROCESSING_JOB_NOT_FOUND"
 
     async def test_c5_non_uuid_422(self, client):
         """Contract C5: malformed job_id → 422."""
@@ -302,7 +311,9 @@ class TestPreprocessingObservability:
         job_id = seeded_jobs["superseded"]
         resp = await client.get(f"/api/v1/video-preprocessing/{job_id}")
         assert resp.status_code == 200
-        assert resp.json()["status"] == "superseded"
+        envelope = resp.json()
+        assert envelope["success"] is True
+        assert envelope["data"]["status"] == "superseded"
 
     async def test_error_message_prefix_is_greppable(
         self, client, seeded_jobs
@@ -310,7 +321,8 @@ class TestPreprocessingObservability:
         """T035 acceptance: ops can ``grep ^VIDEO_`` on error_message to
         classify failures without locale-dependent text parsing."""
         job_id = seeded_jobs["failed"]
-        body = (await client.get(f"/api/v1/video-preprocessing/{job_id}")).json()
+        envelope = (await client.get(f"/api/v1/video-preprocessing/{job_id}")).json()
+        body = envelope["data"]
         code, sep, _ = body["error_message"].partition(":")
         assert sep == ":", "error_message must use 'CODE: detail' format"
         assert code == code.upper()

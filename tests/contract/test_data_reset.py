@@ -5,8 +5,9 @@ the HTTP contract defined in
 ``specs/013-task-pipeline-redesign/contracts/data_reset.yaml``:
 
   * Happy path → 200 with ``reset_at`` / ``deleted_counts`` / ``preserved_counts``
-    / ``duration_ms`` / ``dry_run``.
-  * Wrong / missing token → 403 ``ADMIN_TOKEN_INVALID``.
+    / ``duration_ms`` / ``dry_run``（信封化后业务字段全部位于 ``body["data"]``）.
+  * Wrong / missing token → **401** ``ADMIN_TOKEN_INVALID``（Feature-017：
+    从 403 对齐为 401 未认证语义）.
   * Empty request body (missing confirmation_token) → 422.
   * Dry-run flag is forwarded to the service.
   * Response carries ``X-Admin-Operation: true`` header for audit.
@@ -104,14 +105,16 @@ class TestDataResetContract:
 
         assert response.status_code == 200, response.text
         body = response.json()
-        assert set(body.keys()) >= {
+        assert body["success"] is True
+        data = body["data"]
+        assert set(data.keys()) >= {
             "reset_at", "deleted_counts", "preserved_counts",
             "duration_ms", "dry_run",
         }
-        assert body["dry_run"] is False
-        assert body["deleted_counts"]["analysis_tasks"] == 2589
-        assert body["preserved_counts"]["coaches"] == 20
-        assert body["duration_ms"] >= 0
+        assert data["dry_run"] is False
+        assert data["deleted_counts"]["analysis_tasks"] == 2589
+        assert data["preserved_counts"]["coaches"] == 20
+        assert data["duration_ms"] >= 0
         assert response.headers.get("X-Admin-Operation") == "true"
 
     def test_dry_run_forwarded_to_service(self, client_with_token):
@@ -125,20 +128,22 @@ class TestDataResetContract:
             )
 
         assert response.status_code == 200
-        assert response.json()["dry_run"] is True
+        assert response.json()["data"]["dry_run"] is True
         inst.reset.assert_called_once()
         kwargs = inst.reset.call_args.kwargs
         assert kwargs.get("dry_run") is True
 
-    def test_wrong_token_returns_403(self, client_with_token):
+    def test_wrong_token_returns_401(self, client_with_token):
         response = client_with_token.post(
             "/api/v1/admin/reset-task-pipeline",
             json={"confirmation_token": "obviously-wrong"},
         )
-        assert response.status_code == 403
-        assert response.json()["detail"]["error"]["code"] == "ADMIN_TOKEN_INVALID"
+        assert response.status_code == 401
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "ADMIN_TOKEN_INVALID"
 
-    def test_empty_token_returns_403(self, client_with_token):
+    def test_empty_token_returns_422(self, client_with_token):
         response = client_with_token.post(
             "/api/v1/admin/reset-task-pipeline",
             json={"confirmation_token": ""},
@@ -158,10 +163,9 @@ class TestDataResetContract:
             json={"confirmation_token": "anything"},
         )
         assert response.status_code == 500
-        assert (
-            response.json()["detail"]["error"]["code"]
-            == "ADMIN_TOKEN_NOT_CONFIGURED"
-        )
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "ADMIN_TOKEN_NOT_CONFIGURED"
 
     def test_extra_field_rejected(self, client_with_token):
         response = client_with_token.post(

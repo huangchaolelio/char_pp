@@ -352,15 +352,18 @@ class TestPreprocessingGetContract:
             response = client.get(f"/api/v1/video-preprocessing/{job_id}")
         assert response.status_code == 200, response.text
         body = response.json()
-        assert body["job_id"] == str(job_id)
-        assert body["status"] == "success"
-        assert body["segment_count"] == 4
-        assert len(body["segments"]) == 4
+        # Feature-017：信封化后业务载荷进入 body["data"]。
+        assert body["success"] is True
+        data = body["data"]
+        assert data["job_id"] == str(job_id)
+        assert data["status"] == "success"
+        assert data["segment_count"] == 4
+        assert len(data["segments"]) == 4
         # Segments must be ordered by segment_index.
-        assert [s["segment_index"] for s in body["segments"]] == [0, 1, 2, 3]
-        assert body["original_meta"]["fps"] == 25.0
-        assert body["target_standard"]["target_fps"] == 30
-        assert body["audio"]["size_bytes"] == 19200000
+        assert [s["segment_index"] for s in data["segments"]] == [0, 1, 2, 3]
+        assert data["original_meta"]["fps"] == 25.0
+        assert data["target_standard"]["target_fps"] == 30
+        assert data["audio"]["size_bytes"] == 19200000
 
     def test_c4_not_found_404(self, client):
         with patch(
@@ -369,6 +372,10 @@ class TestPreprocessingGetContract:
         ):
             response = client.get(f"/api/v1/video-preprocessing/{uuid4()}")
         assert response.status_code == 404
+        body = response.json()
+        # Feature-017：错误信封断言
+        assert body["success"] is False
+        assert body["error"]["code"] == "PREPROCESSING_JOB_NOT_FOUND"
 
     def test_c5_non_uuid_job_id_422(self, client):
         response = client.get("/api/v1/video-preprocessing/not-a-uuid")

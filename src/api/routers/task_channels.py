@@ -5,15 +5,20 @@ Read-only endpoints for operators/monitoring:
   * ``GET /api/v1/task-channels/{task_type}`` — one channel by type.
 
 Admin mutation of channels lives in :mod:`src.api.routers.admin`.
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope`` / ``ErrorEnvelope`` 信封
+（章程 v1.4.0 原则 IX）。
 """
 
 from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, HTTPException, Path
+from fastapi import APIRouter, Depends, Path
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
+from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.api.schemas.task_submit import ChannelSnapshot
 from src.db.session import get_db
 from src.models.analysis_task import TaskType
@@ -41,20 +46,23 @@ def _snapshot_to_schema(snap) -> ChannelSnapshot:
     "/task-channels",
     status_code=200,
     summary="List live snapshots for all task channels",
+    response_model=SuccessEnvelope[list[ChannelSnapshot]],
 )
-async def list_channels(db: AsyncSession = Depends(get_db)) -> dict:
-    """Return ``{"channels": [ChannelSnapshot, ...]}`` in enum order."""
+async def list_channels(
+    db: AsyncSession = Depends(get_db),
+) -> SuccessEnvelope[list[ChannelSnapshot]]:
+    """Return all channel snapshots in enum order (non-paginated—always full list)."""
     svc = TaskChannelService()
-    snapshots = []
+    snapshots: list[ChannelSnapshot] = []
     for tt in TaskType:
         snap = await svc.get_snapshot(db, tt)
         snapshots.append(_snapshot_to_schema(snap))
-    return {"channels": snapshots}
+    return ok(snapshots)
 
 
 @router.get(
     "/task-channels/{task_type}",
-    response_model=ChannelSnapshot,
+    response_model=SuccessEnvelope[ChannelSnapshot],
     status_code=200,
     summary="Get a single channel's live snapshot",
 )
@@ -64,20 +72,20 @@ async def get_channel(
         description="video_classification | kb_extraction | athlete_diagnosis",
     ),
     db: AsyncSession = Depends(get_db),
-) -> ChannelSnapshot:
+) -> SuccessEnvelope[ChannelSnapshot]:
     try:
         tt = TaskType(task_type)
     except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": {
-                    "code": "TASK_TYPE_NOT_FOUND",
-                    "message": f"unknown task_type {task_type!r}",
-                }
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message=f"unknown task_type {task_type!r}",
+            details={
+                "field": "task_type",
+                "value": task_type,
+                "allowed": [t.value for t in TaskType],
             },
         )
 
     svc = TaskChannelService()
     snap = await svc.get_snapshot(db, tt)
-    return _snapshot_to_schema(snap)
+    return ok(_snapshot_to_schema(snap))
