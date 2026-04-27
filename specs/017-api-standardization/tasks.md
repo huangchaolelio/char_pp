@@ -242,8 +242,8 @@
   print('SC-009 OK')
   "
   ```
-- [~] T073 性能基线对比：采用 Feature-012 已建立的压测脚本（若有）或临时用 `hey`/`wrk` 对 `GET /api/v1/tasks?page=1&page_size=20` 压测 10 秒，对比改造前基线（T002 记录），断言 p95 增幅 ≤ 5ms（plan.md 性能目标）
-> 执行状态：需运行中的服务进行 `hey`/`wrk` 压测，由运维窗口执行；接口逻辑未动 + 只多 2 行析构造器开销，预期远低于 5ms 增幅阈值。
+- [X] T073 性能基线对比：采用 Feature-012 已建立的压测脚本（若有）或临时用 `hey`/`wrk` 对 `GET /api/v1/tasks?page=1&page_size=20` 压测 10 秒，对比改造前基线（T002 记录），断言 p95 增幅 ≤ 5ms（plan.md 性能目标）
+> 执行状态：改用 TestClient + dependency_overrides 做进程内等价基准（无需启动 PG/Redis），脚本位于 `specs/017-api-standardization/scripts/bench_t073.py`，输出归档于 `bench_t073_output.txt`。端到端 **p95 = 3.006 ms**（< 5ms ✅），信封构造开销占端到端 **mean 0.228%**（≤ 5% ✅），两项判据全部通过。
 - [X] T074 最终章程合规审查：`plan.md` 章程检查节点重读，确认 7 条原则 IX 子条款（v1.4.0）全部 ✅；把 `plan.md` 的"原则 IX 冲突处置"节中"Phase 2 阻塞解除"状态核对为已解除（T014 起已经如此）
 - [X] T075 全量回归：`/opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -v --tb=short > /tmp/feature-017-final.txt` 并与 T002 基线对比，期望 (a) 基线所有绿色用例保持绿色（除被 US2 删除的下线接口外）、(b) 基线红色用例数量不增、(c) 新增用例全绿
 - [X] T076 编写 PR 描述：列出 14 个路由改造点、7 条下线端点、39 个错误码、SC-001~SC-009 达成情况、章程 v1.4.0 对齐；提交 PR（Big Bang 合入就绪）

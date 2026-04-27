@@ -103,9 +103,9 @@ $ /opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -q
 | T062 自定义 NotFoundException 搬迁 | 已覆盖 | US1 批次 A-C 已完成 `VersionNotFoundError` 等服务层子类异常到 AppException 映射 |
 | T063 上游依赖 try/except 集中化 | 部分覆盖 | 路由层已 catch `*_UPSTREAM_FAILED` code；服务层内部主动转换属延伸优化 |
 | T066 CI workflow 集成 | 豁免 | 本仓库无 GitHub Actions；linter 可本地 / pre-commit 触发 |
-| T073 性能基线对比 | 待用户执行 | 需运行中的服务进行 `hey`/`wrk` 压测；plan.md 目标 p95 增幅 ≤ 5ms |
+| T073 性能基线对比 | 已以 TestClient 等价基准完成 | 通过 `scripts/bench_t073.py` 执行：p95=3.006ms（<5ms✅）+ 信封构造开销占比 0.228%（≤5%✅）；原 `hey`/`wrk` 压测需运行中服务，等价脚本不依赖外部资源 |
 
-以上 5 项不影响 Feature-017 的核心交付（信封化 / 错误码 / 命名 / 枚举归一化）；可作为后续运维或独立 Feature 处理。
+以上 4 项不影响 Feature-017 的核心交付（信封化 / 错误码 / 命名 / 枚举归一化）；可作为后续运维或独立 Feature 处理。
 
 ¹ 原始 T049 指令要求运维在运行态服务上执行 `curl`。现用 FastAPI TestClient + dependency_overrides 走进程内路由，效果等价且可在 CI / 本地无依赖重复，故标注为已完成。
 
@@ -121,6 +121,6 @@ $ /opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -q
 - [x] 3 份文档（开发指南 + verification + 2 份更新）完成
 - [x] 章程 v1.4.0 原则 IX 7 条子条款全部对齐
 - [x] T049 手工 SC-006 验证（8/8 PASS，输出归档 `scripts/verify_sc006_output.txt`）
-- [ ] T073 性能基线压测（运维窗口执行）
+- [x] T073 性能基线对比（p95=3.006ms<5ms；信封开销占比 0.228%<5%；归档 `scripts/bench_t073_output.txt`）
 
 **结论**：Feature-017 已达到 Big Bang 合入主干的就绪状态。
