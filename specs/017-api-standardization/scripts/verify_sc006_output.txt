@@ -1,0 +1,36 @@
+========================================================================
+Feature-017 T049 — SC-006 手工验证（TestClient 等价验证模式）
+========================================================================
+{"time": "2026-04-28 07:21:10,374", "level": "INFO", "logger": "src.api.routers.tasks", "message": "task_list_query total=0 page=1 page_size=20 elapsed_ms=0"}
+{"time": "2026-04-28 07:21:10,375", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,376", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/tasks "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,379", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,380", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/coaches "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,383", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,384", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/classifications "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,389", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,389", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/teaching-tips "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,393", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,394", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/extraction-jobs "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,396", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,396", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/knowledge-base/versions "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,399", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,400", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/standards "HTTP/1.1 200 OK""}
+{"time": "2026-04-28 07:21:10,403", "level": "INFO", "logger": "src.api.main", "message": "request completed"}
+{"time": "2026-04-28 07:21:10,404", "level": "INFO", "logger": "httpx", "message": "HTTP Request: GET http://testserver/api/v1/task-channels "HTTP/1.1 200 OK""}
+
+端点                                          HTTP     结果  说明
+------------------------------------------------------------------------
+/api/v1/tasks                                200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 0}
+/api/v1/coaches                              200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 0}
+/api/v1/classifications                      200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 0}
+/api/v1/teaching-tips                        200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 0}
+/api/v1/extraction-jobs                      200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 0}
+/api/v1/knowledge-base/versions              200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 0}
+/api/v1/standards                            200   PASS  SUCCESS data=dict meta=None
+/api/v1/task-channels                        200   PASS  SUCCESS data=list meta={'page': 1, 'page_size': 20, 'total': 4}
+------------------------------------------------------------------------
+汇总：8/8 端点符合 Feature-017 信封结构
+
+SC-006 结论：✅ 达成
+EXIT=0
