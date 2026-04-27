@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
+from src.api.enums import parse_enum_param
 from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.extraction_job import (
     ExtractionJobDetail,
@@ -168,20 +169,10 @@ async def list_extraction_jobs(
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[ExtractionJobSummary]]:
     # Optional status filter.
-    status_enum: ExtractionJobStatus | None = None
-    if status:
-        try:
-            status_enum = ExtractionJobStatus(status)
-        except ValueError:
-            raise AppException(
-                ErrorCode.INVALID_ENUM_VALUE,
-                message=f"unknown status filter: {status!r}",
-                details={
-                    "field": "status",
-                    "value": status,
-                    "allowed": [s.value for s in ExtractionJobStatus],
-                },
-            )
+    status_enum: ExtractionJobStatus | None = (
+        parse_enum_param(status, field="status", enum_cls=ExtractionJobStatus)
+        if status else None
+    )
 
     base_q = select(ExtractionJob)
     if status_enum:

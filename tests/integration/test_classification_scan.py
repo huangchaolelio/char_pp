@@ -170,10 +170,11 @@ async def test_trigger_scan_invalid_mode_returns_400(client: AsyncClient):
     )
     assert response.status_code == 400
     body = response.json()
-    # Feature-017：错误信封 + INVALID_ENUM_VALUE
+    # Feature-017：错误信封 + INVALID_ENUM_VALUE（阶段 5 T056：统一归一化帮助输出的消息
+    # 格式为 ``Invalid <field> value: <value>``）
     assert body["success"] is False
     assert body["error"]["code"] == "INVALID_ENUM_VALUE"
-    assert "invalid scan_mode" in body["error"]["message"]
+    assert "scan_mode" in body["error"]["message"]
     assert body["error"]["details"]["field"] == "scan_mode"
 
 
@@ -367,7 +368,7 @@ async def test_patch_invalid_tech_category_returns_400(
     body = response.json()
     assert body["success"] is False
     assert body["error"]["code"] == "INVALID_ENUM_VALUE"
-    assert "invalid tech_category" in body["error"]["message"]
+    assert "tech_category" in body["error"]["message"]
 
 
 @pytest.mark.asyncio

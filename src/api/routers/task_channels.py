@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
+from src.api.enums import parse_enum_param
 from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.task_submit import ChannelSnapshot
 from src.db.session import get_db
@@ -83,19 +84,7 @@ async def get_channel(
     ),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[ChannelSnapshot]:
-    try:
-        tt = TaskType(task_type)
-    except ValueError:
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message=f"unknown task_type {task_type!r}",
-            details={
-                "field": "task_type",
-                "value": task_type,
-                "allowed": [t.value for t in TaskType],
-            },
-        )
-
+    tt = parse_enum_param(task_type, field="task_type", enum_cls=TaskType)
     svc = TaskChannelService()
     snap = await svc.get_snapshot(db, tt)
     return ok(_snapshot_to_schema(snap))

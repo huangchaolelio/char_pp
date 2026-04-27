@@ -32,7 +32,7 @@ from src.services.tech_standard_builder import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/standards", tags=["standards"])
+router = APIRouter(tags=["standards"])
 
 # Set of valid action_type string values for validation
 _VALID_ACTION_TYPES: set[str] = {at.value for at in EtpActionType}
@@ -129,7 +129,7 @@ class BatchBuildResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/build", response_model=SuccessEnvelope[dict[str, Any]])
+@router.post("/standards/build", response_model=SuccessEnvelope[dict[str, Any]])
 async def build_standard(
     request: BuildRequest,
     session: AsyncSession = Depends(get_db),
@@ -196,7 +196,7 @@ async def build_standard(
 
 
 @router.get(
-    "/{tech_category}",
+    "/standards/{tech_category}",
     response_model=SuccessEnvelope[StandardResponse],
 )
 async def get_standard(
@@ -239,7 +239,7 @@ async def get_standard(
     ))
 
 
-@router.get("", response_model=SuccessEnvelope[StandardsListData])
+@router.get("/standards", response_model=SuccessEnvelope[StandardsListData])
 async def list_standards(
     source_quality: Optional[str] = None,
     session: AsyncSession = Depends(get_db),

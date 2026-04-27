@@ -27,6 +27,7 @@ from fastapi import APIRouter, Depends, Path, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
+from src.api.enums import parse_enum_param
 from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.api.schemas.task_submit import (
     ChannelConfigPatch,
@@ -111,18 +112,7 @@ async def patch_channel_config(
     _verify_admin_token(token)
     response.headers["X-Admin-Operation"] = "true"
 
-    try:
-        tt = TaskType(task_type)
-    except ValueError:
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message=f"unknown task_type {task_type!r}",
-            details={
-                "field": "task_type",
-                "value": task_type,
-                "allowed": [t.value for t in TaskType],
-            },
-        )
+    tt = parse_enum_param(task_type, field="task_type", enum_cls=TaskType)
 
     svc = TaskChannelService()
     try:

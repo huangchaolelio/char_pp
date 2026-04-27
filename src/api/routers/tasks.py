@@ -29,6 +29,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.errors import AppException, ErrorCode
 from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 
+from src.api.enums import parse_enum_param, validate_enum_choice
+
+from src.api.schemas.coach import TaskCoachResponse, TaskCoachUpdate
 from src.api.schemas.task import (
     AudioAnalysisInfo,
     CoachingAdviceItem,
@@ -101,50 +104,20 @@ async def list_tasks(
     # ── Parameter validation ──────────────────────────────────
     # Feature-017 阶段 5 T054：``page_size`` 由 Query ``le=100`` 预约束；
     # 原静默截断逻辑删除、成为 422 + VALIDATION_FAILED 羻伟失败。
-    if sort_by not in _VALID_SORT_BY:
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message=f"Invalid sort_by value: {sort_by!r}",
-            details={"field": "sort_by", "value": sort_by, "allowed": sorted(_VALID_SORT_BY)},
-        )
-    if order not in _VALID_ORDER:
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message=f"Invalid order value: {order!r}",
-            details={"field": "order", "value": order, "allowed": sorted(_VALID_ORDER)},
-        )
+    # Feature-017 阶段 5 T056：枚举参数统一用 parse_enum_param / validate_enum_choice
+    # 帮助大小写与中划线归一化。
+    sort_by = validate_enum_choice(sort_by, field="sort_by", allowed=_VALID_SORT_BY)
+    order = validate_enum_choice(order, field="order", allowed=_VALID_ORDER)
 
-    # Validate status enum
-    status_enum: Optional[TaskStatus] = None
-    if status is not None:
-        try:
-            status_enum = TaskStatus(status)
-        except ValueError:
-            raise AppException(
-                ErrorCode.INVALID_ENUM_VALUE,
-                message=f"Invalid status value: {status!r}",
-                details={
-                    "field": "status",
-                    "value": status,
-                    "allowed": [s.value for s in TaskStatus],
-                },
-            )
+    status_enum: Optional[TaskStatus] = (
+        parse_enum_param(status, field="status", enum_cls=TaskStatus)
+        if status is not None else None
+    )
 
-    # Validate task_type enum
-    task_type_enum: Optional[TaskType] = None
-    if task_type is not None:
-        try:
-            task_type_enum = TaskType(task_type)
-        except ValueError:
-            raise AppException(
-                ErrorCode.INVALID_ENUM_VALUE,
-                message=f"Invalid task_type value: {task_type!r}",
-                details={
-                    "field": "task_type",
-                    "value": task_type,
-                    "allowed": [t.value for t in TaskType],
-                },
-            )
+    task_type_enum: Optional[TaskType] = (
+        parse_enum_param(task_type, field="task_type", enum_cls=TaskType)
+        if task_type is not None else None
+    )
     # ── Build base query ──────────────────────────────────────────────────────
     base_stmt = (
         select(AnalysisTask, Coach.name.label("coach_name"))
@@ -244,16 +217,9 @@ def list_cos_videos(
     Returns video list with cos_object_key ready to submit to POST /api/v1/tasks/kb-extraction
     （Feature-017: 原 /tasks/expert-video 已下线）.
     """
-    if action_type not in ("forehand", "backhand", "all"):
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message="action_type must be one of: forehand, backhand, all",
-            details={
-                "field": "action_type",
-                "value": action_type,
-                "allowed": ["forehand", "backhand", "all"],
-            },
-        )
+    action_type = validate_enum_choice(
+        action_type, field="action_type", allowed=["forehand", "backhand", "all"],
+    )
     videos = cos_client.list_videos(action_type=action_type)
     return ok(CosVideoListResponse(
         action_type_filter=action_type,
@@ -827,6 +793,60 @@ async def _f13_submit(
             ErrorCode.INVALID_INPUT, message=str(exc),
         ) from exc
     return _f13_serialise_result(result)
+
+
+# ── PATCH /tasks/{task_id}/coach ──────────────────────────────────────────────
+# Feature-017 阶段 5 T050：从 coaches.py 搬迁到 tasks.py（资源归属为 task，业务逻辑不变）
+
+@router.patch("/tasks/{task_id}/coach", response_model=SuccessEnvelope[TaskCoachResponse])
+async def assign_coach_to_task(
+    task_id: uuid.UUID,
+    body: TaskCoachUpdate,
+    db: AsyncSession = Depends(get_db),
+) -> SuccessEnvelope[TaskCoachResponse]:
+    """Assign (or remove) a coach for an expert video task."""
+    task_result = await db.execute(
+        select(AnalysisTask).where(
+            AnalysisTask.id == task_id,
+            AnalysisTask.deleted_at.is_(None),
+        )
+    )
+    task = task_result.scalar_one_or_none()
+    if task is None:
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": str(task_id)},
+        )
+
+    coach_name: str | None = None
+    if body.coach_id is not None:
+        coach_result = await db.execute(
+            select(Coach).where(Coach.id == body.coach_id)
+        )
+        coach = coach_result.scalar_one_or_none()
+        if coach is None:
+            raise AppException(
+                ErrorCode.COACH_NOT_FOUND,
+                details={"coach_id": str(body.coach_id)},
+            )
+        if not coach.is_active:
+            raise AppException(
+                ErrorCode.COACH_INACTIVE,
+                message="无法关联已停用的教练",
+                details={"coach_id": str(body.coach_id)},
+            )
+        coach_name = coach.name
+
+    task.coach_id = body.coach_id
+    await db.commit()
+    logger.info(
+        "task coach assigned task_id=%s coach_id=%s", task_id, body.coach_id
+    )
+    return ok(TaskCoachResponse(
+        task_id=task_id,
+        coach_id=body.coach_id,
+        coach_name=coach_name,
+    ))
 
 
 # ── POST /tasks/classification (single) ──────────────────────────

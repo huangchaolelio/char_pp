@@ -6,11 +6,10 @@ Endpoints:
   GET    /coaches/{coach_id}         → get single coach
   PATCH  /coaches/{coach_id}         → update coach name/bio
   DELETE /coaches/{coach_id}         → soft-delete (204)
-  PATCH  /tasks/{task_id}/coach      → associate coach to task
 
 Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException`` 改为 ``AppException``
-（章程 v1.4.0 原则 IX）。``PATCH /tasks/{task_id}/coach`` 暂留此处，后续阶段 5 T050
-搬迁到 tasks.py（仅跨文件剪切，业务逻辑不动）。
+（章程 v1.4.0 原则 IX）。``PATCH /tasks/{task_id}/coach`` 已于阶段 5 T050
+搬迁至 ``src/api/routers/tasks.py``（资源归属为 task，一文件一资源）。
 """
 
 from __future__ import annotations
@@ -28,12 +27,9 @@ from src.api.schemas.coach import (
     CoachCreate,
     CoachResponse,
     CoachUpdate,
-    TaskCoachResponse,
-    TaskCoachUpdate,
 )
 from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.db.session import get_db
-from src.models.analysis_task import AnalysisTask
 from src.models.coach import Coach
 
 logger = logging.getLogger(__name__)
@@ -172,54 +168,7 @@ async def soft_delete_coach(
     logger.info("coach soft-deleted id=%s name=%s", coach.id, coach.name)
 
 
-# ── PATCH /tasks/{task_id}/coach ──────────────────────────────────────────────
+# ── PATCH /tasks/{task_id}/coach ─────────────────────────────────────────────
+# Feature-017 阶段 5 T050：已搬迁至 src/api/routers/tasks.py（资源归属 task）。
+# 本文件从此专注 /coaches 资源；跨资源端点请在对应资源 router 维护。
 
-@router.patch("/tasks/{task_id}/coach", response_model=SuccessEnvelope[TaskCoachResponse])
-async def assign_coach_to_task(
-    task_id: uuid.UUID,
-    body: TaskCoachUpdate,
-    db: AsyncSession = Depends(get_db),
-) -> SuccessEnvelope[TaskCoachResponse]:
-    """Assign (or remove) a coach for an expert video task."""
-    task_result = await db.execute(
-        select(AnalysisTask).where(
-            AnalysisTask.id == task_id,
-            AnalysisTask.deleted_at.is_(None),
-        )
-    )
-    task = task_result.scalar_one_or_none()
-    if task is None:
-        raise AppException(
-            ErrorCode.TASK_NOT_FOUND,
-            details={"task_id": str(task_id)},
-        )
-
-    coach_name: str | None = None
-    if body.coach_id is not None:
-        coach_result = await db.execute(
-            select(Coach).where(Coach.id == body.coach_id)
-        )
-        coach = coach_result.scalar_one_or_none()
-        if coach is None:
-            raise AppException(
-                ErrorCode.COACH_NOT_FOUND,
-                details={"coach_id": str(body.coach_id)},
-            )
-        if not coach.is_active:
-            raise AppException(
-                ErrorCode.COACH_INACTIVE,
-                message="无法关联已停用的教练",
-                details={"coach_id": str(body.coach_id)},
-            )
-        coach_name = coach.name
-
-    task.coach_id = body.coach_id
-    await db.commit()
-    logger.info(
-        "task coach assigned task_id=%s coach_id=%s", task_id, body.coach_id
-    )
-    return ok(TaskCoachResponse(
-        task_id=task_id,
-        coach_id=body.coach_id,
-        coach_name=coach_name,
-    ))

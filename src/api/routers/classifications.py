@@ -24,6 +24,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
+from src.api.enums import validate_enum_choice
 from src.api.schemas.classification import (
     ClassificationItem,
     ClassificationPatchRequest,
@@ -52,16 +53,9 @@ router = APIRouter(tags=["classifications"])
 )
 async def trigger_scan(body: ScanRequest) -> SuccessEnvelope[ScanStatusResponse]:
     """触发全量或增量扫描，异步 Celery task，返回 task_id。"""
-    if body.scan_mode not in ("full", "incremental"):
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message=f"invalid scan_mode: {body.scan_mode!r}",
-            details={
-                "field": "scan_mode",
-                "value": body.scan_mode,
-                "allowed": ["full", "incremental"],
-            },
-        )
+    body.scan_mode = validate_enum_choice(
+        body.scan_mode, field="scan_mode", allowed=["full", "incremental"],
+    )
 
     task_id = str(uuid.uuid4())
     from src.workers.classification_task import scan_cos_videos
@@ -269,16 +263,9 @@ async def patch_classification(
     session: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[ClassificationPatchResponse]:
     """人工修正单条记录的技术分类，source 强制设为 manual，confidence=1.0."""
-    if body.tech_category not in TECH_CATEGORIES:
-        raise AppException(
-            ErrorCode.INVALID_ENUM_VALUE,
-            message=f"invalid tech_category: {body.tech_category!r}",
-            details={
-                "field": "tech_category",
-                "value": body.tech_category,
-                "allowed": sorted(TECH_CATEGORIES),
-            },
-        )
+    body.tech_category = validate_enum_choice(
+        body.tech_category, field="tech_category", allowed=TECH_CATEGORIES,
+    )
 
     record = await session.get(CoachVideoClassification, classification_id)
     if record is None:
