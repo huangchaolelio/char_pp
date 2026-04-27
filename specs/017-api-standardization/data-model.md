@@ -196,7 +196,7 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.KB_VERSION_NOT_FOUND: HTTPStatus.NOT_FOUND,
     ErrorCode.COS_OBJECT_NOT_FOUND: HTTPStatus.NOT_FOUND,
 
-    ErrorCode.TASK_NOT_READY: HTTPStatus.CONFLICT,                       # 409
+    ErrorCode.TASK_NOT_READY: HTTPStatus.BAD_REQUEST,                    # 400（Feature-017：业务状态校验统一 400）
     ErrorCode.COACH_INACTIVE: HTTPStatus.BAD_REQUEST,
     ErrorCode.COACH_ALREADY_INACTIVE: HTTPStatus.CONFLICT,
     ErrorCode.COACH_NAME_CONFLICT: HTTPStatus.CONFLICT,

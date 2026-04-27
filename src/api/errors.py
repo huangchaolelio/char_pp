@@ -109,7 +109,7 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.PREPROCESSING_JOB_NOT_FOUND: HTTPStatus.NOT_FOUND,
 
     # 状态 / 业务约束
-    ErrorCode.TASK_NOT_READY: HTTPStatus.CONFLICT,                 # 409
+    ErrorCode.TASK_NOT_READY: HTTPStatus.BAD_REQUEST,                 # 400（Feature-017：业务状态校验统一 400，对齐 JOB_NOT_FAILED）
     ErrorCode.COACH_INACTIVE: HTTPStatus.BAD_REQUEST,
     ErrorCode.COACH_ALREADY_INACTIVE: HTTPStatus.CONFLICT,
     ErrorCode.COACH_NAME_CONFLICT: HTTPStatus.CONFLICT,

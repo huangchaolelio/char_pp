@@ -63,15 +63,18 @@ class TestGetTaskStatus:
 class TestGetTaskResult:
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
-    async def test_task_not_ready_returns_409(self, client, override_db):
+    async def test_task_not_ready_returns_400(self, client, override_db):
+        """Feature-017：TASK_NOT_READY 从 409 对齐为 400."""
         task = make_task(status="processing")
         result = MagicMock()
         result.scalar_one_or_none.return_value = task
         override_db.execute = AsyncMock(return_value=result)
 
         resp = await client.get(f"/api/v1/tasks/{TASK_ID}/result")
-        assert resp.status_code == 409
-        assert resp.json()["detail"]["code"] == "TASK_NOT_READY"
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "TASK_NOT_READY"
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")

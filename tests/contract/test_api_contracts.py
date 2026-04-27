@@ -85,7 +85,7 @@ class TestTaskStatusAndDeleteEndpoints:
 
     @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
     async def test_get_task_result_not_ready(self, async_client):
-        """GET /tasks/{task_id}/result when status != success → 409."""
+        """GET /tasks/{task_id}/result when status != success → 400 TASK_NOT_READY（Feature-017 对齐）."""
         task = _make_task(status="processing")
         mock_session = AsyncMock()
         mock_result = MagicMock()
@@ -99,9 +99,10 @@ class TestTaskStatusAndDeleteEndpoints:
         finally:
             app.dependency_overrides.pop(get_db, None)
 
-        assert response.status_code == 409
-        data = response.json()
-        assert data.get("detail", {}).get("code") == "TASK_NOT_READY"
+        assert response.status_code == 400
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "TASK_NOT_READY"
 
     async def test_delete_task_not_found(self, async_client):
         """DELETE /tasks/{task_id} with unknown UUID → 404."""

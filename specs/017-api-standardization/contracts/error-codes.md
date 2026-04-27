@@ -39,7 +39,7 @@
 
 | 错误码 | HTTP | 默认消息 | 触发场景 |
 |---|---|---|---|
-| `TASK_NOT_READY` | 409 | 任务尚未就绪 | 任务未到可读取结果的状态 |
+| `TASK_NOT_READY` | 400 | 任务尚未就绪 | 任务未到可读取结果的状态 |
 | `COACH_INACTIVE` | 400 | 教练已停用，无法关联 | 关联已停用教练 |
 | `COACH_ALREADY_INACTIVE` | 409 | 教练已处于停用状态 | 重复停用 |
 | `COACH_NAME_CONFLICT` | 409 | 教练名称冲突 | 创建/更新时 name 重复 |

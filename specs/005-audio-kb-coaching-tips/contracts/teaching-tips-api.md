@@ -22,7 +22,7 @@ Content-Type: application/json
 
 **错误**
 - `404 TASK_NOT_FOUND`：任务不存在
-- `409 TASK_NOT_READY`：任务未完成（status != success）
+- `400 TASK_NOT_READY`：任务未完成（status != success）——Feature-017 对齐章程统一 400
 - `409 NO_AUDIO_TRANSCRIPT`：该任务无音频转录记录
 - `422 WRONG_TASK_TYPE`：非 expert_video 任务
 

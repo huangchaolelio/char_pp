@@ -376,7 +376,10 @@ async def get_task_status(
 
 # ── GET /tasks/{task_id}/result ──────────────────────────────────────────────
 
-@router.get("/tasks/{task_id}/result")
+@router.get(
+    "/tasks/{task_id}/result",
+    response_model=SuccessEnvelope[Union[TaskResultExpertResponse, TaskResultAthleteResponse]],
+)
 async def get_task_result(
     task_id: str,
     db: AsyncSession = Depends(get_db),

@@ -80,7 +80,7 @@
 | `MISSING_VIDEO` | 400 | `tasks.py` | 输入校验类 |
 | `UPLOAD_FAILED` | 500 | `tasks.py` | 上游失败类（可并入 `COS_UPSTREAM_FAILED`） |
 | `TASK_NOT_FOUND` | 404 | `tasks.py`、`teaching_tips.py` | 资源不存在类 |
-| `TASK_NOT_READY` | 409 | `tasks.py`、`teaching_tips.py` | 状态校验类 |
+| `TASK_NOT_READY` | 400 | `tasks.py`、`teaching_tips.py` | 状态校验类（Feature-017：原 409→400，对齐 JOB_NOT_FAILED） |
 | `BATCH_TOO_LARGE` | 400 | `tasks.py` | 输入校验类 |
 | `CLASSIFICATION_REQUIRED` | 400 | `tasks.py` | 业务约束类 |
 | `COS_KEY_NOT_CLASSIFIED` | 400 | `tasks.py` | 业务约束类 |
