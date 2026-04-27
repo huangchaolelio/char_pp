@@ -138,6 +138,10 @@
 
 ### 关键 API
 
+> ⚠️ **Feature-017 更新**：下表中 `/api/v1/videos/classifications*` 系列**已于 2026-04-27 下线**，
+> 请改用 `/api/v1/classifications*`（Feature-008）。旧路径返回 `404 + ENDPOINT_RETIRED`，
+> `error.details.successor` 含替代路径。详见 `specs/017-api-standardization/contracts/retirement-ledger.md`。
+
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/api/v1/videos/classifications` | 查询分类记录（支持按教练/技术过滤） |

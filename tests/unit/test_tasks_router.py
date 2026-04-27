@@ -1,4 +1,8 @@
-"""Unit tests for tasks router — US1 endpoints (T025–T027, T030)."""
+"""Unit tests for tasks router — US1 endpoints (T025–T027, T030).
+
+Feature-017: POST /tasks/expert-video 已下线（替代 /tasks/classification + /tasks/kb-extraction），
+原 `TestSubmitExpertVideo` 测试类已移除。
+"""
 import uuid
 from datetime import datetime, timezone as _tz
 UTC = _tz.utc
@@ -9,59 +13,7 @@ import pytest
 from tests.unit.conftest import COS_KEY, KB_VERSION, TASK_ID, make_kb, make_task, make_tech_point
 
 
-# ── POST /api/v1/tasks/expert-video ──────────────────────────────────────────
-
-class TestSubmitExpertVideo:
-    @pytest.mark.asyncio
-    async def test_cos_object_not_found_returns_404(self, client, override_db):
-        with patch("src.api.routers.tasks.cos_client.object_exists", return_value=False):
-            resp = await client.post(
-                "/api/v1/tasks/expert-video",
-                json={"cos_object_key": COS_KEY},
-            )
-        assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "COS_OBJECT_NOT_FOUND"
-        assert resp.json()["detail"]["details"]["cos_object_key"] == COS_KEY
-
-    @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types")
-    async def test_success_returns_202_with_task_id(self, client, override_db):
-        task = make_task(status="pending")
-        override_db.refresh = AsyncMock(side_effect=lambda t: None)
-
-        # The submit endpoint queries VideoClassification after COS check
-        vc_result = MagicMock()
-        vc_result.scalar_one_or_none.return_value = None  # no classification found
-        override_db.execute = AsyncMock(return_value=vc_result)
-
-        with (
-            patch("src.api.routers.tasks.cos_client.object_exists", return_value=True),
-            patch("src.api.routers.tasks.process_expert_video") as mock_celery,
-            patch("src.services.video_classifier.VideoClassifierService") as mock_clf,
-        ):
-            mock_celery.delay = MagicMock()
-            clf_instance = MagicMock()
-            mock_clf.return_value = clf_instance
-            clf_result = MagicMock()
-            clf_result.action_type = "forehand_topspin"
-            clf_instance.classify.return_value = clf_result
-
-            resp = await client.post(
-                "/api/v1/tasks/expert-video",
-                json={"cos_object_key": COS_KEY, "notes": "test"},
-            )
-
-        assert resp.status_code == 202
-        body = resp.json()
-        assert body["status"] == "pending"
-        assert body["cos_object_key"] == COS_KEY
-        assert body["estimated_completion_seconds"] == 300
-        assert "task_id" in body
-        mock_celery.delay.assert_called_once()
-
-
-# ── GET /api/v1/tasks/{task_id} ───────────────────────────────────────────────
-
+# ── GET /api/v1/tasks/{task_id} ─────────────────────────────────────
 class TestGetTaskStatus:
     @pytest.mark.asyncio
     async def test_invalid_uuid_returns_404(self, client, override_db):

@@ -176,7 +176,7 @@ pending → processing → success
 |------|------|---------|
 | `/api/v1/tasks` | `tasks.py` | 任务查询（分页/筛选/排序） |
 | `/api/v1/knowledge-base` | `knowledge_base.py` | 知识库管理 |
-| `/api/v1/videos/classifications` | `videos.py` | 视频分类 + refresh（Feature-004） |
+| `/api/v1/videos/classifications` | ~~`videos.py`~~ | 已于 Feature-017 下线 → `/api/v1/classifications`（`classifications.py`） |
 | `/api/v1/classifications` | `classifications.py` | COS 扫描 + 分类（Feature-008） |
 | `/api/v1/coaches` | `coaches.py` | 教练 CRUD |
 | `/api/v1/standards` | `standards.py` | 技术标准查询 |

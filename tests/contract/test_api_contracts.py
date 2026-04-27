@@ -52,24 +52,9 @@ def async_client():
 
 @pytest.mark.contract
 @pytest.mark.asyncio
-class TestExpertVideoEndpoints:
-    async def test_post_expert_video_missing_key(self, async_client):
-        """POST /tasks/expert-video with missing COS key → 422."""
-        async with async_client as client:
-            response = await client.post("/api/v1/tasks/expert-video", json={})
-        assert response.status_code == 422
-
-    async def test_post_expert_video_cos_not_found(self, async_client):
-        """POST /tasks/expert-video with non-existent COS key → 404."""
-        with patch("src.api.routers.tasks.cos_client.object_exists", return_value=False):
-            async with async_client as client:
-                response = await client.post(
-                    "/api/v1/tasks/expert-video",
-                    json={"cos_object_key": "nonexistent.mp4"},
-                )
-        assert response.status_code == 404
-        data = response.json()
-        assert "error" in data or "detail" in data
+class TestTaskStatusAndDeleteEndpoints:
+    """Feature-017: POST /tasks/expert-video 已下线，类名由 TestExpertVideoEndpoints
+    重命名为 TestTaskStatusAndDeleteEndpoints，范围收束为 GET/DELETE /tasks/{id}."""
 
     async def test_get_task_status_not_found(self, async_client):
         """GET /tasks/{task_id} with unknown UUID → 404."""
@@ -219,7 +204,10 @@ class TestErrorResponseFormat:
 
 @pytest.mark.contract
 class TestFeature006TaskCoachContracts:
-    """T024: POST /tasks/expert-video accepts optional coach_id; GET /tasks/{id} returns coach_id."""
+    """T024: ExpertVideoRequest schema 兼容 coach_id; GET /tasks/{id} returns coach_id.
+
+    Feature-017: POST /tasks/expert-video 端点已下线，但 schema 本身仍保留作为
+    /tasks/kb-extraction 等新接口的请求模型基类，此处仍测 schema 层兼容性。"""
 
     def test_expert_video_request_accepts_coach_id(self):
         from src.api.schemas.task import ExpertVideoRequest

@@ -1,15 +1,15 @@
 """Tasks router — full endpoint implementations (T025–T027, T030, T036–T037, T041).
 
-US1 endpoints: expert-video submission, task status, expert result, soft-delete.
-US2 endpoints: athlete-video submission, athlete result (with deviation reports).
-US3 update: athlete result includes coaching_advice populated.
+Feature-017: expert-video / athlete-video 端点已物理下线（见 _retired.py 台账），
+替代为 /api/v1/tasks/classification、/api/v1/tasks/kb-extraction（原 expert-video）
+与 /api/v1/tasks/diagnosis（原 athlete-video）。
+
 Feature 012: GET /tasks list endpoint with pagination, filtering and sorting.
 """
 
 from __future__ import annotations
 
 import logging
-import shutil
 import time
 import uuid
 from datetime import datetime, timezone as _tz
@@ -17,7 +17,7 @@ UTC = _tz.utc
 from pathlib import Path
 from typing import Union, Optional
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,7 +29,6 @@ from src.api.schemas.task import (
     CosVideoItem,
     CosVideoListResponse,
     DeviationItem,
-    ExpertVideoRequest,
     ExtractedTechPoint,
     MotionAnalysisItem,
     ResultSummary,
@@ -56,11 +55,6 @@ from src.models.teaching_tip import TeachingTip
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_semantic_segment import TechSemanticSegment
 from src.services import cos_client
-
-# Feature 013: legacy workers deleted. The expert-video / athlete-video endpoints
-# below that reference process_expert_video / process_athlete_video are scheduled
-# for rewrite in Phase 3 (T022–T024). Until then we import lazily inside each
-# legacy endpoint so the module stays importable.
 
 logger = logging.getLogger(__name__)
 
@@ -236,7 +230,8 @@ def list_cos_videos(
     Query params:
         action_type: "forehand" | "backhand" | "all" (default: "all")
 
-    Returns video list with cos_object_key ready to submit to POST /tasks/expert-video.
+    Returns video list with cos_object_key ready to submit to POST /api/v1/tasks/kb-extraction
+    （Feature-017: 原 /tasks/expert-video 已下线）.
     """
     if action_type not in ("forehand", "backhand", "all"):
         from fastapi import HTTPException
@@ -252,234 +247,6 @@ def list_cos_videos(
         action_type_filter=action_type,
         total=len(videos),
         videos=[CosVideoItem(**v) for v in videos],
-    )
-
-
-# ── POST /tasks/expert-video ─────────────────────────────────────────────────
-
-@router.post("/tasks/expert-video", status_code=202, response_model=TaskSubmitResponse)
-async def submit_expert_video(
-    body: ExpertVideoRequest,
-    db: AsyncSession = Depends(get_db),
-) -> TaskSubmitResponse:
-    """Submit an expert coaching video for knowledge extraction.
-
-    1. Verify the COS object exists (sync check, fast).
-    2. Persist a pending AnalysisTask.
-    3. Dispatch the Celery worker.
-    4. Return 202 with task_id.
-    """
-    # Step 1 — COS existence pre-check (avoids queuing tasks that will fail immediately)
-    if not cos_client.object_exists(body.cos_object_key):
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "COS_OBJECT_NOT_FOUND",
-                "message": "指定的 COS 对象不存在或无访问权限",
-                "details": {"cos_object_key": body.cos_object_key},
-            },
-        )
-
-    # Step 1.5 — Early duration check if client supplies it (US3)
-    settings = get_settings()
-    if body.video_duration_seconds is not None:
-        if body.video_duration_seconds > settings.max_video_duration_s:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "VIDEO_TOO_LONG",
-                    "message": (
-                        f"视频时长 {body.video_duration_seconds:.0f}s 超过上限 "
-                        f"{settings.max_video_duration_s}s（{settings.max_video_duration_s // 60} 分钟）"
-                    ),
-                    "details": {
-                        "duration_seconds": body.video_duration_seconds,
-                        "max_duration_seconds": settings.max_video_duration_s,
-                    },
-                },
-            )
-
-    # Step 2 — Persist AnalysisTask in pending state
-    task = AnalysisTask(
-        id=uuid.uuid4(),
-        task_type=TaskType.expert_video,
-        status=TaskStatus.pending,
-        # Use the COS key as the logical filename; size unknown until download
-        video_filename=body.cos_object_key,
-        video_size_bytes=0,
-        video_storage_uri=body.cos_object_key,
-    )
-
-    # Feature 006: validate and associate coach if provided
-    if body.coach_id is not None:
-        coach_result = await db.execute(
-            select(Coach).where(Coach.id == body.coach_id)
-        )
-        coach = coach_result.scalar_one_or_none()
-        if coach is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "COACH_NOT_FOUND", "message": "教练不存在"},
-            )
-        if not coach.is_active:
-            raise HTTPException(
-                status_code=422,
-                detail={"code": "COACH_INACTIVE", "message": "无法关联已停用的教练"},
-            )
-        task.coach_id = body.coach_id
-
-    db.add(task)
-    await db.commit()
-    await db.refresh(task)
-
-    # Step 3 — Dispatch Celery task (fire-and-forget)
-    # Resolve action_type_hint: explicit > DB classification > lazy classify
-    action_type_hint = body.action_type_hint
-    if action_type_hint is None:
-        from src.models.video_classification import VideoClassification
-        from src.services.video_classifier import VideoClassifierService
-
-        vc_result = await db.execute(
-            select(VideoClassification).where(
-                VideoClassification.cos_object_key == body.cos_object_key
-            )
-        )
-        vc = vc_result.scalar_one_or_none()
-        if vc is not None:
-            # Use the DB classification (single source of truth — FR-010)
-            action_type_hint = vc.action_type
-        else:
-            # Lazy classify and persist for future calls
-            classifier = VideoClassifierService()
-            classification = classifier.classify(body.cos_object_key)
-            action_type_hint = classification.action_type
-            new_vc = VideoClassification(
-                cos_object_key=body.cos_object_key,
-                coach_name=classification.coach_name,
-                tech_category=classification.tech_category,
-                tech_sub_category=classification.tech_sub_category,
-                tech_detail=classification.tech_detail,
-                video_type=classification.video_type,
-                action_type=classification.action_type,
-                classification_confidence=classification.classification_confidence,
-                manually_overridden=False,
-            )
-            db.add(new_vc)
-            await db.commit()
-
-    # Feature 013: legacy worker removed — the expert-video endpoint is scheduled
-    # for rewrite in T022. Raise 410 Gone so callers migrate to /tasks/classification
-    # or /tasks/kb-extraction rather than silently hitting a missing pipeline.
-    raise HTTPException(
-        status_code=410,
-        detail="expert-video endpoint is deprecated; use /api/v1/tasks/classification "
-               "or /api/v1/tasks/kb-extraction (Feature 013)",
-    )
-    process_expert_video.apply_async(  # noqa: F821 — unreachable, kept for T022 diff  # type: ignore[unreachable]
-        args=[
-            str(task.id),
-            body.cos_object_key,
-            body.enable_audio_analysis,
-            body.audio_language,
-            action_type_hint,
-        ],
-        queue=body.queue,
-    )
-
-    # Step 4 — Return 202
-    return TaskSubmitResponse(
-        task_id=task.id,
-        status=task.status.value,
-        cos_object_key=body.cos_object_key,
-        estimated_completion_seconds=300,
-    )
-
-
-# ── POST /tasks/athlete-video ────────────────────────────────────────────────
-
-@router.post("/tasks/athlete-video", status_code=202, response_model=TaskSubmitResponse)
-async def submit_athlete_video(
-    video: UploadFile = File(..., description="运动员视频文件"),
-    knowledge_base_version: Optional[str] = Form(None, description="指定知识库版本（可选，默认使用 active 版本）"),
-    target_person_index: Optional[int] = Form(None, description="多人场景中目标人员索引（可选，默认 0）"),
-    db: AsyncSession = Depends(get_db),
-) -> TaskSubmitResponse:
-    """Submit an athlete video for deviation analysis.
-
-    Accepts multipart/form-data with the video file and optional parameters.
-    Returns 202 with task_id immediately; analysis runs asynchronously.
-    """
-    settings = get_settings()
-
-    # Validate file presence
-    if video.filename is None or video.filename == "":
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "MISSING_VIDEO",
-                "message": "请上传视频文件",
-                "details": {},
-            },
-        )
-
-    # Save uploaded file to temp directory
-    tmp_dir = Path(settings.tmp_dir)
-    tmp_dir.mkdir(parents=True, exist_ok=True)
-    tmp_filename = f"{uuid.uuid4()}_{video.filename}"
-    tmp_path = tmp_dir / tmp_filename
-
-    try:
-        with open(tmp_path, "wb") as f:
-            shutil.copyfileobj(video.file, f)
-    except Exception as exc:
-        raise HTTPException(
-            status_code=500,
-            detail={
-                "code": "UPLOAD_FAILED",
-                "message": "视频文件保存失败",
-                "details": {"error": str(exc)},
-            },
-        ) from exc
-    finally:
-        await video.close()
-
-    file_size = tmp_path.stat().st_size
-
-    # Create AnalysisTask
-    task = AnalysisTask(
-        id=uuid.uuid4(),
-        task_type=TaskType.athlete_video,
-        status=TaskStatus.pending,
-        video_filename=video.filename,
-        video_size_bytes=file_size,
-        video_storage_uri=str(tmp_path),
-        knowledge_base_version=knowledge_base_version,
-    )
-    db.add(task)
-    await db.commit()
-    await db.refresh(task)
-
-    # Feature 013: legacy worker removed — athlete-video endpoint is scheduled for
-    # rewrite in T024. Respond 410 Gone directing clients to /tasks/diagnosis.
-    raise HTTPException(
-        status_code=410,
-        detail="athlete-video endpoint is deprecated; use /api/v1/tasks/diagnosis "
-               "(Feature 013)",
-    )
-    # Dispatch Celery task  # type: ignore[unreachable]
-    from src.workers.athlete_video_task import process_athlete_video  # noqa: F401  # pragma: no cover
-    process_athlete_video.delay(
-        str(task.id),
-        str(tmp_path),
-        knowledge_base_version,
-        target_person_index,
-    )
-
-    return TaskSubmitResponse(
-        task_id=task.id,
-        status=task.status.value,
-        knowledge_base_version=knowledge_base_version,
-        estimated_completion_seconds=300,
     )
 
 
