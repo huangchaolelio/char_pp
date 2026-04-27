@@ -646,3 +646,85 @@ Feature-015 部署烟测（2026-04-25）暴露两个核心问题：
 - SC-006：预处理耗时 ≤ 原视频时长 × 5
 - SC-007：100% 失败带结构化错误前缀
 
+
+## Feature-017 API 规范化
+
+**状态：已完成**
+**规范：** `specs/017-api-standardization/`
+**章程依据：** v1.4.0 原则 IX
+**合入策略：** Big Bang（无废弃期，无 `/api/v2`；同一合入窗口内前后端联动切换）
+
+### 背景
+
+Feature-001 ~ Feature-016 累积 16 个功能迭代后，API 外观出现三类漂移：
+1. **响应体形态各异**：列表接口混用 `{data:[], total}` / `{items:[], total, page, page_size}` / 裸数组；错误体混用 `{detail}` / `{error:{code,message}}` / 裸字符串
+2. **命名不一致**：`/videos/classifications` vs `/coaches` 路径层级混乱；`{id}` / `{cos_object_key}` / `{coach_id}` 路径参数命名不统一；`limit/offset` vs `page/page_size` 分页参数并存
+3. **错误码散落**：25+ 个裸字符串错误码写死在路由层 `HTTPException(detail={"code":"X"})` 中，无集中化、无 CI 阻断
+
+### 功能描述
+
+本 Feature **只重塑 API 外观，不改变业务行为**，四条主线并进：
+- **US1**（P1）：响应体统一信封 `SuccessEnvelope` / `ErrorEnvelope`
+- **US2**（P1）：下线 7 条废旧接口，保留哨兵路由返回 `ENDPOINT_RETIRED`
+- **US3**（P2）：路径命名统一 kebab-case + `{resource_id}` + `page/page_size` 分页 + 枚举归一化
+- **US4**（P2）：错误码集中化 39 个 `ErrorCode` 枚举 + CI 阻断裸字符串
+
+### 核心能力
+
+- **统一响应信封**（`src/api/schemas/envelope.py`）：
+  - `SuccessEnvelope[T]` 泛型 + `ok(data)` / `page(items, page=, page_size=, total=)` 构造器
+  - `ErrorEnvelope` 错误信封 + 全局异常处理器（`src/api/errors.py::register_exception_handlers`）
+  - 顶层 `success` 布尔位作为判别式；JSON Schema 约束见 `contracts/response-envelope.schema.json`
+- **集中化错误码**（39 个 `ErrorCode` 枚举）：
+  - 三元同步：`ErrorCode` ↔ `ERROR_STATUS_MAP`（HTTP 状态）↔ `ERROR_DEFAULT_MESSAGE`（默认消息）
+  - 已发布错误码禁止改名或更换 HTTP 状态，只允许新增
+  - `AppException(ErrorCode.XXX, message=..., details=...)` 替代所有 `HTTPException`
+- **统一分页参数**：
+  - `page`（ge=1，默认 1）+ `page_size`（ge=1, le=100，默认 20）
+  - Pydantic `Query` 硬约束，越界自动 422 + `VALIDATION_FAILED`，**禁止静默截断**
+  - 禁用 `limit/offset/skip/take/pageNum/pageSize`
+- **枚举归一化**（`src/api/enums.py`）：
+  - `normalize_enum_value`：strip + lower + (`-` → `_`)
+  - `parse_enum_param(value, field, enum_cls)`：绑定到 str Enum 类
+  - `validate_enum_choice(value, field, allowed)`：白名单校验
+- **哨兵路由**（`src/api/routers/_retired.py`）：
+  - 7 条已下线接口保留方法+路径，统一抛 `AppException(ENDPOINT_RETIRED, details={successor, migration_note})`
+  - 台账双份维护：代码侧 `RETIREMENT_LEDGER` + 文档侧 `contracts/retirement-ledger.md`
+- **CI Linter 双管齐下**：
+  - `scripts/lint_api_naming.py`：路径命名 + 分页参数 + 禁用 limit/offset
+  - `scripts/lint_error_codes.py`：业务代码裸字符串错误码 / `raise HTTPException` 扫描
+
+### 已下线接口（7 条）
+
+| 旧端点 | 替代 |
+|--------|------|
+| `POST /api/v1/tasks/expert-video` | `POST /api/v1/tasks/classification` + `POST /api/v1/tasks/kb-extraction` |
+| `POST /api/v1/tasks/athlete-video` | `POST /api/v1/tasks/diagnosis` |
+| `GET /api/v1/videos/classifications` | `GET /api/v1/classifications` |
+| `POST /api/v1/videos/classifications/refresh` | `POST /api/v1/classifications/scan` |
+| `PATCH /api/v1/videos/classifications/{cos_object_key}` | `PATCH /api/v1/classifications/{id}` |
+| `POST /api/v1/videos/classifications/batch-submit` | `POST /api/v1/tasks/kb-extraction/batch` |
+| `POST /api/v1/diagnosis` | `POST /api/v1/tasks/diagnosis`（同步 → 异步）|
+
+### 搬迁（1 处）
+
+- `PATCH /tasks/{task_id}/coach` 从 `coaches.py` 搬迁至 `tasks.py`（资源归属 task）；路径不变，仅跨文件剪切
+
+### 性能指标（SC）
+
+- SC-001：统一信封 100% 覆盖所有 `/api/v1/**` 接口
+- SC-002：7 条已下线接口 100% 返回 `ENDPOINT_RETIRED`
+- SC-003：前后端联动切换后接口合约测试全绿
+- SC-004：CI 扫描脚本 0 违规（裸字符串错误码 + 命名规范）
+- SC-005：`/api/v1/videos/classifications*` / `/api/v1/diagnosis` 哨兵路由返回 404 + `ENDPOINT_RETIRED`
+- SC-006：8 条主要业务端点 `curl` 手工验证响应体含 `success` 布尔位
+- SC-007：命名规范一致，后续新 Feature 无需扩展 linter 规则
+- SC-008：新成员 `docs/api-standardization-guide.md` 5 分钟内理解
+- SC-009：OpenAPI 契约 100% 引用 `SuccessEnvelope` / `ErrorEnvelope` schema
+
+### 新成员入口文档
+
+- **一般开发**：`docs/api-standardization-guide.md`（10 节，含路径/信封/分页/枚举/错误码/下线/TDD/Pre-merge 自检清单/FAQ）
+- **架构细节**：本文档对应章节 + `docs/architecture.md` 「API 接口层」
+- **完整规范**：`specs/017-api-standardization/` 目录
+

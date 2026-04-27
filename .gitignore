@@ -66,3 +66,4 @@ nohup.out
 # Broken pip install artifacts
 =*
 dump.rdb
+core.*

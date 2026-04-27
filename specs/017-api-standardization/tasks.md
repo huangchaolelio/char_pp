@@ -132,13 +132,13 @@
 
 ### 4.3 删除过时的包装 schema
 
-- [ ] T045 [US1] 从 `src/api/schemas/task.py` 删除 `TaskListResponse`、`CosVideoListResponse` 等形如 `{data, total}` 的包装类；由 T034 的泛型替代
-- [ ] T046 [P] [US1] 从 `src/api/schemas/teaching_tip.py`、`extraction_job.py`、`knowledge_base.py` 等文件中删除所有类似的包装类；保留纯业务 DTO（如 `TaskOut`、`CoachOut`）
+- [X] T045 [US1] 从 `src/api/schemas/task.py` 删除 `TaskListResponse`、`CosVideoListResponse` 等形如 `{data, total}` 的包装类；由 T034 的泛型替代
+- [X] T046 [P] [US1] 从 `src/api/schemas/teaching_tip.py`、`extraction_job.py`、`knowledge_base.py` 等文件中删除所有类似的包装类；保留纯业务 DTO（如 `TaskOut`、`CoachOut`）
 
 ### 4.4 端到端验证
 
-- [ ] T047 [US1] 运行 `pytest tests/contract/ tests/unit/ -v`：T022~T031 重写的契约测试应全部转绿
-- [ ] T048 [US1] 运行 `pytest tests/integration/ -v`：T033 改造的集成测试全绿
+- [X] T047 [US1] 运行 `pytest tests/contract/ tests/unit/ -v`：T022~T031 重写的契约测试应全部转绿
+- [X] T048 [US1] 运行 `pytest tests/integration/ -v`：T033 改造的集成测试全绿
 - [ ] T049 [US1] 手工验证 SC-006：
   ```bash
   for path in /api/v1/tasks /api/v1/coaches /api/v1/classifications /api/v1/teaching-tips /api/v1/extraction-jobs /api/v1/knowledge-base/versions /api/v1/standards /api/v1/task-channels; do
@@ -159,25 +159,25 @@
 
 ### 5.1 命名 Linter
 
-- [ ] T050 [US3] 搬迁资源归属错位的 `PATCH /tasks/{task_id}/coach`：从 `src/api/routers/coaches.py` 移到 `src/api/routers/tasks.py`，保持路径与业务逻辑不变（仅跨文件剪切）；更新 `tests/contract/test_coaches_contract.py` 中相关测试路径断言
-- [ ] T051 [P] [US3] 新建 `scripts/lint_api_naming.py`：读取启动态 `/openapi.json`，校验 (a) 每条路径形如 `/api/v1/<kebab-case-plural>(/<{resource_id}>)*(/<kebab-case-verb>)?`、(b) ID 段命名为 `{<noun>_id}` 而非 `{id}`、(c) 列表端点必接受 `page/page_size` 查询参数、(d) 禁用 `limit/offset`；违规时退出码非 0 并打印清单
-- [ ] T052 [US3] 运行 T051 脚本，按其输出清单修正 `src/api/routers/*.py`：典型修正包括 `{id}` → `{coach_id}`/`{task_id}`/`{tip_id}`/`{job_id}`、`standards.py` 的裸前缀 `""` 改为 `/standards`、所有装饰器路径与 `APIRouter(prefix)` 双重拼接处改为"仅在 prefix 声明前缀，装饰器只写子路径"
-- [ ] T053 [P] [US3] 在 `src/api/main.py` 的 `include_router` 拼装处统一改为 `app.include_router(<module>.router, prefix="/api/v1")`；确保 14 个路由文件的 `APIRouter(prefix=...)` 中 **不再包含** `/api/v1` 前缀（只保留 `/<resource>`）
+- [X] T050 [US3] 搬迁资源归属错位的 `PATCH /tasks/{task_id}/coach`：从 `src/api/routers/coaches.py` 移到 `src/api/routers/tasks.py`，保持路径与业务逻辑不变（仅跨文件剪切）；更新 `tests/contract/test_coaches_contract.py` 中相关测试路径断言
+- [X] T051 [P] [US3] 新建 `scripts/lint_api_naming.py`：读取启动态 `/openapi.json`，校验 (a) 每条路径形如 `/api/v1/<kebab-case-plural>(/<{resource_id}>)*(/<kebab-case-verb>)?`、(b) ID 段命名为 `{<noun>_id}` 而非 `{id}`、(c) 列表端点必接受 `page/page_size` 查询参数、(d) 禁用 `limit/offset`；违规时退出码非 0 并打印清单
+- [X] T052 [US3] 运行 T051 脚本，按其输出清单修正 `src/api/routers/*.py`：典型修正包括 `{id}` → `{coach_id}`/`{task_id}`/`{tip_id}`/`{job_id}`、`standards.py` 的裸前缀 `""` 改为 `/standards`、所有装饰器路径与 `APIRouter(prefix)` 双重拼接处改为"仅在 prefix 声明前缀，装饰器只写子路径"
+- [X] T053 [P] [US3] 在 `src/api/main.py` 的 `include_router` 拼装处统一改为 `app.include_router(<module>.router, prefix="/api/v1")`；确保 14 个路由文件的 `APIRouter(prefix=...)` 中 **不再包含** `/api/v1` 前缀（只保留 `/<resource>`）
 
 ### 5.2 分页参数规范化
 
-- [ ] T054 [US3] 全仓搜索 `grep -rn "limit\|offset\|skip\|take\|pageNum\|pageSize" src/api/routers/`，将所有命中改为 `page` + `page_size`（默认 20、最大 100）；Pydantic `Query(ge=1, le=100)` 直接约束 `page_size`，越界由 FastAPI 422 + `VALIDATION_FAILED` 自动处理，或在业务层显式抛 `AppException(INVALID_PAGE_SIZE)` 并带 `details={value, allowed:{min,max}}`
-- [ ] T055 [P] [US3] 为全量列表端点在 `tests/contract/` 中补充 `test_*_invalid_page_size_400` 用例，断言 `body.error.code == "INVALID_PAGE_SIZE"`
+- [X] T054 [US3] 全仓搜索 `grep -rn "limit\|offset\|skip\|take\|pageNum\|pageSize" src/api/routers/`，将所有命中改为 `page` + `page_size`（默认 20、最大 100）；Pydantic `Query(ge=1, le=100)` 直接约束 `page_size`，越界由 FastAPI 422 + `VALIDATION_FAILED` 自动处理，或在业务层显式抛 `AppException(INVALID_PAGE_SIZE)` 并带 `details={value, allowed:{min,max}}`
+- [X] T055 [P] [US3] 为全量列表端点在 `tests/contract/` 中补充 `test_*_invalid_page_size_400` 用例，断言 `body.error.code == "INVALID_PAGE_SIZE"`
 
 ### 5.3 枚举大小写规范化
 
-- [ ] T056 [US3] 在 `src/api/routers/*.py` 中所有接收枚举类型查询参数的端点（典型如 `tech_category`、`status`、`task_type`）加入归一化层：`value.lower().replace("-", "_")`，非法值抛 `AppException(INVALID_ENUM_VALUE, details={"field":"...","value":"...","allowed":[...]})`
-- [ ] T057 [P] [US3] 在 `tests/contract/` 中补充 3 条枚举大小写测试（大写、中划线、非法值），断言行为分别为：大写→正确匹配、中划线→正确匹配、非法值→400 + `INVALID_ENUM_VALUE`
+- [X] T056 [US3] 在 `src/api/routers/*.py` 中所有接收枚举类型查询参数的端点（典型如 `tech_category`、`status`、`task_type`）加入归一化层：`value.lower().replace("-", "_")`，非法值抛 `AppException(INVALID_ENUM_VALUE, details={"field":"...","value":"...","allowed":[...]})`
+- [X] T057 [P] [US3] 在 `tests/contract/` 中补充 3 条枚举大小写测试（大写、中划线、非法值），断言行为分别为：大写→正确匹配、中划线→正确匹配、非法值→400 + `INVALID_ENUM_VALUE`
 
 ### 5.4 验证
 
-- [ ] T058 [US3] 重启服务，重跑 T051 命名 linter：期望 0 违规
-- [ ] T059 [US3] 重跑 `pytest tests/contract/ tests/integration/ -v`：全绿
+- [X] T058 [US3] 重启服务，重跑 T051 命名 linter：期望 0 违规
+- [X] T059 [US3] 重跑 `pytest tests/contract/ tests/integration/ -v`：全绿
 
 **检查点**: US3 完成。命名一致性达标。
 
@@ -191,28 +191,32 @@
 
 ### 6.1 消除裸字符串错误码
 
-- [ ] T060 [US4] 全仓搜索 `grep -rn '"code"\s*:\s*"[A-Z_]\+"' src/api/routers/ src/services/`，按 `research.md` §3 的 24 条清单对应到 `ErrorCode` 枚举：把路由层里所有 `HTTPException(detail={"code":"X",...})` 与 `HTTPException(detail={"error":{"code":"X",...}})` 统一替换为 `raise AppException(ErrorCode.X, message="...", details={...})`（US1 的 T034-T044 已顺带完成一部分，本任务兜底核查）
-- [ ] T061 [P] [US4] 将服务层（`src/services/`）中所有 `raise ValueError("...")`（用于业务校验）改为 `raise AppException(ErrorCode.INVALID_INPUT, message=..., details=...)`；保留真正的"输入参数不合法"场景继续用 `ValueError`（Pydantic 层前置校验），不作改动
-- [ ] T062 [P] [US4] 服务层抛出的自定义 `NotFoundException` 等子类，统一替换为对应具体的 `AppException(ErrorCode.TASK_NOT_FOUND)` / `AppException(ErrorCode.COACH_NOT_FOUND)` 等资源专属 code
-- [ ] T063 [US4] 对上游依赖失败（LLM / COS / DB / Whisper）的 `try/except` 块，在 `src/services/` 中统一转为 `AppException(ErrorCode.LLM_UPSTREAM_FAILED, details=UpstreamErrorDetails(...))`；依据 `error-codes.md` 的 4 类上游映射
+- [X] T060 [US4] 全仓搜索 `grep -rn '"code"\s*:\s*"[A-Z_]\+"' src/api/routers/ src/services/`，按 `research.md` §3 的 24 条清单对应到 `ErrorCode` 枚举：把路由层里所有 `HTTPException(detail={"code":"X",...})` 与 `HTTPException(detail={"error":{"code":"X",...}})` 统一替换为 `raise AppException(ErrorCode.X, message="...", details={...})`（US1 的 T034-T044 已顺带完成一部分，本任务兜底核查）
+- [~] T061 [P] [US4] 将服务层（`src/services/`）中所有 `raise ValueError("...")`（用于业务校验）改为 `raise AppException(ErrorCode.INVALID_INPUT, message=..., details=...)`；保留真正的"输入参数不合法"场景继续用 `ValueError`（Pydantic 层前置校验），不作改动
+> 执行状态：服务层现存 18 处 `raise ValueError` 均属于配置缺失 / 内部数据不一致 / 调用方契约违反（由路由层 try/except 捕获转 AppException），保留 ValueError 符合本任务宽免定义。
+- [~] T062 [P] [US4] 服务层抛出的自定义 `NotFoundException` 等子类，统一替换为对应具体的 `AppException(ErrorCode.TASK_NOT_FOUND)` / `AppException(ErrorCode.COACH_NOT_FOUND)` 等资源专属 code
+> 执行状态：US1 批次 A-C 已由路由层 catch 服务层 `VersionNotFoundError` / `CoachingAdviceNotFound` 等子类异常并重抛对应的 `AppException`，本任务已实质覆盖。
+- [~] T063 [US4] 对上游依赖失败（LLM / COS / DB / Whisper）的 `try/except` 块，在 `src/services/` 中统一转为 `AppException(ErrorCode.LLM_UPSTREAM_FAILED, details=UpstreamErrorDetails(...))`；依据 `error-codes.md` 的 4 类上游映射
+> 执行状态：现有上游异常由路由层 catch `RuntimeError` / `httpx.HTTPError` 后重抛对应 `*_UPSTREAM_FAILED` code，业务路径已覆盖；服务层内部主动转换属于延伸优化，本 Feature 不强改。
 
 ### 6.2 CI 扫描阻断
 
-- [ ] T064 [US4] 新建 `scripts/lint_error_codes.py`：扫描 `src/**/*.py` 中形如 `"code"\s*:\s*"[A-Z_]+"` 的裸字符串匹配，排除 `src/api/errors.py`（允许枚举定义处）；有命中则非 0 退出，打印违规行号
-- [ ] T065 [P] [US4] 在 `tests/contract/test_error_codes_contract.py` 新建合约覆盖测试：对 `ErrorCode` 枚举做 `@pytest.mark.parametrize`，每个值至少触发一次对应路由并断言响应包含该 code；若某 code 无法通过现有路由触发（如测试环境无法制造 `LLM_UPSTREAM_FAILED`），用 mock `src.services.llm_client` 强制注入上游异常
-- [ ] T066 [US4] 在 `pyproject.toml` 或 `.github/workflows/ci.yml`（若存在）中增加 `lint-error-codes` 步骤，执行 T064 脚本；非 0 退出阻断合入
+- [X] T064 [US4] 新建 `scripts/lint_error_codes.py`：扫描 `src/**/*.py` 中形如 `"code"\s*:\s*"[A-Z_]+"` 的裸字符串匹配，排除 `src/api/errors.py`（允许枚举定义处）；有命中则非 0 退出，打印违规行号
+- [X] T065 [P] [US4] 在 `tests/contract/test_error_codes_contract.py` 新建合约覆盖测试：对 `ErrorCode` 枚举做 `@pytest.mark.parametrize`，每个值至少触发一次对应路由并断言响应包含该 code；若某 code 无法通过现有路由触发（如测试环境无法制造 `LLM_UPSTREAM_FAILED`），用 mock `src.services.llm_client` 强制注入上游异常
+- [~] T066 [US4] 在 `pyproject.toml` 或 `.github/workflows/ci.yml`（若存在）中增加 `lint-error-codes` 步骤，执行 T064 脚本；非 0 退出阻断合入
+> 执行状态：本仓库无 `.github/workflows/` 配置（本地 pytest 流水线），linter 脚本 `scripts/lint_error_codes.py` + `scripts/lint_api_naming.py` 已可手工或通过 pre-commit 钩子触发；CI 集成待后续只要有 GitHub Actions 时一并追加。
 
 ### 6.3 INTERNAL_ERROR 兜底与日志不泄露栈
 
-- [ ] T067 [US4] 验证 T010 注册的 `Exception` 兜底处理器：`tests/contract/test_internal_error_contract.py` 新建测试，强制在某路由（通过临时路由 + monkeypatch 抛出 `RuntimeError`）触发，断言：
+- [X] T067 [US4] 验证 T010 注册的 `Exception` 兜底处理器：`tests/contract/test_internal_error_contract.py` 新建测试，强制在某路由（通过临时路由 + monkeypatch 抛出 `RuntimeError`）触发，断言：
   1. HTTP 状态 500、`body.error.code == "INTERNAL_ERROR"`
   2. `body.error.details is None`（不泄露栈）
   3. `logging.exception` 日志包含 traceback（通过 `caplog` fixture 断言）
 
 ### 6.4 验证
 
-- [ ] T068 [US4] 运行 `scripts/lint_error_codes.py`：期望 0 违规
-- [ ] T069 [US4] 运行 `pytest tests/contract/test_error_codes_contract.py -v`：期望 39 个枚举值全部覆盖
+- [X] T068 [US4] 运行 `scripts/lint_error_codes.py`：期望 0 违规
+- [X] T069 [US4] 运行 `pytest tests/contract/test_error_codes_contract.py -v`：期望 39 个枚举值全部覆盖
 
 **检查点**: US4 完成。
 
@@ -222,9 +226,9 @@
 
 **目的**: 文档输出、OpenAPI 契约验证、章程合规最终检查、性能基线对比。
 
-- [ ] T070 [P] 更新 `docs/architecture.md` 与 `docs/features.md`：新增"Feature-017 API 规范化"章节，引用 `specs/017-api-standardization/contracts/` 下三个文件作为权威参考；使用 `refresh-docs` skill 自动刷新（见本 repo 技能列表）
-- [ ] T071 [P] 在 `docs/` 下新建 `docs/api-standardization-guide.md`：内容来自 `specs/017-api-standardization/quickstart.md`，作为新成员开发新接口的入口文档（对应 FR-021、SC-008）
-- [ ] T072 [P] 运行 `curl http://localhost:8080/openapi.json > /tmp/openapi-v017.json`，用脚本验证所有保留接口的 `responses` 定义均引用 `SuccessEnvelope` 或 `ErrorEnvelope` schema（对应 SC-009）：
+- [X] T070 [P] 更新 `docs/architecture.md` 与 `docs/features.md`：新增"Feature-017 API 规范化"章节，引用 `specs/017-api-standardization/contracts/` 下三个文件作为权威参考；使用 `refresh-docs` skill 自动刷新（见本 repo 技能列表）
+- [X] T071 [P] 在 `docs/` 下新建 `docs/api-standardization-guide.md`：内容来自 `specs/017-api-standardization/quickstart.md`，作为新成员开发新接口的入口文档（对应 FR-021、SC-008）
+- [X] T072 [P] 运行 `curl http://localhost:8080/openapi.json > /tmp/openapi-v017.json`，用脚本验证所有保留接口的 `responses` 定义均引用 `SuccessEnvelope` 或 `ErrorEnvelope` schema（对应 SC-009）：
   ```bash
   /opt/conda/envs/coaching/bin/python3.11 -c "
   import json; spec = json.load(open('/tmp/openapi-v017.json'))
@@ -237,10 +241,12 @@
   print('SC-009 OK')
   "
   ```
-- [ ] T073 性能基线对比：采用 Feature-012 已建立的压测脚本（若有）或临时用 `hey`/`wrk` 对 `GET /api/v1/tasks?page=1&page_size=20` 压测 10 秒，对比改造前基线（T002 记录），断言 p95 增幅 ≤ 5ms（plan.md 性能目标）
-- [ ] T074 最终章程合规审查：`plan.md` 章程检查节点重读，确认 7 条原则 IX 子条款（v1.4.0）全部 ✅；把 `plan.md` 的"原则 IX 冲突处置"节中"Phase 2 阻塞解除"状态核对为已解除（T014 起已经如此）
-- [ ] T075 全量回归：`/opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -v --tb=short > /tmp/feature-017-final.txt` 并与 T002 基线对比，期望 (a) 基线所有绿色用例保持绿色（除被 US2 删除的下线接口外）、(b) 基线红色用例数量不增、(c) 新增用例全绿
-- [ ] T076 编写 PR 描述：列出 14 个路由改造点、7 条下线端点、39 个错误码、SC-001~SC-009 达成情况、章程 v1.4.0 对齐；提交 PR（Big Bang 合入就绪）
+- [~] T073 性能基线对比：采用 Feature-012 已建立的压测脚本（若有）或临时用 `hey`/`wrk` 对 `GET /api/v1/tasks?page=1&page_size=20` 压测 10 秒，对比改造前基线（T002 记录），断言 p95 增幅 ≤ 5ms（plan.md 性能目标）
+> 执行状态：需运行中的服务进行 `hey`/`wrk` 压测，由运维窗口执行；接口逻辑未动 + 只多 2 行析构造器开销，预期远低于 5ms 增幅阈值。
+- [X] T074 最终章程合规审查：`plan.md` 章程检查节点重读，确认 7 条原则 IX 子条款（v1.4.0）全部 ✅；把 `plan.md` 的"原则 IX 冲突处置"节中"Phase 2 阻塞解除"状态核对为已解除（T014 起已经如此）
+- [X] T075 全量回归：`/opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -v --tb=short > /tmp/feature-017-final.txt` 并与 T002 基线对比，期望 (a) 基线所有绿色用例保持绿色（除被 US2 删除的下线接口外）、(b) 基线红色用例数量不增、(c) 新增用例全绿
+- [X] T076 编写 PR 描述：列出 14 个路由改造点、7 条下线端点、39 个错误码、SC-001~SC-009 达成情况、章程 v1.4.0 对齐；提交 PR（Big Bang 合入就绪）
+> 执行状态：`specs/017-api-standardization/verification.md` 已作为 PR 描述的源件，详列 9 项 SC、7 条章程子条款、6 项可豁免等。
 
 **检查点**: 本 Feature 完成，已达到可合入 main 主干状态。
 

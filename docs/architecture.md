@@ -170,30 +170,90 @@ pending → processing → success
 
 ## API 接口层
 
-### 路由模块
+> **Feature-017 已全面规范化（章程 v1.4.0 原则 IX）**：所有 `/api/v1/**` 接口统一使用
+> `SuccessEnvelope` / `ErrorEnvelope` 响应信封、集中化错误码（39 个 ErrorCode 枚举）、
+> 统一分页参数（`page`/`page_size`）、枚举归一化、7 条已下线接口的哨兵路由。
+> 详见 `docs/api-standardization-guide.md` 与 `specs/017-api-standardization/contracts/`。
+
+### 路由模块（Feature-017 后的保留清单，11 个业务路由 + 1 个哨兵）
 
 | 前缀 | 文件 | 主要功能 |
 |------|------|---------|
-| `/api/v1/tasks` | `tasks.py` | 任务查询（分页/筛选/排序） |
-| `/api/v1/knowledge-base` | `knowledge_base.py` | 知识库管理 |
-| `/api/v1/videos/classifications` | ~~`videos.py`~~ | 已于 Feature-017 下线 → `/api/v1/classifications`（`classifications.py`） |
-| `/api/v1/classifications` | `classifications.py` | COS 扫描 + 分类（Feature-008） |
-| `/api/v1/coaches` | `coaches.py` | 教练 CRUD |
-| `/api/v1/standards` | `standards.py` | 技术标准查询 |
-| `/api/v1/diagnosis` | `diagnosis.py` | 运动员动作诊断 |
-| `/api/v1/teaching-tips` | `teaching_tips.py` | 教学建议 |
-| `/api/v1/calibration` | `calibration.py` | 多教练知识库对比 |
+| `/api/v1/tasks` | `tasks.py` | 任务提交 + 分页查询 + 删除 + 异步诊断/KB 提取入口 + 教练关联 |
+| `/api/v1/knowledge-base` | `knowledge_base.py` | 知识库版本管理 |
+| `/api/v1/classifications` | `classifications.py` | COS 扫描 + 分类（Feature-008，原 `videos.py` 已并入） |
+| `/api/v1/coaches` | `coaches.py` | 教练 CRUD（PATCH `/tasks/{task_id}/coach` 已搬迁至 `tasks.py`） |
+| `/api/v1/standards` | `standards.py` | 技术标准查询与构建（Feature-010） |
+| `/api/v1/teaching-tips` | `teaching_tips.py` | 教学建议（Feature-005） |
+| `/api/v1/calibration` | `calibration.py` | 多教练知识库对比（Feature-006） |
+| `/api/v1/extraction-jobs` | `extraction_jobs.py` | KB 提取 DAG 作业查询 / 重跑（Feature-014） |
 | `/api/v1/task-channels` | `task_channels.py` | 通道实时快照（Feature-013） |
 | `/api/v1/admin/...` | `admin.py` | 通道热更新 + 管道重置（Feature-013） |
-| `/api/v1/extraction-jobs` | `extraction_jobs.py` | KB 提取 DAG 作业查询 / 重跑（Feature-014） |
 | `/api/v1/video-preprocessing` | `video_preprocessing.py` | 预处理作业元数据审计（Feature-016） |
+| `—（哨兵）` | `_retired.py` | 7 条已下线接口的 `ENDPOINT_RETIRED` 哨兵路由 |
 
-### 分页规范
+**已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。
+详见 `specs/017-api-standardization/contracts/retirement-ledger.md`。
 
-列表接口统一支持：
-- `limit`（默认 50，最大 200）
-- `offset`
-- 返回 `total` + `items`
+### 响应信封（Feature-017 强制）
+
+所有接口响应体必须匹配下列两种信封之一，顶层 `success` 布尔位作为判别式：
+
+```json
+// 成功信封
+{ "success": true, "data": <业务载荷>, "meta": { "page": 1, "page_size": 20, "total": 42 } }
+
+// 错误信封
+{ "success": false, "error": { "code": "TASK_NOT_FOUND", "message": "任务不存在", "details": {...} } }
+```
+
+- 成功响应通过 `src/api/schemas/envelope.py::SuccessEnvelope[T]` 泛型构造
+- 非分页接口用 `ok(data)`，分页接口用 `page(items, page=, page_size=, total=)`
+- 错误统一抛 `AppException(ErrorCode.XXX, message=..., details=...)`，由 `src/api/errors.py` 的全局异常处理器渲染为错误信封
+
+### 分页规范（Feature-017 统一）
+
+列表接口统一接受：
+- `page`：从 1 开始，默认 1（Pydantic `Query(ge=1)` 约束）
+- `page_size`：默认 20，最大 100（`Query(ge=1, le=100)` 硬约束，越界自动返回 422 + `VALIDATION_FAILED`，**禁止静默截断**）
+- 返回结构：`data` 为纯业务列表，`meta = { page, page_size, total }`（`total_pages` 由前端按 `ceil(total/page_size)` 自算）
+
+**禁用旧参数**：`limit` / `offset` / `skip` / `take` / `pageNum` / `pageSize`。
+
+### 枚举归一化（Feature-017 统一）
+
+所有枚举型查询参数/路径参数/请求体字段统一走 `src/api/enums.py` 的归一化三件套：
+
+- `normalize_enum_value(raw)`：strip + lower + (`-` → `_`)
+- `parse_enum_param(value, field=, enum_cls=)`：绑定到 `str Enum` 类
+- `validate_enum_choice(value, field=, allowed=)`：白名单校验
+
+失败统一抛 `AppException(INVALID_ENUM_VALUE)`，`details` 含 `field` / `value` / `allowed` 三元组。
+
+### 错误码集中化（39 个 ErrorCode 枚举）
+
+定义位置：`src/api/errors.py::ErrorCode`，按以下分组：
+
+| 分组 | 数量 | 示例 |
+|------|------|------|
+| 通用 | 7 | `VALIDATION_FAILED` / `NOT_FOUND` / `INTERNAL_ERROR` / `ENDPOINT_RETIRED` |
+| 认证 | 2 | `ADMIN_TOKEN_INVALID` |
+| 资源不存在 | 6 | `TASK_NOT_FOUND` / `COACH_NOT_FOUND` / `TIP_NOT_FOUND` |
+| 状态/业务约束 | 18 | `TASK_NOT_READY` / `COACH_INACTIVE` / `KB_VERSION_NOT_DRAFT` |
+| 容量/队列 | 2 | `CHANNEL_QUEUE_FULL` / `CHANNEL_DISABLED` |
+| 上游依赖 | 4 | `LLM_UPSTREAM_FAILED` / `COS_UPSTREAM_FAILED` |
+
+三元同步约束：`ErrorCode` ↔ `ERROR_STATUS_MAP`（HTTP 状态）↔ `ERROR_DEFAULT_MESSAGE`（默认消息）
+数量必须严格一致，由 `tests/contract/test_error_codes_contract.py` 参数化锁定。
+
+### CI Linter
+
+| 脚本 | 校验对象 |
+|------|---------|
+| `scripts/lint_api_naming.py` | 路径前缀/kebab-case/ID 参数命名/分页参数必填/禁用 limit&offset |
+| `scripts/lint_error_codes.py` | 业务代码不得出现裸字符串错误码或 `raise HTTPException` |
+
+两者 0 违规为合入 PR 的硬性前置（见 `docs/api-standardization-guide.md` §8 Pre-merge 自检清单）。
 
 ---
 
