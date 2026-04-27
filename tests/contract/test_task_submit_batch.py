@@ -126,7 +126,9 @@ class TestClassificationBatchContract:
                 },
             )
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["task_type"] == "video_classification"
         assert body["accepted"] == 3
         assert body["rejected"] == 2
@@ -148,7 +150,9 @@ class TestClassificationBatchContract:
                 json={"items": [{"cos_object_key": f"v_{i}.mp4"} for i in range(2)]},
             )
         assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "BATCH_TOO_LARGE"
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "BATCH_TOO_LARGE"
 
     def test_empty_items_returns_422(self, client):
         """min_length=1 on items → 422."""
@@ -197,7 +201,9 @@ class TestKbExtractionBatchContract:
                 },
             )
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["accepted"] == 2
         assert body["rejected"] == 0
         assert body["task_type"] == "kb_extraction"
@@ -254,7 +260,9 @@ class TestKbExtractionBatchContract:
             )
 
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["accepted"] == 2
         assert body["rejected"] == 1
 
@@ -295,7 +303,9 @@ class TestKbExtractionBatchContract:
             )
 
         assert response.status_code == 200
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["accepted"] == 0
         assert body["rejected"] == 2
         assert all(
@@ -324,7 +334,9 @@ class TestKbExtractionBatchContract:
             )
 
         assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "BATCH_TOO_LARGE"
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "BATCH_TOO_LARGE"
         gate.check_classified.assert_not_called()
 
 
@@ -355,7 +367,9 @@ class TestDiagnosisBatchContract:
                 },
             )
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["accepted"] == 2
         assert body["rejected"] == 0
 

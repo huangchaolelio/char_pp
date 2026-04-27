@@ -7,24 +7,27 @@ Endpoints:
 
 The submission endpoint lives in ``tasks.py`` (POST /tasks/kb-extraction) —
 see research.md R10 for the separation-of-concerns rationale.
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope``（章程 v1.4.0 原则 IX）。
+原 ``ExtractionJobListResponse`` 的 ``{total, page, page_size, items}`` 包装
+由 ``SuccessEnvelope[list[ExtractionJobSummary]]`` + ``meta`` 替代。
+``HTTPException`` → ``AppException``；``INVALID_STATUS`` 对齐为 ``INVALID_ENUM_VALUE``。
 """
 
 from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
+from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.extraction_job import (
-    ErrorDetail,
-    ErrorResponse,
     ExtractionJobDetail,
-    ExtractionJobListResponse,
     ExtractionJobSummary,
     PipelineStepResponse,
     ProgressResponse,
@@ -100,29 +103,23 @@ async def _conflict_count(session: AsyncSession, job_id: UUID) -> int:
 
 @router.get(
     "/extraction-jobs/{job_id}",
-    response_model=ExtractionJobDetail,
-    responses={404: {"model": ErrorResponse}},
+    response_model=SuccessEnvelope[ExtractionJobDetail],
     summary="单作业详情（含子任务 + 冲突计数）",
 )
 async def get_extraction_job(
     job_id: UUID,
     db: AsyncSession = Depends(get_db),
-) -> ExtractionJobDetail:
+) -> SuccessEnvelope[ExtractionJobDetail]:
     job = (
         await db.execute(
             select(ExtractionJob).where(ExtractionJob.id == job_id)
         )
     ).scalar_one_or_none()
     if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": {
-                    "code": "JOB_NOT_FOUND",
-                    "message": f"extraction job {job_id} not found",
-                    "details": {"job_id": str(job_id)},
-                }
-            },
+        raise AppException(
+            ErrorCode.JOB_NOT_FOUND,
+            message=f"extraction job {job_id} not found",
+            details={"job_id": str(job_id)},
         )
 
     steps = (
@@ -134,7 +131,7 @@ async def get_extraction_job(
     progress = _progress_from_steps(list(steps))
     conflict_count = await _conflict_count(db, job_id)
 
-    return ExtractionJobDetail(
+    return ok(ExtractionJobDetail(
         job_id=job.id,
         analysis_task_id=job.analysis_task_id,
         cos_object_key=job.cos_object_key,
@@ -153,7 +150,7 @@ async def get_extraction_job(
         steps=[_step_to_response(s) for s in steps],
         progress=progress,
         conflict_count=conflict_count,
-    )
+    ))
 
 
 # ── GET /extraction-jobs  (paginated list) ──────────────────────────────────
@@ -161,31 +158,28 @@ async def get_extraction_job(
 
 @router.get(
     "/extraction-jobs",
-    response_model=ExtractionJobListResponse,
+    response_model=SuccessEnvelope[list[ExtractionJobSummary]],
     summary="作业列表（分页 + 状态过滤）",
 )
 async def list_extraction_jobs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
-    status: Optional[str] = Query(None),
+    status: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
-) -> ExtractionJobListResponse:
+) -> SuccessEnvelope[list[ExtractionJobSummary]]:
     # Optional status filter.
-    status_enum: Optional[ExtractionJobStatus] = None
+    status_enum: ExtractionJobStatus | None = None
     if status:
         try:
             status_enum = ExtractionJobStatus(status)
         except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": {
-                        "code": "INVALID_STATUS",
-                        "message": f"unknown status filter: {status!r}",
-                        "details": {
-                            "allowed": [s.value for s in ExtractionJobStatus]
-                        },
-                    }
+            raise AppException(
+                ErrorCode.INVALID_ENUM_VALUE,
+                message=f"unknown status filter: {status!r}",
+                details={
+                    "field": "status",
+                    "value": status,
+                    "allowed": [s.value for s in ExtractionJobStatus],
                 },
             )
 
@@ -232,12 +226,7 @@ async def list_extraction_jobs(
             )
         )
 
-    return ExtractionJobListResponse(
-        total=total,
-        page=page,
-        page_size=page_size,
-        items=items,
-    )
+    return page_envelope(items, page=page, page_size=page_size, total=total)
 
 
 # ── POST /extraction-jobs/{job_id}/rerun (Feature 014 US4) ──────────────────
@@ -245,19 +234,15 @@ async def list_extraction_jobs(
 
 @router.post(
     "/extraction-jobs/{job_id}/rerun",
-    response_model=RerunResponse,
+    response_model=SuccessEnvelope[RerunResponse],
     status_code=202,
-    responses={
-        404: {"model": ErrorResponse},
-        409: {"model": ErrorResponse},
-    },
     summary="重跑失败作业（US4）",
 )
 async def rerun_extraction_job(
     job_id: UUID,
     body: RerunRequest | None = None,
     db: AsyncSession = Depends(get_db),
-) -> RerunResponse:
+) -> SuccessEnvelope[RerunResponse]:
     """Re-run a failed ExtractionJob.
 
     Default behaviour resets only ``failed`` + ``skipped`` pipeline_steps and
@@ -268,15 +253,13 @@ async def rerun_extraction_job(
     their artifacts are cleared — required when the intermediate retention
     window has expired and the local files are gone.
 
-    Responses:
+    Responses (Feature-017 已全部迁移至错误信封)：
       - 202: rerun scheduled; returns the job id + which steps were reset
       - 404: JOB_NOT_FOUND
       - 409 JOB_NOT_FAILED: job is not in ``failed`` state, refuse
       - 409 INTERMEDIATE_EXPIRED: retention window passed and caller did not
         pass ``force_from_scratch=true``
     """
-    from datetime import datetime, timezone
-
     from sqlalchemy import update as _sql_update
 
     from src.models.analysis_task import AnalysisTask, TaskStatus
@@ -290,32 +273,22 @@ async def rerun_extraction_job(
         )
     ).scalar_one_or_none()
     if job is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": {
-                    "code": "JOB_NOT_FOUND",
-                    "message": f"extraction job {job_id} not found",
-                    "details": {"job_id": str(job_id)},
-                }
-            },
+        raise AppException(
+            ErrorCode.JOB_NOT_FOUND,
+            message=f"extraction job {job_id} not found",
+            details={"job_id": str(job_id)},
         )
 
     if job.status != ExtractionJobStatus.failed:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "JOB_NOT_FAILED",
-                    "message": (
-                        "rerun is only valid for jobs in 'failed' state; "
-                        f"this job is {job.status.value!r}"
-                    ),
-                    "details": {
-                        "job_id": str(job_id),
-                        "current_status": job.status.value,
-                    },
-                }
+        raise AppException(
+            ErrorCode.JOB_NOT_FAILED,
+            message=(
+                "rerun is only valid for jobs in 'failed' state; "
+                f"this job is {job.status.value!r}"
+            ),
+            details={
+                "job_id": str(job_id),
+                "current_status": job.status.value,
             },
         )
 
@@ -326,23 +299,18 @@ async def rerun_extraction_job(
         and job.intermediate_cleanup_at <= now
     )
     if expired and not rerun_body.force_from_scratch:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "error": {
-                    "code": "INTERMEDIATE_EXPIRED",
-                    "message": (
-                        "intermediate artifacts were cleaned up; retry with "
-                        "force_from_scratch=true to re-execute the whole DAG"
-                    ),
-                    "details": {
-                        "job_id": str(job_id),
-                        "intermediate_cleanup_at": (
-                            job.intermediate_cleanup_at.isoformat()
-                        ),
-                        "rerun_hint": "force_from_scratch=true",
-                    },
-                }
+        raise AppException(
+            ErrorCode.INTERMEDIATE_EXPIRED,
+            message=(
+                "intermediate artifacts were cleaned up; retry with "
+                "force_from_scratch=true to re-execute the whole DAG"
+            ),
+            details={
+                "job_id": str(job_id),
+                "intermediate_cleanup_at": (
+                    job.intermediate_cleanup_at.isoformat()
+                ),
+                "rerun_hint": "force_from_scratch=true",
             },
         )
 
@@ -445,8 +413,8 @@ async def rerun_extraction_job(
     order_index = {t: i for i, t in enumerate(TOPOLOGICAL_ORDER)}
     reset_types.sort(key=lambda t: order_index.get(t, 99))
 
-    return RerunResponse(
+    return ok(RerunResponse(
         job_id=job_id,
         status="running",
         reset_steps=[t.value for t in reset_types],
-    )
+    ))

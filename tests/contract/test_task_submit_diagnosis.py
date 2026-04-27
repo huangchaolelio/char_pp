@@ -70,7 +70,9 @@ class TestDiagnosisSubmitContract:
             )
 
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["task_type"] == "athlete_diagnosis"
         assert body["accepted"] == 1
         item = body["items"][0]

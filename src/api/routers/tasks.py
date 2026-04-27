@@ -5,6 +5,10 @@ Feature-017: expert-video / athlete-video 端点已物理下线（见 _retired.p
 与 /api/v1/tasks/diagnosis（原 athlete-video）。
 
 Feature 012: GET /tasks list endpoint with pagination, filtering and sorting.
+
+Feature-017（信封化）：所有成功响应用 ``ok()`` / ``page()`` 构造器包装为
+``SuccessEnvelope``；所有 ``HTTPException`` 统一改为 ``AppException`` + ``ErrorCode``
+枚举，由全局异常处理器序列化为错误信封（章程 v1.4.0 原则 IX）。
 """
 
 from __future__ import annotations
@@ -17,10 +21,13 @@ UTC = _tz.utc
 from pathlib import Path
 from typing import Union, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.api.errors import AppException, ErrorCode
+from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 
 from src.api.schemas.task import (
     AudioAnalysisInfo,
@@ -65,13 +72,15 @@ router = APIRouter(tags=["tasks"])
 
 _VALID_SORT_BY = {"created_at", "completed_at"}
 _VALID_ORDER = {"asc", "desc"}
-_MAX_PAGE_SIZE = 200
+# Feature-017：章程 v1.4.0 规则 1 要求 page_size ≤ 100（PaginationMeta 强约束）。
+# 原 Feature-012 的 200 上限在 alembic 合入前已被章程覆盖。
+_MAX_PAGE_SIZE = 100
 
 
-@router.get("/tasks", response_model=TaskListResponse)
+@router.get("/tasks", response_model=SuccessEnvelope[list[TaskListItemResponse]])
 async def list_tasks(
     page: int = Query(1, ge=1, description="页码，从 1 开始"),
-    page_size: int = Query(20, ge=1, description="每页条数，最大 200"),
+    page_size: int = Query(20, ge=1, description="每页条数，最大 100（章程 v1.4.0）"),
     sort_by: str = Query("created_at", description="排序字段: created_at / completed_at"),
     order: str = Query("desc", description="排序方向: asc / desc"),
     status: Optional[str] = Query(None, description="按任务状态筛选"),
@@ -80,7 +89,7 @@ async def list_tasks(
     created_after: Optional[datetime] = Query(None, description="创建时间下界（ISO 8601）"),
     created_before: Optional[datetime] = Query(None, description="创建时间上界（ISO 8601）"),
     db: AsyncSession = Depends(get_db),
-) -> TaskListResponse:
+) -> SuccessEnvelope[list[TaskListItemResponse]]:
     """List all non-deleted tasks with pagination, filtering and sorting.
 
     - Default: page=1, page_size=20, sort_by=created_at, order=desc
@@ -90,19 +99,21 @@ async def list_tasks(
     """
     t_start = time.monotonic()
 
-    # ── Parameter validation ──────────────────────────────────────────────────
+    # ── Parameter validation ──────────────────────────────────
     if page_size > _MAX_PAGE_SIZE:
         page_size = _MAX_PAGE_SIZE
 
     if sort_by not in _VALID_SORT_BY:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid sort_by value: '{sort_by}'. Valid values: {', '.join(sorted(_VALID_SORT_BY))}",
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message=f"Invalid sort_by value: {sort_by!r}",
+            details={"field": "sort_by", "value": sort_by, "allowed": sorted(_VALID_SORT_BY)},
         )
     if order not in _VALID_ORDER:
-        raise HTTPException(
-            status_code=400,
-            detail=f"Invalid order value: '{order}'. Valid values: asc, desc",
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message=f"Invalid order value: {order!r}",
+            details={"field": "order", "value": order, "allowed": sorted(_VALID_ORDER)},
         )
 
     # Validate status enum
@@ -111,10 +122,14 @@ async def list_tasks(
         try:
             status_enum = TaskStatus(status)
         except ValueError:
-            valid_statuses = ", ".join(s.value for s in TaskStatus)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid status value: '{status}'. Valid values: {valid_statuses}",
+            raise AppException(
+                ErrorCode.INVALID_ENUM_VALUE,
+                message=f"Invalid status value: {status!r}",
+                details={
+                    "field": "status",
+                    "value": status,
+                    "allowed": [s.value for s in TaskStatus],
+                },
             )
 
     # Validate task_type enum
@@ -123,12 +138,15 @@ async def list_tasks(
         try:
             task_type_enum = TaskType(task_type)
         except ValueError:
-            valid_types = ", ".join(t.value for t in TaskType)
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid task_type value: '{task_type}'. Valid values: {valid_types}",
+            raise AppException(
+                ErrorCode.INVALID_ENUM_VALUE,
+                message=f"Invalid task_type value: {task_type!r}",
+                details={
+                    "field": "task_type",
+                    "value": task_type,
+                    "allowed": [t.value for t in TaskType],
+                },
             )
-
     # ── Build base query ──────────────────────────────────────────────────────
     base_stmt = (
         select(AnalysisTask, Coach.name.label("coach_name"))
@@ -203,28 +221,23 @@ async def list_tasks(
         for task, coach_name in rows
     ]
 
-    total_pages = (total + page_size - 1) // page_size if total > 0 else 0
     elapsed_ms = int((time.monotonic() - t_start) * 1000)
     logger.info(
         "task_list_query total=%d page=%d page_size=%d elapsed_ms=%d",
         total, page, page_size, elapsed_ms,
     )
 
-    return TaskListResponse(
-        items=items,
-        total=total,
-        page=page,
-        page_size=page_size,
-        total_pages=total_pages,
-    )
-
+    # Feature-017：统一使用 page_envelope 构造器（meta = {page, page_size, total}）。
+    # 原 Feature-012 的 total_pages 字段已下线——章程 v1.4.0 信封规范 PaginationMeta
+    # 仅保留 page/page_size/total 三项，前端按 ceil(total/page_size) 自算总页数。
+    return page_envelope(items, page=page, page_size=page_size, total=total)
 
 # ── GET /tasks/cos-videos ────────────────────────────────────────────────────
 
-@router.get("/tasks/cos-videos", response_model=CosVideoListResponse)
+@router.get("/tasks/cos-videos", response_model=SuccessEnvelope[CosVideoListResponse])
 def list_cos_videos(
     action_type: str = "all",
-) -> CosVideoListResponse:
+) -> SuccessEnvelope[CosVideoListResponse]:
     """List available COS videos filtered by action type.
 
     Query params:
@@ -234,29 +247,30 @@ def list_cos_videos(
     （Feature-017: 原 /tasks/expert-video 已下线）.
     """
     if action_type not in ("forehand", "backhand", "all"):
-        from fastapi import HTTPException
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "INVALID_ACTION_TYPE",
-                "message": "action_type must be one of: forehand, backhand, all",
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message="action_type must be one of: forehand, backhand, all",
+            details={
+                "field": "action_type",
+                "value": action_type,
+                "allowed": ["forehand", "backhand", "all"],
             },
         )
     videos = cos_client.list_videos(action_type=action_type)
-    return CosVideoListResponse(
+    return ok(CosVideoListResponse(
         action_type_filter=action_type,
         total=len(videos),
         videos=[CosVideoItem(**v) for v in videos],
-    )
+    ))
 
 
 # ── GET /tasks/{task_id} ─────────────────────────────────────────────────────
 
-@router.get("/tasks/{task_id}", response_model=TaskStatusResponse)
+@router.get("/tasks/{task_id}", response_model=SuccessEnvelope[TaskStatusResponse])
 async def get_task_status(
     task_id: str,
     db: AsyncSession = Depends(get_db),
-) -> TaskStatusResponse:
+) -> SuccessEnvelope[TaskStatusResponse]:
     """Return current status and metadata for a task.
 
     Returns 404 if the task does not exist or has been soft-deleted.
@@ -265,13 +279,9 @@ async def get_task_status(
     try:
         task_uuid = uuid.UUID(task_id)
     except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": task_id},
         )
 
     result = await db.execute(
@@ -285,13 +295,9 @@ async def get_task_status(
     task = result.scalar_one_or_none()
 
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": task_id},
         )
 
     # ── Feature 012: aggregate related entity counts ──────────────────────────
@@ -338,7 +344,7 @@ async def get_task_status(
         advice_count=advice_count,
     )
 
-    return TaskStatusResponse(
+    return ok(TaskStatusResponse(
         task_id=task.id,
         task_type=task.task_type.value,
         status=task.status.value,
@@ -365,7 +371,7 @@ async def get_task_status(
         timing_stats=task.timing_stats,
         # Feature 012: related entity summary
         summary=summary,
-    )
+    ))
 
 
 # ── GET /tasks/{task_id}/result ──────────────────────────────────────────────
@@ -374,25 +380,22 @@ async def get_task_status(
 async def get_task_result(
     task_id: str,
     db: AsyncSession = Depends(get_db),
-) -> Union[TaskResultExpertResponse, TaskResultAthleteResponse]:
+) -> SuccessEnvelope[Union[TaskResultExpertResponse, TaskResultAthleteResponse]]:
     """Return the full analysis result for a completed task.
 
     - expert_video: returns KB draft version + extracted tech points list.
     - athlete_video: returns motion analyses with deviation reports and coaching advice.
 
     Returns 404 if the task does not exist or has been soft-deleted.
-    Returns 409 if the task has not yet reached status=success.
+    Returns 400 ``TASK_NOT_READY`` if the task has not yet reached status=success
+    (Feature-017 章程对齐：状态校验类错误统一 400，原 409 下线).
     """
     try:
         task_uuid = uuid.UUID(task_id)
     except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": task_id},
         )
 
     result = await db.execute(
@@ -404,23 +407,16 @@ async def get_task_result(
     task = result.scalar_one_or_none()
 
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": task_id},
         )
 
     if task.status != TaskStatus.success:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "TASK_NOT_READY",
-                "message": f"任务尚未完成，当前状态: {task.status.value}",
-                "details": {"task_id": task_id, "status": task.status.value},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_READY,
+            message=f"任务尚未完成，当前状态: {task.status.value}",
+            details={"task_id": task_id, "status": task.status.value},
         )
 
     # ── expert_video branch ───────────────────────────────────────────────────
@@ -499,7 +495,7 @@ async def get_task_result(
             if p.conflict_flag and p.conflict_detail
         ]
 
-        return TaskResultExpertResponse(
+        return ok(TaskResultExpertResponse(
             task_id=task.id,
             knowledge_base_version_draft=task.knowledge_base_version,
             extracted_points_count=len(extracted),
@@ -507,7 +503,7 @@ async def get_task_result(
             pending_approval=pending_approval,
             audio_analysis=audio_info,
             conflicts=conflicts,
-        )
+        ))
 
     # ── athlete_video branch ──────────────────────────────────────────────────
     analyses_result = await db.execute(
@@ -644,21 +640,21 @@ async def get_task_result(
         top_advice_dimension=best_advice_dim,
     )
 
-    return TaskResultAthleteResponse(
+    return ok(TaskResultAthleteResponse(
         task_id=task.id,
         knowledge_base_version=task.knowledge_base_version or "",
         motion_analyses=motion_analysis_items,
         summary=summary,
-    )
+    ))
 
 
 # ── DELETE /tasks/{task_id} ──────────────────────────────────────────────────
 
-@router.delete("/tasks/{task_id}", response_model=TaskDeleteResponse)
+@router.delete("/tasks/{task_id}", response_model=SuccessEnvelope[TaskDeleteResponse])
 async def delete_task(
     task_id: str,
     db: AsyncSession = Depends(get_db),
-) -> TaskDeleteResponse:
+) -> SuccessEnvelope[TaskDeleteResponse]:
     """Soft-delete a task and all its associated data.
 
     Sets deleted_at to now; physical cleanup runs on a daily schedule.
@@ -667,13 +663,9 @@ async def delete_task(
     try:
         task_uuid = uuid.UUID(task_id)
     except ValueError:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": task_id},
         )
 
     result = await db.execute(
@@ -685,24 +677,20 @@ async def delete_task(
     task = result.scalar_one_or_none()
 
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TASK_NOT_FOUND",
-                "message": "任务不存在",
-                "details": {"task_id": task_id},
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": task_id},
         )
 
     now = datetime.now(UTC)
     task.deleted_at = now
     await db.commit()
 
-    return TaskDeleteResponse(
+    return ok(TaskDeleteResponse(
         task_id=task.id,
         deleted_at=now,
         message="任务及关联数据已标记删除，将在 24 小时内物理清除",
-    )
+    ))
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -826,69 +814,61 @@ async def _f13_submit(
             session=db, task_type=task_type, items=items, submitted_via=submitted_via,
         )
     except _F13BatchTooLargeError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "BATCH_TOO_LARGE", "message": str(exc)}},
+        raise AppException(
+            ErrorCode.BATCH_TOO_LARGE, message=str(exc),
         ) from exc
     except _F13ChannelDisabledError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "CHANNEL_DISABLED", "message": str(exc)}},
+        raise AppException(
+            ErrorCode.CHANNEL_DISABLED, message=str(exc),
         ) from exc
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "INVALID_INPUT", "message": str(exc)}},
+        raise AppException(
+            ErrorCode.INVALID_INPUT, message=str(exc),
         ) from exc
     return _f13_serialise_result(result)
 
 
-# ── POST /tasks/classification (single) ──────────────────────────────────────
+# ── POST /tasks/classification (single) ──────────────────────────
 @router.post(
     "/tasks/classification",
-    response_model=_F13SubmissionResult,
+    response_model=SuccessEnvelope[_F13SubmissionResult],
     status_code=200,
     summary="Submit a single coach video for tech_category classification",
 )
 async def submit_classification(
     body: _F13ClassificationSingleRequest,
     db: AsyncSession = Depends(get_db),
-) -> _F13SubmissionResult:
+) -> SuccessEnvelope[_F13SubmissionResult]:
     item = _f13_submission_from_classification_req(body)
-    return await _f13_submit(
+    result = await _f13_submit(
         db, _F13TaskType.video_classification, [item], submitted_via="single"
     )
+    return ok(result)
 
-
-# ── POST /tasks/kb-extraction (single) ───────────────────────────────────────
+# ── POST /tasks/kb-extraction (single) ───────────────────────────
 @router.post(
     "/tasks/kb-extraction",
-    response_model=_F13SubmissionResult,
+    response_model=SuccessEnvelope[_F13SubmissionResult],
     status_code=200,
     summary="Submit a single classified video for knowledge-base extraction",
 )
 async def submit_kb_extraction(
     body: _F13KbExtractionSingleRequest,
     db: AsyncSession = Depends(get_db),
-) -> _F13SubmissionResult:
+) -> SuccessEnvelope[_F13SubmissionResult]:
     # FR-004a: pre-check that the video has a non-'unclassified' tech_category.
     gate = _F13ClassificationGateService()
     if not await gate.check_classified(db, body.cos_object_key):
         current = await gate.get_tech_category(db, body.cos_object_key)
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {
-                    "code": "CLASSIFICATION_REQUIRED",
-                    "message": (
-                        "video must be classified before kb-extraction "
-                        f"(current tech_category={current!r})"
-                    ),
-                    "details": {
-                        "cos_object_key": body.cos_object_key,
-                        "current_tech_category": current,
-                    },
-                }
+        raise AppException(
+            ErrorCode.CLASSIFICATION_REQUIRED,
+            message=(
+                "video must be classified before kb-extraction "
+                f"(current tech_category={current!r})"
+            ),
+            details={
+                "cos_object_key": body.cos_object_key,
+                "current_tech_category": current,
             },
         )
 
@@ -902,61 +882,61 @@ async def submit_kb_extraction(
         "tech_category": tech_category or "unclassified",
         "force": body.force,
     }
-    return await _f13_submit(
+    result = await _f13_submit(
         db, _F13TaskType.kb_extraction, [item], submitted_via="single"
     )
+    return ok(result)
 
-
-# ── POST /tasks/diagnosis (single) ───────────────────────────────────────────
+# ── POST /tasks/diagnosis (single) ──────────────────────────────
 @router.post(
     "/tasks/diagnosis",
-    response_model=_F13SubmissionResult,
+    response_model=SuccessEnvelope[_F13SubmissionResult],
     status_code=200,
     summary="Submit a single athlete video for motion diagnosis",
 )
 async def submit_diagnosis(
     body: _F13DiagnosisSingleRequest,
     db: AsyncSession = Depends(get_db),
-) -> _F13SubmissionResult:
+) -> SuccessEnvelope[_F13SubmissionResult]:
     item = _f13_submission_from_diagnosis_req(body)
-    return await _f13_submit(
+    result = await _f13_submit(
         db, _F13TaskType.athlete_diagnosis, [item], submitted_via="single"
     )
-
+    return ok(result)
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Feature 013 — US2: Batch submission endpoints
 # ══════════════════════════════════════════════════════════════════════════════
 
 
-# ── POST /tasks/classification/batch ─────────────────────────────────────────
+# ── POST /tasks/classification/batch ─────────────────────────────
 @router.post(
     "/tasks/classification/batch",
-    response_model=_F13SubmissionResult,
+    response_model=SuccessEnvelope[_F13SubmissionResult],
     status_code=200,
     summary="Batch-submit coach videos for tech_category classification",
 )
 async def submit_classification_batch(
     body: _F13ClassificationBatchRequest,
     db: AsyncSession = Depends(get_db),
-) -> _F13SubmissionResult:
+) -> SuccessEnvelope[_F13SubmissionResult]:
     items = [_f13_submission_from_classification_req(i) for i in body.items]
-    return await _f13_submit(
+    result = await _f13_submit(
         db, _F13TaskType.video_classification, items, submitted_via="batch"
     )
+    return ok(result)
 
-
-# ── POST /tasks/kb-extraction/batch ──────────────────────────────────────────
+# ── POST /tasks/kb-extraction/batch ────────────────────────────
 @router.post(
     "/tasks/kb-extraction/batch",
-    response_model=_F13SubmissionResult,
+    response_model=SuccessEnvelope[_F13SubmissionResult],
     status_code=200,
     summary="Batch-submit classified videos for knowledge-base extraction",
 )
 async def submit_kb_extraction_batch(
     body: _F13KbExtractionBatchRequest,
     db: AsyncSession = Depends(get_db),
-) -> _F13SubmissionResult:
+) -> SuccessEnvelope[_F13SubmissionResult]:
     # FR-004a batch variant: per-item pre-gate. Unclassified items are rejected
     # up-front with CLASSIFICATION_REQUIRED; the rest flow to the service.
     # Batch-size guard runs first so 101-item payloads short-circuit before
@@ -964,19 +944,17 @@ async def submit_kb_extraction_batch(
     from src.config import get_settings as _get_settings
     settings = _get_settings()
     if len(body.items) > settings.batch_max_size:
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {
-                    "code": "BATCH_TOO_LARGE",
-                    "message": (
-                        f"batch size {len(body.items)} exceeds max "
-                        f"{settings.batch_max_size}"
-                    ),
-                }
+        raise AppException(
+            ErrorCode.BATCH_TOO_LARGE,
+            message=(
+                f"batch size {len(body.items)} exceeds max "
+                f"{settings.batch_max_size}"
+            ),
+            details={
+                "submitted_count": len(body.items),
+                "max_allowed": settings.batch_max_size,
             },
         )
-
     gate = _F13ClassificationGateService()
     classified_items: list[_F13SubmissionInputItem] = []
     classified_original_index: list[int] = []
@@ -1016,7 +994,7 @@ async def submit_kb_extraction_batch(
     if not classified_items:
         svc = _F13TaskSubmissionService()
         snap = await svc._channels.get_snapshot(db, _F13TaskType.kb_extraction)
-        return _F13SubmissionResult(
+        return ok(_F13SubmissionResult(
             task_type=_F13TaskType.kb_extraction.value,
             accepted=0,
             rejected=len(gate_rejections),
@@ -1032,7 +1010,7 @@ async def submit_kb_extraction_batch(
                 recent_completion_rate_per_min=snap.recent_completion_rate_per_min,
             ),
             submitted_at=datetime.now(_tz.utc),
-        )
+        ))
 
     service_result = await _f13_submit(
         db, _F13TaskType.kb_extraction, classified_items, submitted_via="batch"
@@ -1050,31 +1028,31 @@ async def submit_kb_extraction_batch(
     merged.extend(gate_rejections)
     merged.sort(key=lambda it: it.index)
 
-    return service_result.model_copy(
+    return ok(service_result.model_copy(
         update={
             "accepted": service_result.accepted,
             "rejected": service_result.rejected + len(gate_rejections),
             "items": merged,
         }
-    )
+    ))
 
 
-# ── POST /tasks/diagnosis/batch ──────────────────────────────────────────────
+# ── POST /tasks/diagnosis/batch ────────────────────────────────
 @router.post(
     "/tasks/diagnosis/batch",
-    response_model=_F13SubmissionResult,
+    response_model=SuccessEnvelope[_F13SubmissionResult],
     status_code=200,
     summary="Batch-submit athlete videos for motion diagnosis",
 )
 async def submit_diagnosis_batch(
     body: _F13DiagnosisBatchRequest,
     db: AsyncSession = Depends(get_db),
-) -> _F13SubmissionResult:
+) -> SuccessEnvelope[_F13SubmissionResult]:
     items = [_f13_submission_from_diagnosis_req(i) for i in body.items]
-    return await _f13_submit(
+    result = await _f13_submit(
         db, _F13TaskType.athlete_diagnosis, items, submitted_via="batch"
     )
-
+    return ok(result)
 
 # ═════════════════════════════════════════════════════════════════════════════
 # Feature 016 — Video preprocessing pipeline
@@ -1105,14 +1083,14 @@ def _preprocessing_enqueue_task(job_id) -> None:
 
 @router.post(
     "/tasks/preprocessing",
-    response_model=_PrepResponse,
+    response_model=SuccessEnvelope[_PrepResponse],
     status_code=200,
     summary="Submit a single coach video for preprocessing",
 )
 async def submit_preprocessing(
     body: _PrepRequest,
     db: AsyncSession = Depends(get_db),
-) -> _PrepResponse:
+) -> SuccessEnvelope[_PrepResponse]:
     try:
         outcome = await _preprocessing_service.create_or_reuse(
             db,
@@ -1121,21 +1099,20 @@ async def submit_preprocessing(
             idempotency_key=body.idempotency_key,
         )
     except _preprocessing_service.CosKeyNotClassifiedError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "COS_KEY_NOT_CLASSIFIED", "message": str(exc)}},
+        raise AppException(
+            ErrorCode.COS_KEY_NOT_CLASSIFIED, message=str(exc),
         ) from exc
     except _preprocessing_service.ChannelQueueFullError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "CHANNEL_QUEUE_FULL", "message": str(exc)}},
+        # Feature-017: 通道满 → 503（章程 v1.4.0 / error-codes.md）
+        raise AppException(
+            ErrorCode.CHANNEL_QUEUE_FULL, message=str(exc),
         ) from exc
 
     await db.commit()
     if not outcome.reused:
         _preprocessing_enqueue_task(outcome.job_id)
 
-    return _PrepResponse(
+    return ok(_PrepResponse(
         job_id=outcome.job_id,
         status=outcome.status,
         reused=outcome.reused,
@@ -1144,28 +1121,27 @@ async def submit_preprocessing(
         has_audio=outcome.has_audio,
         started_at=outcome.started_at,
         completed_at=outcome.completed_at,
-    )
+    ))
 
 
 @router.post(
     "/tasks/preprocessing/batch",
-    response_model=_PrepBatchResponse,
+    response_model=SuccessEnvelope[_PrepBatchResponse],
     status_code=200,
     summary="Batch-submit coach videos for preprocessing",
 )
 async def submit_preprocessing_batch(
     body: _PrepBatchRequest,
     db: AsyncSession = Depends(get_db),
-) -> _PrepBatchResponse:
+) -> SuccessEnvelope[_PrepBatchResponse]:
     items = [(it.cos_object_key, it.force) for it in body.items]
     try:
         results = await _preprocessing_service.create_or_reuse_batch(
             db, items=items,
         )
     except _preprocessing_service.BatchTooLargeError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail={"error": {"code": "BATCH_TOO_LARGE", "message": str(exc)}},
+        raise AppException(
+            ErrorCode.BATCH_TOO_LARGE, message=str(exc),
         ) from exc
 
     await db.commit()
@@ -1179,7 +1155,7 @@ async def submit_preprocessing_batch(
     reused = sum(1 for r in results if r.reused)
     failed = sum(1 for r in results if r.error_code is not None)
 
-    return _PrepBatchResponse(
+    return ok(_PrepBatchResponse(
         submitted=submitted,
         reused=reused,
         failed=failed,
@@ -1194,4 +1170,4 @@ async def submit_preprocessing_batch(
             )
             for r in results
         ],
-    )
+    ))

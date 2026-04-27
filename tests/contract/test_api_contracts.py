@@ -72,8 +72,10 @@ class TestTaskStatusAndDeleteEndpoints:
             app.dependency_overrides.pop(get_db, None)
 
         assert response.status_code == 404
-        data = response.json()
-        assert data.get("detail", {}).get("code") == "TASK_NOT_FOUND"
+        body = response.json()
+        # Feature-017：错误信封 {success:false, error:{code,message,details}}
+        assert body["success"] is False
+        assert body["error"]["code"] == "TASK_NOT_FOUND"
 
     async def test_get_task_status_invalid_uuid(self, async_client):
         """GET /tasks/{task_id} with invalid UUID → 404."""
@@ -196,10 +198,12 @@ class TestErrorResponseFormat:
             app.dependency_overrides.pop(get_db, None)
 
         assert response.status_code == 404
-        data = response.json()
-        detail = data.get("detail", {})
-        assert "code" in detail
-        assert "message" in detail
+        body = response.json()
+        # Feature-017：统一错误信封
+        assert body["success"] is False
+        error = body["error"]
+        assert "code" in error
+        assert "message" in error
 
 
 @pytest.mark.contract

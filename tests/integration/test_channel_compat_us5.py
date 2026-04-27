@@ -172,7 +172,10 @@ async def test_channel_counts_by_job_not_substeps(
                 },
             )
             assert resp.status_code == 200, resp.text
-            body = resp.json()
+            envelope = resp.json()
+            # Feature-017：POST /api/v1/tasks/kb-extraction 信封化后 body 位于 data
+            assert envelope["success"] is True
+            body = envelope["data"]
             assert body["accepted"] == 1
             submitted_task_ids.append(body["items"][0]["task_id"])
 

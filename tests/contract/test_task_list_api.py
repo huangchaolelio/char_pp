@@ -32,24 +32,30 @@ async def async_client() -> AsyncGenerator[AsyncClient, None]:
 
 @pytest.mark.asyncio
 async def test_task_list_response_structure(async_client: AsyncClient) -> None:
-    """GET /tasks returns a valid paginated structure with all required fields."""
+    """GET /tasks returns a valid paginated structure with all required fields.
+
+    Feature-017 信封化后：
+    - 顶层只有 ``success`` / ``data`` / ``meta``
+    - 分页元信息全部迁移到 ``meta``：{page, page_size, total}
+    - ``total_pages`` 字段已下线（章程规定前端自算）
+    """
     response = await async_client.get("/api/v1/tasks")
     assert response.status_code == 200
-    data = response.json()
+    body = response.json()
 
-    assert "items" in data
-    assert "total" in data
-    assert "page" in data
-    assert "page_size" in data
-    assert "total_pages" in data
+    assert "success" in body
+    assert body["success"] is True
+    assert "data" in body
+    assert "meta" in body
 
-    assert isinstance(data["items"], list)
-    assert isinstance(data["total"], int)
-    assert isinstance(data["page"], int)
-    assert isinstance(data["page_size"], int)
-    assert isinstance(data["total_pages"], int)
-    assert data["page"] == 1
-    assert data["page_size"] == 20
+    assert isinstance(body["data"], list)
+    meta = body["meta"]
+    assert meta is not None
+    assert isinstance(meta["total"], int)
+    assert isinstance(meta["page"], int)
+    assert isinstance(meta["page_size"], int)
+    assert meta["page"] == 1
+    assert meta["page_size"] == 20
 
 
 @pytest.mark.asyncio
@@ -57,9 +63,9 @@ async def test_task_list_item_fields(async_client: AsyncClient) -> None:
     """Each item in the list contains the required fields."""
     response = await async_client.get("/api/v1/tasks")
     assert response.status_code == 200
-    data = response.json()
+    items = response.json()["data"]
 
-    for item in data["items"]:
+    for item in items:
         assert "task_id" in item
         assert "task_type" in item
         assert "status" in item
@@ -73,12 +79,12 @@ async def test_task_list_empty_result(async_client: AsyncClient) -> None:
     """GET /tasks with no matching records returns empty list without error."""
     response = await async_client.get("/api/v1/tasks?status=rejected&page=999")
     assert response.status_code == 200
-    data = response.json()
+    body = response.json()
 
-    assert isinstance(data["items"], list)
-    assert isinstance(data["total"], int)
-    assert data["total"] >= 0
-    assert data["page"] == 999
+    assert isinstance(body["data"], list)
+    assert isinstance(body["meta"]["total"], int)
+    assert body["meta"]["total"] >= 0
+    assert body["meta"]["page"] == 999
 
 
 # ── US2: GET /tasks/{task_id} extended with summary field ────────────────────
@@ -88,7 +94,7 @@ async def test_task_detail_includes_summary(async_client: AsyncClient) -> None:
     """GET /tasks/{task_id} response includes summary field with 6 sub-fields."""
     list_response = await async_client.get("/api/v1/tasks?page_size=1")
     assert list_response.status_code == 200
-    items = list_response.json()["items"]
+    items = list_response.json()["data"]
 
     if not items:
         pytest.skip("No tasks in DB — skipping summary contract test")
@@ -96,7 +102,9 @@ async def test_task_detail_includes_summary(async_client: AsyncClient) -> None:
     task_id = items[0]["task_id"]
     response = await async_client.get(f"/api/v1/tasks/{task_id}")
     assert response.status_code == 200
-    data = response.json()
+    envelope = response.json()
+    assert envelope["success"] is True
+    data = envelope["data"]
 
     assert "summary" in data
     summary = data["summary"]
@@ -119,4 +127,7 @@ async def test_task_detail_not_found_returns_404(async_client: AsyncClient) -> N
     """GET /tasks/{nonexistent_id} returns 404, not 500."""
     response = await async_client.get("/api/v1/tasks/00000000-0000-0000-0000-000000000000")
     assert response.status_code == 404
-    assert "detail" in response.json()
+    body = response.json()
+    # Feature-017：错误信封 {success:false, error:{code,message,details}}
+    assert body["success"] is False
+    assert body["error"]["code"] == "TASK_NOT_FOUND"

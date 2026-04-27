@@ -271,8 +271,11 @@ async def test_rerun_full_flow(
     resp = await client.post(
         f"/api/v1/extraction-jobs/{job_id}/rerun", json={}
     )
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error"]["code"] == "JOB_NOT_FAILED"
+    # Feature-017：状态校验类错误统一 400（章程 v1.4.0）
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "JOB_NOT_FAILED"
 
     # Restore to failed.
     async with session_factory() as session:
@@ -298,9 +301,12 @@ async def test_rerun_full_flow(
     resp = await client.post(
         f"/api/v1/extraction-jobs/{job_id}/rerun", json={}
     )
-    assert resp.status_code == 409
-    assert resp.json()["detail"]["error"]["code"] == "INTERMEDIATE_EXPIRED"
-    assert "rerun_hint" in resp.json()["detail"]["error"]["details"]
+    # Feature-017：中间结果过期 → 410 GONE（章程 error-codes.md）
+    assert resp.status_code == 410
+    body = resp.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INTERMEDIATE_EXPIRED"
+    assert "rerun_hint" in body["error"]["details"]
 
     # Reset cleanup timestamp so the partial-rerun path is permitted.
     async with session_factory() as session:
@@ -324,9 +330,12 @@ async def test_rerun_full_flow(
         )
     assert resp.status_code == 202, resp.text
     body = resp.json()
-    assert body["job_id"] == str(job_id)
-    assert body["status"] == "running"
-    assert set(body["reset_steps"]) == {
+    # Feature-017：happy-path 返回 信封
+    assert body["success"] is True
+    data = body["data"]
+    assert data["job_id"] == str(job_id)
+    assert data["status"] == "running"
+    assert set(data["reset_steps"]) == {
         "audio_transcription",
         "audio_kb_extract",
         "merge_kb",
@@ -394,7 +403,9 @@ async def test_rerun_full_flow(
             json={"force_from_scratch": True},
         )
     assert resp.status_code == 202, resp.text
-    assert set(resp.json()["reset_steps"]) == {
+    force_body = resp.json()
+    assert force_body["success"] is True
+    assert set(force_body["data"]["reset_steps"]) == {
         "download_video",
         "pose_analysis",
         "audio_transcription",

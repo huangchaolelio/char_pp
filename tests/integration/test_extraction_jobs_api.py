@@ -129,7 +129,10 @@ async def test_kb_extraction_full_api_flow(
         )
 
     assert resp.status_code == 200, resp.text
-    body = resp.json()
+    envelope = resp.json()
+    # Feature-017：POST /api/v1/tasks/kb-extraction 也已信封化
+    assert envelope["success"] is True
+    body = envelope["data"]
     assert body["accepted"] == 1
     task_id = body["items"][0]["task_id"]
 
@@ -161,7 +164,10 @@ async def test_kb_extraction_full_api_flow(
     # 3) GET /extraction-jobs/{job_id}
     detail_resp = await client.get(f"/api/v1/extraction-jobs/{job_id}")
     assert detail_resp.status_code == 200
-    payload = detail_resp.json()
+    detail_body = detail_resp.json()
+    # Feature-017：成功信封
+    assert detail_body["success"] is True
+    payload = detail_body["data"]
     assert payload["job_id"] == str(job_id)
     assert payload["status"] == "pending"
     assert len(payload["steps"]) == 6
@@ -177,19 +183,27 @@ async def test_kb_extraction_full_api_flow(
     # 4) 404 on unknown id
     miss_resp = await client.get(f"/api/v1/extraction-jobs/{uuid.uuid4()}")
     assert miss_resp.status_code == 404
-    assert miss_resp.json()["detail"]["error"]["code"] == "JOB_NOT_FOUND"
+    miss_body = miss_resp.json()
+    assert miss_body["success"] is False
+    assert miss_body["error"]["code"] == "JOB_NOT_FOUND"
 
     # 5) GET /extraction-jobs (list)
     list_resp = await client.get("/api/v1/extraction-jobs?page=1&page_size=50")
     assert list_resp.status_code == 200
     list_body = list_resp.json()
-    assert list_body["page"] == 1
-    assert list_body["page_size"] == 50
-    assert any(it["cos_object_key"] == seeded_cvc for it in list_body["items"])
+    assert list_body["success"] is True
+    # Feature-017：分页元数据统一放入 meta
+    assert list_body["meta"]["page"] == 1
+    assert list_body["meta"]["page_size"] == 50
+    items = list_body["data"]
+    assert any(it["cos_object_key"] == seeded_cvc for it in items)
 
-    # 6) POST rerun on a pending job → 409 JOB_NOT_FAILED (US4 implemented).
+    # 6) POST rerun on a pending job → 400 JOB_NOT_FAILED (US4 implemented).
+    # Feature-017：状态校验类错误统一 400（章程 v1.4.0 / error-codes.md）
     rerun_resp = await client.post(
         f"/api/v1/extraction-jobs/{job_id}/rerun", json={}
     )
-    assert rerun_resp.status_code == 409
-    assert rerun_resp.json()["detail"]["error"]["code"] == "JOB_NOT_FAILED"
+    assert rerun_resp.status_code == 400
+    rerun_body = rerun_resp.json()
+    assert rerun_body["success"] is False
+    assert rerun_body["error"]["code"] == "JOB_NOT_FAILED"

@@ -128,7 +128,9 @@ class TestPreprocessingBatch:
             )
 
         assert resp.status_code == 200, resp.text
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["submitted"] == 4
         assert body["reused"] == 0
         assert body["failed"] == 0
@@ -166,7 +168,9 @@ class TestPreprocessingBatch:
             )
 
         assert resp.status_code == 200, resp.text
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["submitted"] == 4
         assert body["failed"] == 1
         assert len(body["results"]) == 5
@@ -217,7 +221,9 @@ class TestPreprocessingBatch:
             )
 
         assert resp.status_code == 200
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         # Whether "reused" or submitted with a different id depends on service;
         # regardless, it should NOT be a failure.
         assert body["failed"] == 0

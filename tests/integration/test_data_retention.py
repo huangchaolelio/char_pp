@@ -104,4 +104,6 @@ class TestSoftDelete:
             app.dependency_overrides.pop(get_db, None)
 
         assert response.status_code == 404
-        assert response.json()["detail"]["code"] == "TASK_NOT_FOUND"
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "TASK_NOT_FOUND"

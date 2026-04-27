@@ -99,7 +99,10 @@ class TestClassificationSubmitContract:
             )
 
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        # Feature-017：业务载荷位于 data 字段
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["task_type"] == "video_classification"
         assert body["accepted"] == 1
         assert body["rejected"] == 0
@@ -120,6 +123,7 @@ class TestClassificationSubmitContract:
         }
         assert ch["task_type"] == "video_classification"
         assert ch["queue_capacity"] == 5
+        # submitted_at moved to envelope.data
         assert "submitted_at" in body
 
     def test_missing_cos_object_key_returns_422(self, client):
@@ -156,12 +160,14 @@ class TestClassificationSubmitContract:
             )
 
         assert response.status_code == 200
-        body = response.json()
+        envelope = response.json()
+        body = envelope["data"]
         assert body["accepted"] == 0
         assert body["rejected"] == 1
         assert body["items"][0]["rejection_code"] == "QUEUE_FULL"
 
-    def test_channel_disabled_returns_400(self, client):
+    def test_channel_disabled_returns_503(self, client):
+        """Feature-017：CHANNEL_DISABLED 按章程 v1.4.0 归类为 503（服务不可用）."""
         from src.services.task_submission_service import ChannelDisabledError
 
         with patch(
@@ -177,5 +183,7 @@ class TestClassificationSubmitContract:
                 json={"cos_object_key": "v.mp4"},
             )
 
-        assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "CHANNEL_DISABLED"
+        assert response.status_code == 503
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "CHANNEL_DISABLED"

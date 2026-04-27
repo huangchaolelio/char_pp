@@ -108,7 +108,9 @@ class TestPreprocessingSubmitContract:
                 json={"cos_object_key": "coach/forehand.mp4", "force": False},
             )
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["job_id"] == str(outcome.job_id)
         assert body["status"] == "running"
         assert body["reused"] is False
@@ -131,7 +133,9 @@ class TestPreprocessingSubmitContract:
                 json={"cos_object_key": "coach/video.mp4"},
             )
         assert response.status_code == 200
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["reused"] is True
         assert body["status"] == "success"
         assert body["segment_count"] == 4
@@ -152,10 +156,9 @@ class TestPreprocessingSubmitContract:
                 json={"cos_object_key": "missing/video.mp4"},
             )
         assert response.status_code == 400
-        assert (
-            response.json()["detail"]["error"]["code"]
-            == "COS_KEY_NOT_CLASSIFIED"
-        )
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "COS_KEY_NOT_CLASSIFIED"
 
     def test_c4_force_true_creates_new_job_id(self, client):
         """C4: force=true triggers a new running job, old one superseded in service."""
@@ -171,10 +174,13 @@ class TestPreprocessingSubmitContract:
                 json={"cos_object_key": "coach/video.mp4", "force": True},
             )
         assert response.status_code == 200
-        assert response.json()["status"] == "running"
+        envelope = response.json()
+        assert envelope["success"] is True
+        assert envelope["data"]["status"] == "running"
         mocked_enqueue.assert_called_once()
 
-    def test_c6_channel_queue_full_returns_400(self, client):
+    def test_c6_channel_queue_full_returns_503(self, client):
+        """Feature-017：CHANNEL_QUEUE_FULL 按章程 v1.4.0 归类为 503（服务不可用）."""
         from src.services.preprocessing_service import ChannelQueueFullError
 
         with patch(
@@ -186,11 +192,10 @@ class TestPreprocessingSubmitContract:
                 "/api/v1/tasks/preprocessing",
                 json={"cos_object_key": "coach/video.mp4"},
             )
-        assert response.status_code == 400
-        assert (
-            response.json()["detail"]["error"]["code"]
-            == "CHANNEL_QUEUE_FULL"
-        )
+        assert response.status_code == 503
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "CHANNEL_QUEUE_FULL"
 
     def test_c7_missing_cos_object_key_returns_422(self, client):
         response = client.post("/api/v1/tasks/preprocessing", json={})
@@ -224,7 +229,9 @@ class TestPreprocessingBatchSubmitContract:
                 ]},
             )
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["submitted"] == 3
         assert body["reused"] == 1
         assert body["failed"] == 0
@@ -249,7 +256,9 @@ class TestPreprocessingBatchSubmitContract:
                 ]},
             )
         assert response.status_code == 200
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["submitted"] == 1
         assert body["failed"] == 1
         assert body["results"][1]["job_id"] is None
@@ -270,10 +279,9 @@ class TestPreprocessingBatchSubmitContract:
                 ]},
             )
         assert response.status_code == 400
-        assert (
-            response.json()["detail"]["error"]["code"]
-            == "BATCH_TOO_LARGE"
-        )
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "BATCH_TOO_LARGE"
 
     def test_c4_empty_items_422(self, client):
         response = client.post(

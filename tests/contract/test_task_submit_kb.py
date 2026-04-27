@@ -79,7 +79,9 @@ class TestKbExtractionSubmitContract:
                 },
             )
         assert response.status_code == 200, response.text
-        body = response.json()
+        envelope = response.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["task_type"] == "kb_extraction"
         assert body["accepted"] == 1
         assert body["items"][0]["accepted"] is True
@@ -94,7 +96,10 @@ class TestKbExtractionSubmitContract:
                 json={"cos_object_key": "videos/coach_a/new_clip.mp4"},
             )
         assert response.status_code == 400
-        err = response.json()["detail"]["error"]
+        body = response.json()
+        # Feature-017：错误信封
+        assert body["success"] is False
+        err = body["error"]
         assert err["code"] == "CLASSIFICATION_REQUIRED"
         assert err["details"]["cos_object_key"] == "videos/coach_a/new_clip.mp4"
         assert err["details"]["current_tech_category"] is None
@@ -110,7 +115,9 @@ class TestKbExtractionSubmitContract:
                 json={"cos_object_key": "videos/coach_a/other.mp4"},
             )
         assert response.status_code == 400
-        assert response.json()["detail"]["error"]["code"] == "CLASSIFICATION_REQUIRED"
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "CLASSIFICATION_REQUIRED"
 
     def test_missing_cos_object_key_returns_422(self, client):
         response = client.post("/api/v1/tasks/kb-extraction", json={})

@@ -19,7 +19,9 @@ class TestGetTaskStatus:
     async def test_invalid_uuid_returns_404(self, client, override_db):
         resp = await client.get("/api/v1/tasks/not-a-uuid")
         assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "TASK_NOT_FOUND"
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "TASK_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_task_not_found_returns_404(self, client, override_db):
