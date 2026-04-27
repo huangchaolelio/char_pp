@@ -37,13 +37,18 @@
 - ✅ 涉及用户数据的功能满足原则 VII(隐私与安全)
 - ✅ API 接口设计符合原则 IX(接口规范统一)
 
-**API 接口规范验证要点（原则 IX）**:
+**API 接口规范验证要点（原则 IX，v1.4.0 统一信封）**:
 - 版本前缀统一使用 `/api/v1/`
 - 路由按资源划分，每个路由文件对应一个资源，禁止混搭
-- 分页参数统一：`page`(从 1 开始) + `page_size`(默认 20，最大 100)
-- 响应体统一包装：单实体直接返回，分页用 `{"data": [...], "total": N}` 格式
+- 分页参数统一：`page`(从 1 开始) + `page_size`(默认 20，最大 100)；越界返回 400 + `INVALID_PAGE_SIZE`
+- **响应体统一信封**（互斥两选一，由顶层 `success` 布尔位区分）：
+  - 成功：`{"success": true, "data": <载荷>, "meta": {page,page_size,total} | null}`，MUST 通过 `SuccessEnvelope[T]` 泛型构造
+  - 错误：`{"success": false, "error": {"code","message","details"}}`，MUST 由全局异常处理器从 `AppException` 转换
 - 分层职责：路由层仅做参数校验与响应组装，业务逻辑归 `src/services/`
-- 错误响应：`ValueError` → 400、`NotFoundException` → 404、其他 → 500（含 `logging.exception`）
+- **错误响应统一**：服务层/路由层 MUST 抛 `AppException(ErrorCode.XXX)`；禁止直接抛 `HTTPException` 或返回错误字典
+  - 422 `VALIDATION_FAILED` / 404 资源专属 code / 400 \| 409 状态冲突 / 503 队列容量 / 502 上游失败 / 500 `INTERNAL_ERROR`（含 `logging.exception`）
+- **错误码集中化**：`ErrorCode` 枚举 + `ERROR_STATUS_MAP` + `ERROR_DEFAULT_MESSAGE` 单一事实来源于 `src/api/errors.py`，新增必须同步 3 张表 + `contracts/error-codes.md`
+- **已下线接口**：保留哨兵路由返回 404 + `ENDPOINT_RETIRED`（`details.successor` + `migration_note`），禁止物理删除；台账登记于 `_retired.py::RETIREMENT_LEDGER` + `contracts/retirement-ledger.md`
 - 新增/变更接口在 `contracts/` 下提供契约，并先于实现创建 `tests/contract/` 合约测试
 
 任何违规 MUST 在继续之前记录并获批。

@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://coaching.example.com/schemas/017/response-envelope.schema.json",
+  "title": "API v1 Response Envelope",
+  "description": "Feature-017 定义的统一响应信封。所有 /api/v1/** 接口的响应体必须匹配 SuccessEnvelope 或 ErrorEnvelope 之一。",
+  "oneOf": [
+    { "$ref": "#/$defs/SuccessEnvelope" },
+    { "$ref": "#/$defs/ErrorEnvelope" }
+  ],
+  "$defs": {
+    "SuccessEnvelope": {
+      "type": "object",
+      "description": "成功响应。字段互斥：不得出现 error。",
+      "required": ["success", "data"],
+      "additionalProperties": false,
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "const": true
+        },
+        "data": {
+          "description": "业务载荷。类型由具体接口的 response_model 决定（单对象 / 列表 / null / 空对象）。",
+          "oneOf": [
+            { "type": "object" },
+            { "type": "array" },
+            { "type": "null" }
+          ]
+        },
+        "meta": {
+          "description": "分页元信息。仅列表接口非空；非列表接口为 null 或省略。",
+          "oneOf": [
+            { "$ref": "#/$defs/PaginationMeta" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "ErrorEnvelope": {
+      "type": "object",
+      "description": "错误响应。字段互斥：不得出现 data / meta。",
+      "required": ["success", "error"],
+      "additionalProperties": false,
+      "properties": {
+        "success": {
+          "type": "boolean",
+          "const": false
+        },
+        "error": { "$ref": "#/$defs/ErrorBody" }
+      }
+    },
+
+    "PaginationMeta": {
+      "type": "object",
+      "required": ["page", "page_size", "total"],
+      "additionalProperties": false,
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "page_size": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "total": { "type": "integer", "minimum": 0 }
+      }
+    },
+
+    "ErrorBody": {
+      "type": "object",
+      "required": ["code", "message"],
+      "additionalProperties": false,
+      "properties": {
+        "code": {
+          "type": "string",
+          "description": "ErrorCode 枚举的字符串值。完整列表见 contracts/error-codes.md。",
+          "pattern": "^[A-Z][A-Z0-9_]*$"
+        },
+        "message": {
+          "type": "string",
+          "description": "面向开发者的可读错误消息。禁止泄露栈信息。"
+        },
+        "details": {
+          "description": "可选的结构化上下文。不同错误码约定不同字段集。",
+          "oneOf": [
+            { "type": "object" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+
+    "RetiredErrorDetails": {
+      "type": "object",
+      "description": "ENDPOINT_RETIRED 专用 details 结构。",
+      "required": ["successor"],
+      "additionalProperties": false,
+      "properties": {
+        "successor": {
+          "oneOf": [
+            { "type": "string" },
+            { "type": "array", "items": { "type": "string" }, "minItems": 1 }
+          ]
+        },
+        "migration_note": { "type": "string" }
+      }
+    },
+
+    "ValidationErrorDetails": {
+      "type": "object",
+      "description": "VALIDATION_FAILED / INVALID_PAGE_SIZE / INVALID_ENUM_VALUE 共用结构。",
+      "additionalProperties": false,
+      "properties": {
+        "field": { "type": "string" },
+        "value": { "oneOf": [{ "type": "string" }, { "type": "integer" }, { "type": "null" }] },
+        "allowed": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+
+    "UpstreamErrorDetails": {
+      "type": "object",
+      "description": "LLM_/COS_/DB_/WHISPER_UPSTREAM_FAILED 共用结构。",
+      "required": ["upstream"],
+      "additionalProperties": false,
+      "properties": {
+        "upstream": { "type": "string" },
+        "upstream_code": { "type": "string" },
+        "upstream_message": { "type": "string" }
+      }
+    }
+  },
+
+  "examples": [
+    {
+      "success": true,
+      "data": { "id": "t-001", "title": "握拍笔记" },
+      "meta": null
+    },
+    {
+      "success": true,
+      "data": [{ "id": "t-001" }, { "id": "t-002" }],
+      "meta": { "page": 1, "page_size": 20, "total": 42 }
+    },
+    {
+      "success": false,
+      "error": {
+        "code": "TASK_NOT_FOUND",
+        "message": "任务不存在",
+        "details": { "task_id": "not-exist" }
+      }
+    },
+    {
+      "success": false,
+      "error": {
+        "code": "ENDPOINT_RETIRED",
+        "message": "该接口已下线，请调用替代接口",
+        "details": {
+          "successor": "/api/v1/tasks/diagnosis",
+          "migration_note": "同步 60s 改为异步提交，需轮询 GET /tasks/{task_id}"
+        }
+      }
+    },
+    {
+      "success": false,
+      "error": {
+        "code": "LLM_UPSTREAM_FAILED",
+        "message": "LLM 服务调用失败",
+        "details": {
+          "upstream": "venus-proxy",
+          "upstream_code": "503",
+          "upstream_message": "upstream timeout"
+        }
+      }
+    }
+  ]
+}
