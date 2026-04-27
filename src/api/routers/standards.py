@@ -4,26 +4,30 @@ Endpoints:
   POST /standards/build          Trigger single or batch standard build
   GET  /standards/{tech_category} Query active standard for a tech category
   GET  /standards                List all active standards summary
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException``
+改为 ``AppException``；裸字符串错误码（如 ``standard_not_found``）映射到 ``ErrorCode``
+枚举（章程 v1.4.0 原则 IX）。
 """
 
 from __future__ import annotations
 
 import uuid
 import logging
-from typing import Any, Dict, List, Optional
+from typing import Any, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
+from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.db.session import get_db
 from src.models.expert_tech_point import ActionType as EtpActionType
 from src.services.tech_standard_builder import (
-    BatchBuildResult,
-    BuildResult,
-    TechStandardBuilder,
     get_active_standard,
     list_active_standards,
+    TechStandardBuilder,
 )
 
 logger = logging.getLogger(__name__)
@@ -67,7 +71,7 @@ class StandardResponse(BaseModel):
     coach_count: int
     point_count: int
     built_at: str
-    dimensions: List[DimensionResponse]
+    dimensions: list[DimensionResponse]
 
 
 class StandardSummaryItem(BaseModel):
@@ -80,10 +84,16 @@ class StandardSummaryItem(BaseModel):
     built_at: str
 
 
-class StandardsListResponse(BaseModel):
-    standards: List[StandardSummaryItem]
+class StandardsListData(BaseModel):
+    """List payload for active standards (with missing_categories metadata).
+
+    ``meta`` 字段的分页语义不适用此列表端点（固定返回全量+缺失分类集合），
+    采用自定义 data 结构放进 ``SuccessEnvelope[StandardsListData]``。
+    """
+
+    standards: list[StandardSummaryItem]
     total: int
-    missing_categories: List[str]
+    missing_categories: list[str]
 
 
 class BuildResultResponse(BaseModel):
@@ -111,7 +121,7 @@ class BatchSummary(BaseModel):
 class BatchBuildResponse(BaseModel):
     task_id: str
     mode: str
-    results: List[Dict[str, Any]]
+    results: list[dict[str, Any]]
     summary: BatchSummary
 
 
@@ -119,15 +129,19 @@ class BatchBuildResponse(BaseModel):
 # Endpoints
 # ---------------------------------------------------------------------------
 
-@router.post("/build")
+@router.post("/build", response_model=SuccessEnvelope[dict[str, Any]])
 async def build_standard(
     request: BuildRequest,
     session: AsyncSession = Depends(get_db),
-):
+) -> SuccessEnvelope[dict[str, Any]]:
     """Trigger single or batch tech standard build.
 
     - With tech_category: build single category
     - Without tech_category: build all ActionType categories
+
+    响应 ``data`` 结构由 ``mode`` 字段判别：
+    - ``mode="single"``: ``SingleBuildResponse`` 展开字段
+    - ``mode="batch"``: ``BatchBuildResponse`` 展开字段
     """
     builder = TechStandardBuilder(session)
     task_id = str(uuid.uuid4())
@@ -137,7 +151,7 @@ async def build_standard(
         result = await builder.build_standard(request.tech_category)
         await session.commit()
 
-        return SingleBuildResponse(
+        single = SingleBuildResponse(
             task_id=task_id,
             mode="single",
             tech_category=request.tech_category,
@@ -150,55 +164,59 @@ async def build_standard(
                 coach_count=result.coach_count,
             ),
         )
-    else:
-        # Batch build
-        batch = await builder.build_all()
-        await session.commit()
+        return ok(single.model_dump())
 
-        results_data = [
-            {
-                "tech_category": r.tech_category,
-                "result": r.result,
-                "reason": r.reason,
-                "standard_id": r.standard_id,
-                "version": r.version,
-                "dimension_count": r.dimension_count,
-                "coach_count": r.coach_count,
-            }
-            for r in batch.results
-        ]
-        return BatchBuildResponse(
-            task_id=task_id,
-            mode="batch",
-            results=results_data,
-            summary=BatchSummary(
-                success_count=batch.success_count,
-                skipped_count=batch.skipped_count,
-                failed_count=batch.failed_count,
-            ),
-        )
+    # Batch build
+    batch = await builder.build_all()
+    await session.commit()
+
+    results_data = [
+        {
+            "tech_category": r.tech_category,
+            "result": r.result,
+            "reason": r.reason,
+            "standard_id": r.standard_id,
+            "version": r.version,
+            "dimension_count": r.dimension_count,
+            "coach_count": r.coach_count,
+        }
+        for r in batch.results
+    ]
+    batch_resp = BatchBuildResponse(
+        task_id=task_id,
+        mode="batch",
+        results=results_data,
+        summary=BatchSummary(
+            success_count=batch.success_count,
+            skipped_count=batch.skipped_count,
+            failed_count=batch.failed_count,
+        ),
+    )
+    return ok(batch_resp.model_dump())
 
 
-@router.get("/{tech_category}", response_model=StandardResponse)
+@router.get(
+    "/{tech_category}",
+    response_model=SuccessEnvelope[StandardResponse],
+)
 async def get_standard(
     tech_category: str,
     session: AsyncSession = Depends(get_db),
-):
+) -> SuccessEnvelope[StandardResponse]:
     """Query the active standard for a given tech_category.
 
-    Returns 404 if no active standard exists for this category.
+    Returns 404 ``NOT_FOUND`` (tech standard 无资源专属 code，使用通用 NOT_FOUND)
+    if no active standard exists for this category.
     """
     standard = await get_active_standard(session, tech_category)
     if standard is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "error": "standard_not_found",
-                "detail": f"No active standard for tech_category: {tech_category}",
-            },
+        raise AppException(
+            ErrorCode.NOT_FOUND,
+            message=f"No active standard for tech_category: {tech_category}",
+            details={"resource": "tech_standard", "tech_category": tech_category},
         )
 
-    return StandardResponse(
+    return ok(StandardResponse(
         tech_category=standard.tech_category,
         standard_id=standard.id,
         version=standard.version,
@@ -218,14 +236,14 @@ async def get_standard(
             )
             for p in standard.points
         ],
-    )
+    ))
 
 
-@router.get("", response_model=StandardsListResponse)
+@router.get("", response_model=SuccessEnvelope[StandardsListData])
 async def list_standards(
     source_quality: Optional[str] = None,
     session: AsyncSession = Depends(get_db),
-):
+) -> SuccessEnvelope[StandardsListData]:
     """List all active tech standards with summary info.
 
     Optional filter: source_quality=multi_source|single_source
@@ -250,8 +268,8 @@ async def list_standards(
         for s in standards
     ]
 
-    return StandardsListResponse(
+    return ok(StandardsListData(
         standards=items,
         total=len(items),
         missing_categories=missing,
-    )
+    ))

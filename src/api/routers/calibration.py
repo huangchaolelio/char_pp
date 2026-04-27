@@ -3,12 +3,13 @@
 Endpoints:
   GET /calibration/tech-points     → compare tech params across coaches (action_type + dimension required)
   GET /calibration/teaching-tips   → compare teaching tips across coaches (action_type + tech_phase required)
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope``（章程 v1.4.0 原则 IX）。
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Optional
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
@@ -20,6 +21,7 @@ from src.api.schemas.coach import (
     TeachingTipCalibrationView,
     TechPointCalibrationView,
 )
+from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask
 from src.models.coach import Coach
@@ -32,12 +34,15 @@ router = APIRouter(tags=["calibration"])
 
 # ── GET /calibration/tech-points ──────────────────────────────────────────────
 
-@router.get("/calibration/tech-points", response_model=TechPointCalibrationView)
+@router.get(
+    "/calibration/tech-points",
+    response_model=SuccessEnvelope[TechPointCalibrationView],
+)
 async def calibrate_tech_points(
     action_type: str = Query(..., description="动作类型，如 forehand_topspin"),
     dimension: str = Query(..., description="技术维度，如 elbow_angle"),
     db: AsyncSession = Depends(get_db),
-) -> TechPointCalibrationView:
+) -> SuccessEnvelope[TechPointCalibrationView]:
     """Return multi-coach comparison for a specific action_type + dimension."""
     # Query: expert_tech_points JOIN analysis_tasks JOIN coaches
     stmt = (
@@ -93,21 +98,24 @@ async def calibrate_tech_points(
         "calibration tech-points action_type=%s dimension=%s coaches=%d",
         action_type, dimension, len(entries),
     )
-    return TechPointCalibrationView(
+    return ok(TechPointCalibrationView(
         action_type=action_type,
         dimension=dimension,
         coaches=entries,
-    )
+    ))
 
 
 # ── GET /calibration/teaching-tips ────────────────────────────────────────────
 
-@router.get("/calibration/teaching-tips", response_model=TeachingTipCalibrationView)
+@router.get(
+    "/calibration/teaching-tips",
+    response_model=SuccessEnvelope[TeachingTipCalibrationView],
+)
 async def calibrate_teaching_tips(
     action_type: str = Query(..., description="动作类型，如 forehand_topspin"),
     tech_phase: str = Query(..., description="技术阶段，如 contact"),
     db: AsyncSession = Depends(get_db),
-) -> TeachingTipCalibrationView:
+) -> SuccessEnvelope[TeachingTipCalibrationView]:
     """Return multi-coach teaching tip comparison grouped by coach."""
     stmt = (
         select(TeachingTip, Coach)
@@ -148,8 +156,8 @@ async def calibrate_teaching_tips(
         "calibration teaching-tips action_type=%s tech_phase=%s coaches=%d",
         action_type, tech_phase, len(groups),
     )
-    return TeachingTipCalibrationView(
+    return ok(TeachingTipCalibrationView(
         action_type=action_type,
         tech_phase=tech_phase,
         coaches=groups,
-    )
+    ))

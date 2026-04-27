@@ -70,7 +70,10 @@ class TestBuildSingleTechContract:
 
         _clear_overrides()
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        # Feature-017：信封化，业务载荷在 data 字段
+        assert envelope["success"] is True
+        data = envelope["data"]
         assert "task_id" in data
         assert "mode" in data
         assert data["mode"] == "single"
@@ -84,8 +87,10 @@ class TestBuildSingleTechContract:
             json={"tech_category": "invalid_tech_xyz"},
         )
         assert resp.status_code == 422
-        data = resp.json()
-        assert "error" in data or "detail" in data
+        body = resp.json()
+        # Feature-017：统一错误信封，顺便验证 VALIDATION_FAILED code
+        assert body["success"] is False
+        assert body["error"]["code"] == "VALIDATION_FAILED"
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +133,9 @@ class TestBuildBatchContract:
 
         _clear_overrides()
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        data = envelope["data"]
         assert "mode" in data
         assert data["mode"] == "batch"
         assert "results" in data
@@ -180,7 +187,9 @@ class TestGetStandardContract:
 
         _clear_overrides()
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        data = envelope["data"]
         assert data["tech_category"] == "forehand_topspin"
         assert "standard_id" in data
         assert "version" in data
@@ -207,12 +216,11 @@ class TestGetStandardContract:
             resp = await client.get("/api/v1/standards/forehand_topspin")
 
         assert resp.status_code == 404
-        data = resp.json()
-        # FastAPI wraps HTTPException detail under top-level "detail" key
-        assert "detail" in data
-        inner = data["detail"]
-        assert "error" in inner
-        assert "detail" in inner
+        body = resp.json()
+        # Feature-017：错误信封 {success:false, error:{code,message,details}}
+        assert body["success"] is False
+        assert body["error"]["code"] == "NOT_FOUND"
+        assert body["error"]["details"]["tech_category"] == "forehand_topspin"
 
 
 # ---------------------------------------------------------------------------
@@ -245,7 +253,9 @@ class TestListStandardsContract:
 
         _clear_overrides()
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        data = envelope["data"]
         assert "standards" in data
         assert "total" in data
         assert "missing_categories" in data

@@ -19,7 +19,10 @@ class TestListKbVersions:
         ):
             resp = await client.get("/api/v1/knowledge-base/versions")
         assert resp.status_code == 200
-        assert resp.json()["versions"] == []
+        body = resp.json()
+        # Feature-017：信封格式，空列表 data=[]
+        assert body["success"] is True
+        assert body["data"] == []
 
     @pytest.mark.asyncio
     async def test_returns_versions_list(self, client, override_db):
@@ -33,7 +36,9 @@ class TestListKbVersions:
             resp = await client.get("/api/v1/knowledge-base/versions")
 
         assert resp.status_code == 200
-        versions = resp.json()["versions"]
+        body = resp.json()
+        assert body["success"] is True
+        versions = body["data"]
         assert len(versions) == 1
         assert versions[0]["version"] == "1.0.0"
         assert versions[0]["status"] == "active"
@@ -54,7 +59,9 @@ class TestGetKbVersion:
             resp = await client.get("/api/v1/knowledge-base/9.9.9")
 
         assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "KB_VERSION_NOT_FOUND"
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "KB_VERSION_NOT_FOUND"
 
     @pytest.mark.asyncio
     async def test_returns_version_detail_with_points(self, client, override_db):
@@ -74,7 +81,9 @@ class TestGetKbVersion:
             resp = await client.get(f"/api/v1/knowledge-base/{KB_VERSION}")
 
         assert resp.status_code == 200
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["version"] == KB_VERSION
         assert body["status"] == "draft"
         assert len(body["tech_points"]) == 1
@@ -104,10 +113,12 @@ class TestApproveKbVersion:
             )
 
         assert resp.status_code == 404
-        assert resp.json()["detail"]["code"] == "KB_VERSION_NOT_FOUND"
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "KB_VERSION_NOT_FOUND"
 
     @pytest.mark.asyncio
-    async def test_non_draft_returns_409(self, client, override_db):
+    async def test_non_draft_returns_400(self, client, override_db):
         from src.services.knowledge_base_svc import VersionNotDraftError
 
         mock_begin = MagicMock()
@@ -126,8 +137,11 @@ class TestApproveKbVersion:
                 json={"approved_by": "张教练"},
             )
 
-        assert resp.status_code == 409
-        assert resp.json()["detail"]["code"] == "KB_VERSION_NOT_DRAFT"
+        # Feature-017：状态校验类错误 400（非 409，章程 v1.4.0 对齐）
+        assert resp.status_code == 400
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "KB_VERSION_NOT_DRAFT"
 
     @pytest.mark.asyncio
     async def test_approve_success(self, client, override_db):
@@ -151,7 +165,9 @@ class TestApproveKbVersion:
             )
 
         assert resp.status_code == 200
-        body = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        body = envelope["data"]
         assert body["version"] == KB_VERSION
         assert body["status"] == "active"
         assert body["approved_by"] == "张教练"

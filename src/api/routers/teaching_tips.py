@@ -2,24 +2,30 @@
 
 Endpoints:
   GET  /teaching-tips                        → list with filters
-  PATCH /teaching-tips/{id}                  → human edit
-  DELETE /teaching-tips/{id}                 → physical delete
+  PATCH /teaching-tips/{tip_id}              → human edit
+  DELETE /teaching-tips/{tip_id}             → physical delete
   POST /tasks/{task_id}/extract-tips         → re-trigger extraction (202)
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException`` 改为 ``AppException``
+（章程 v1.4.0 原则 IX）。``POST /tasks/{task_id}/extract-tips`` 暂留此处，
+阶段 5 T050 可考虑搬迁到 tasks.py；``TIP_NOT_FOUND`` / ``TASK_NOT_FOUND`` /
+``WRONG_TASK_TYPE`` / ``TASK_NOT_READY`` / ``NO_AUDIO_TRANSCRIPT`` 均映射到
+对应 ErrorCode 枚举。
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
+from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.api.schemas.teaching_tip import (
     ExtractTipsResponse,
-    TeachingTipListResponse,
     TeachingTipPatch,
     TeachingTipResponse,
 )
@@ -35,16 +41,23 @@ router = APIRouter(tags=["teaching-tips"])
 
 # ── GET /teaching-tips ────────────────────────────────────────────────────────
 
-@router.get("/teaching-tips", response_model=TeachingTipListResponse)
+@router.get(
+    "/teaching-tips",
+    response_model=SuccessEnvelope[list[TeachingTipResponse]],
+)
 async def list_teaching_tips(
-    action_type: Optional[str] = None,
-    tech_phase: Optional[str] = None,
-    source_type: Optional[str] = None,
-    task_id: Optional[uuid.UUID] = None,
-    coach_id: Optional[uuid.UUID] = None,  # Feature 006: filter by coach
+    action_type: str | None = None,
+    tech_phase: str | None = None,
+    source_type: str | None = None,
+    task_id: uuid.UUID | None = None,
+    coach_id: uuid.UUID | None = None,  # Feature 006: filter by coach
     db: AsyncSession = Depends(get_db),
-) -> TeachingTipListResponse:
-    """List teaching tips with optional filters."""
+) -> SuccessEnvelope[list[TeachingTipResponse]]:
+    """List teaching tips with optional filters.
+
+    Feature-017 非分页全量列表（阶段 5 T054 将引入 ``page/page_size``）；
+    ``meta=null``。
+    """
     # Feature 006: JOIN with analysis_tasks and coaches to support coach_id filter
     stmt = (
         select(TeachingTip, AnalysisTask.coach_id, Coach.name)
@@ -67,24 +80,27 @@ async def list_teaching_tips(
     result = await db.execute(stmt)
     rows = result.all()
 
-    items = []
+    items: list[TeachingTipResponse] = []
     for tip, tip_coach_id, coach_name in rows:
         data = TeachingTipResponse.model_validate(tip)
         data.coach_id = tip_coach_id
         data.coach_name = coach_name
         items.append(data)
 
-    return TeachingTipListResponse(total=len(items), items=items)
+    return ok(items)
 
 
-# ── PATCH /teaching-tips/{id} ─────────────────────────────────────────────────
+# ── PATCH /teaching-tips/{tip_id} ─────────────────────────────────────────────
 
-@router.patch("/teaching-tips/{tip_id}", response_model=TeachingTipResponse)
+@router.patch(
+    "/teaching-tips/{tip_id}",
+    response_model=SuccessEnvelope[TeachingTipResponse],
+)
 async def update_teaching_tip(
     tip_id: uuid.UUID,
     body: TeachingTipPatch,
     db: AsyncSession = Depends(get_db),
-) -> TeachingTipResponse:
+) -> SuccessEnvelope[TeachingTipResponse]:
     """Human-edit a teaching tip. Sets source_type='human', preserves original AI text."""
     result = await db.execute(
         select(TeachingTip).where(TeachingTip.id == tip_id)
@@ -92,13 +108,9 @@ async def update_teaching_tip(
     tip = result.scalar_one_or_none()
 
     if tip is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TIP_NOT_FOUND",
-                "message": "教学建议条目不存在",
-                "details": {"id": str(tip_id)},
-            },
+        raise AppException(
+            ErrorCode.TIP_NOT_FOUND,
+            details={"tip_id": str(tip_id)},
         )
 
     if body.tip_text is not None and body.tip_text != tip.tip_text:
@@ -114,30 +126,26 @@ async def update_teaching_tip(
 
     await db.commit()
     await db.refresh(tip)
-    return TeachingTipResponse.model_validate(tip)
+    return ok(TeachingTipResponse.model_validate(tip))
 
 
-# ── DELETE /teaching-tips/{id} ────────────────────────────────────────────────
+# ── DELETE /teaching-tips/{tip_id} ────────────────────────────────────────────
 
 @router.delete("/teaching-tips/{tip_id}", status_code=204, response_model=None)
 async def delete_teaching_tip(
     tip_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Physically delete a teaching tip."""
+    """Physically delete a teaching tip (204 无响应体)."""
     result = await db.execute(
         select(TeachingTip).where(TeachingTip.id == tip_id)
     )
     tip = result.scalar_one_or_none()
 
     if tip is None:
-        raise HTTPException(
-            status_code=404,
-            detail={
-                "code": "TIP_NOT_FOUND",
-                "message": "教学建议条目不存在",
-                "details": {"id": str(tip_id)},
-            },
+        raise AppException(
+            ErrorCode.TIP_NOT_FOUND,
+            details={"tip_id": str(tip_id)},
         )
 
     await db.delete(tip)
@@ -149,12 +157,12 @@ async def delete_teaching_tip(
 @router.post(
     "/tasks/{task_id}/extract-tips",
     status_code=202,
-    response_model=ExtractTipsResponse,
+    response_model=SuccessEnvelope[ExtractTipsResponse],
 )
 async def extract_tips(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-) -> ExtractTipsResponse:
+) -> SuccessEnvelope[ExtractTipsResponse]:
     """Re-trigger (or first-time trigger) teaching tip extraction for a completed expert video task.
 
     - Validates task exists, is expert_video type, has status=success, and has an AudioTranscript.
@@ -174,28 +182,27 @@ async def extract_tips(
     task = task_result.scalar_one_or_none()
 
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"},
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": str(task_id)},
         )
 
     if task.task_type != TaskType.expert_video:
-        raise HTTPException(
-            status_code=422,
-            detail={
-                "code": "WRONG_TASK_TYPE",
-                "message": "仅支持 expert_video 类型任务",
-                "details": {"task_type": task.task_type.value},
+        raise AppException(
+            ErrorCode.WRONG_TASK_TYPE,
+            message="仅支持 expert_video 类型任务",
+            details={
+                "task_id": str(task_id),
+                "task_type": task.task_type.value,
+                "expected": "expert_video",
             },
         )
 
     if task.status not in (TaskStatus.success, TaskStatus.partial_success):
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "TASK_NOT_READY",
-                "message": f"任务尚未完成，当前状态: {task.status.value}",
-            },
+        raise AppException(
+            ErrorCode.TASK_NOT_READY,
+            message=f"任务尚未完成，当前状态: {task.status.value}",
+            details={"task_id": str(task_id), "status": task.status.value},
         )
 
     # Check AudioTranscript exists
@@ -205,12 +212,10 @@ async def extract_tips(
     transcript = at_result.scalar_one_or_none()
 
     if transcript is None:
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "NO_AUDIO_TRANSCRIPT",
-                "message": "该任务无音频转录记录，无法提炼教学建议",
-            },
+        raise AppException(
+            ErrorCode.NO_AUDIO_TRANSCRIPT,
+            message="该任务无音频转录记录，无法提炼教学建议",
+            details={"task_id": str(task_id)},
         )
 
     # Count preserved human tips (for response metadata)
@@ -246,12 +251,12 @@ async def extract_tips(
         task_id, action_type, preserved_human_count,
     )
 
-    return ExtractTipsResponse(
+    return ok(ExtractTipsResponse(
         task_id=task_id,
         status="extracting",
         message="教学建议提炼已触发，将在30秒内完成",
         preserved_human_count=preserved_human_count,
-    )
+    ))
 
 
 def _resolve_action_type(task: AnalysisTask) -> str:

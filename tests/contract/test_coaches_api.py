@@ -210,7 +210,11 @@ class TestAssignCoachToTask:
         resp = TaskCoachResponse(task_id=uuid.uuid4(), coach_id=None, coach_name=None)
         assert resp.coach_id is None
 
-    def test_inactive_coach_422_detail(self):
-        """Assigning soft-deleted coach raises 422."""
+    def test_inactive_coach_400_detail(self):
+        """Assigning soft-deleted coach raises 400 + COACH_INACTIVE (Feature-017).
+
+        章程 v1.4.0：业务状态校验类错误统一 400（原为 422）。此处仅验证错误字典
+        字面量语义，真正的 HTTP 状态码断言由集成测试覆盖。
+        """
         detail = {"code": "COACH_INACTIVE", "message": "无法关联已停用的教练"}
         assert detail["code"] == "COACH_INACTIVE"

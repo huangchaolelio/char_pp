@@ -32,9 +32,13 @@ def app() -> FastAPI:
 
     get_settings.cache_clear()
 
+    from src.api.errors import register_exception_handlers
     from src.api.routers import knowledge_base, tasks
 
     _app = FastAPI()
+    # Feature-017：unit 测试 app 也必须注册异常处理器，否则 AppException 不会被
+    # 转换为 ErrorEnvelope JSON 响应，会作为未捕获异常直接冒泡导致测试失败。
+    register_exception_handlers(_app)
     _app.include_router(tasks.router, prefix="/api/v1")
     _app.include_router(knowledge_base.router, prefix="/api/v1")
     return _app

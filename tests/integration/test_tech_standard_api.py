@@ -287,7 +287,10 @@ class TestUS2QueryStandard:
 
         resp = await client.get(f"/api/v1/standards/{test_cat}")
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        # Feature-017：信封化后业务载荷位于 ``data`` 子树
+        assert envelope["success"] is True
+        data = envelope["data"]
         assert data["tech_category"] == test_cat
         assert data["source_quality"] == "multi_source"
         assert data["coach_count"] == 2
@@ -300,14 +303,12 @@ class TestUS2QueryStandard:
     async def test_query_missing_standard_returns_404(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        """GET for tech_category with no active standard → 404."""
+        """GET for tech_category with no active standard → 404（Feature-017 错误信封）."""
         resp = await client.get("/api/v1/standards/forehand_flick")
         assert resp.status_code == 404
-        data = resp.json()
-        # FastAPI wraps HTTPException detail under top-level "detail" key
-        assert "detail" in data
-        inner = data["detail"]
-        assert "error" in inner
+        body = resp.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "NOT_FOUND"
 
     @pytest.mark.asyncio
     @pytest.mark.skip(reason="Feature-013 retired legacy expert_video/athlete_video task types (Alembic 0012 removed these enum values)")
@@ -385,7 +386,9 @@ class TestUS3BatchBuild:
         """Batch build response contains one entry per ActionType (12 total)."""
         resp = await client.post("/api/v1/standards/build", json={})
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        data = envelope["data"]
 
         assert data["mode"] == "batch"
         assert "results" in data
@@ -411,7 +414,9 @@ class TestUS3BatchBuild:
         """All categories with no ExpertTechPoints are skipped (not failed)."""
         resp = await client.post("/api/v1/standards/build", json={})
         assert resp.status_code == 200
-        data = resp.json()
+        envelope = resp.json()
+        assert envelope["success"] is True
+        data = envelope["data"]
 
         # With no seeded data, everything should be skipped
         assert data["summary"]["failed_count"] == 0

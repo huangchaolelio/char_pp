@@ -138,7 +138,9 @@ async def test_trigger_scan_full_returns_202(client: AsyncClient):
             json={"scan_mode": "full"},
         )
     assert response.status_code == 202
-    data = response.json()
+    body = response.json()
+    assert body["success"] is True
+    data = body["data"]
     assert "task_id" in data
     assert data["status"] == "pending"
     assert uuid.UUID(data["task_id"])  # valid UUID
@@ -154,7 +156,9 @@ async def test_trigger_scan_incremental_returns_202(client: AsyncClient):
             json={"scan_mode": "incremental"},
         )
     assert response.status_code == 202
-    assert response.json()["status"] == "pending"
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "pending"
 
 
 @pytest.mark.asyncio
@@ -165,7 +169,12 @@ async def test_trigger_scan_invalid_mode_returns_400(client: AsyncClient):
         json={"scan_mode": "unknown"},
     )
     assert response.status_code == 400
-    assert "invalid scan_mode" in response.json()["detail"]
+    body = response.json()
+    # Feature-017：错误信封 + INVALID_ENUM_VALUE
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ENUM_VALUE"
+    assert "invalid scan_mode" in body["error"]["message"]
+    assert body["error"]["details"]["field"] == "scan_mode"
 
 
 # ---------------------------------------------------------------------------
@@ -179,7 +188,9 @@ async def test_get_scan_status_pending(client: AsyncClient):
     task_id = str(uuid.uuid4())
     response = await client.get(f"/api/v1/classifications/scan/{task_id}")
     assert response.status_code == 200
-    assert response.json()["status"] == "pending"
+    body = response.json()
+    assert body["success"] is True
+    assert body["data"]["status"] == "pending"
 
 
 @pytest.mark.asyncio
@@ -203,7 +214,9 @@ async def test_get_scan_status_success(client: AsyncClient):
     with patch("src.api.routers.classifications.AsyncResult", return_value=mock_result):
         response = await client.get(f"/api/v1/classifications/scan/{task_id}")
     assert response.status_code == 200
-    data = response.json()
+    body = response.json()
+    assert body["success"] is True
+    data = body["data"]
     assert data["status"] == "success"
     assert data["scanned"] == 100
     assert data["inserted"] == 80
@@ -218,15 +231,18 @@ async def test_get_scan_status_success(client: AsyncClient):
 async def test_list_classifications_returns_all(
     client: AsyncClient, sample_records: list
 ):
-    """GET /classifications returns all inserted records."""
+    """GET /classifications returns all inserted records (Feature-017 信封化：data + meta)."""
     response = await client.get("/api/v1/classifications")
     assert response.status_code == 200
-    data = response.json()
-    assert data["total"] >= len(sample_records)
-    assert isinstance(data["items"], list)
+    body = response.json()
+    assert body["success"] is True
+    items = body["data"]
+    total = body["meta"]["total"]
+    assert total >= len(sample_records)
+    assert isinstance(items, list)
     # Verify item structure
-    if data["items"]:
-        item = data["items"][0]
+    if items:
+        item = items[0]
         assert "id" in item
         assert "coach_name" in item
         assert "tech_category" in item
@@ -239,8 +255,8 @@ async def test_list_classifications_returns_all(
 async def test_filter_by_coach_name(client: AsyncClient, sample_records: list):
     response = await client.get("/api/v1/classifications?coach_name=郭焱")
     assert response.status_code == 200
-    data = response.json()
-    assert all(item["coach_name"] == "郭焱" for item in data["items"])
+    body = response.json()
+    assert all(item["coach_name"] == "郭焱" for item in body["data"])
 
 
 @pytest.mark.asyncio
@@ -249,7 +265,7 @@ async def test_filter_kb_extracted_false(client: AsyncClient, sample_records: li
     """kb_extracted=false returns only unextracted records."""
     response = await client.get("/api/v1/classifications?kb_extracted=false")
     assert response.status_code == 200
-    items = response.json()["items"]
+    items = response.json()["data"]
     assert all(item["kb_extracted"] is False for item in items)
 
 
@@ -258,7 +274,7 @@ async def test_filter_kb_extracted_false(client: AsyncClient, sample_records: li
 async def test_filter_kb_extracted_true(client: AsyncClient, sample_records: list):
     response = await client.get("/api/v1/classifications?kb_extracted=true")
     assert response.status_code == 200
-    items = response.json()["items"]
+    items = response.json()["data"]
     assert all(item["kb_extracted"] is True for item in items)
 
 
@@ -267,7 +283,7 @@ async def test_filter_kb_extracted_true(client: AsyncClient, sample_records: lis
 async def test_filter_tech_category(client: AsyncClient, sample_records: list):
     response = await client.get("/api/v1/classifications?tech_category=serve")
     assert response.status_code == 200
-    items = response.json()["items"]
+    items = response.json()["data"]
     assert all(item["tech_category"] == "serve" for item in items)
 
 
@@ -276,9 +292,12 @@ async def test_filter_tech_category(client: AsyncClient, sample_records: list):
 async def test_pagination(client: AsyncClient, sample_records: list):
     response = await client.get("/api/v1/classifications?limit=2&offset=0")
     assert response.status_code == 200
-    data = response.json()
-    assert len(data["items"]) <= 2
-    assert data["total"] >= len(sample_records)
+    body = response.json()
+    assert len(body["data"]) <= 2
+    # Feature-017：limit/offset 被路由换算为 page/page_size 填入 meta（阶段 5 T054 再整改为原生参数）
+    assert body["meta"]["page_size"] == 2
+    assert body["meta"]["page"] == 1
+    assert body["meta"]["total"] >= len(sample_records)
 
 
 # ---------------------------------------------------------------------------
@@ -345,7 +364,10 @@ async def test_patch_invalid_tech_category_returns_400(
         json={"tech_category": "not_a_real_category"},
     )
     assert response.status_code == 400
-    assert "invalid tech_category" in response.json()["detail"]
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "INVALID_ENUM_VALUE"
+    assert "invalid tech_category" in body["error"]["message"]
 
 
 @pytest.mark.asyncio
@@ -357,4 +379,7 @@ async def test_patch_nonexistent_record_returns_404(client: AsyncClient):
         json={"tech_category": "serve"},
     )
     assert response.status_code == 404
-    assert "not found" in response.json()["detail"]
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "NOT_FOUND"
+    assert "not found" in body["error"]["message"]

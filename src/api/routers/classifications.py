@@ -6,6 +6,11 @@ Endpoints:
   GET  /api/v1/classifications               — list classification records
   GET  /api/v1/classifications/summary       — coach/tech breakdown summary
   PATCH /api/v1/classifications/{id}         — manual correction
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException`` 改为 ``AppException``；
+``scan_mode`` 非法从裸字符串改为 ``INVALID_ENUM_VALUE``；``tech_category`` 非法改为
+``INVALID_ENUM_VALUE``；``classification record not found`` 改为 ``NOT_FOUND``。
+注意：``limit/offset`` 分页参数保留现状（阶段 5 T054 再整改为 ``page/page_size``）。
 """
 
 from __future__ import annotations
@@ -14,21 +19,21 @@ import uuid
 from typing import Optional
 
 from celery.result import AsyncResult
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
 from src.api.schemas.classification import (
     ClassificationItem,
-    ClassificationListResponse,
     ClassificationPatchRequest,
     ClassificationPatchResponse,
-    ClassificationSummaryResponse,
     CoachSummaryItem,
     ScanRequest,
     ScanStatusResponse,
     TechBreakdownItem,
 )
+from src.api.schemas.envelope import SuccessEnvelope, ok, page
 from src.db.session import get_db
 from src.models.coach_video_classification import CoachVideoClassification
 from src.services.tech_classifier import TECH_CATEGORIES, get_tech_label
@@ -42,15 +47,20 @@ router = APIRouter(tags=["classifications"])
 @router.post(
     "/classifications/scan",
     status_code=202,
-    response_model=ScanStatusResponse,
+    response_model=SuccessEnvelope[ScanStatusResponse],
     summary="触发教练视频技术分类扫描",
 )
-async def trigger_scan(body: ScanRequest) -> ScanStatusResponse:
+async def trigger_scan(body: ScanRequest) -> SuccessEnvelope[ScanStatusResponse]:
     """触发全量或增量扫描，异步 Celery task，返回 task_id。"""
     if body.scan_mode not in ("full", "incremental"):
-        raise HTTPException(
-            status_code=400,
-            detail="invalid scan_mode: must be 'full' or 'incremental'",
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message=f"invalid scan_mode: {body.scan_mode!r}",
+            details={
+                "field": "scan_mode",
+                "value": body.scan_mode,
+                "allowed": ["full", "incremental"],
+            },
         )
 
     task_id = str(uuid.uuid4())
@@ -61,41 +71,29 @@ async def trigger_scan(body: ScanRequest) -> ScanStatusResponse:
         task_id=task_id,  # use our task_id as Celery task ID for progress tracking
     )
 
-    return ScanStatusResponse(
+    return ok(ScanStatusResponse(
         task_id=task_id,
         status="pending",
-    )
+    ))
 
 
 # ── GET /classifications/scan/{task_id} ───────────────────────────────────────
 
 @router.get(
     "/classifications/scan/{task_id}",
-    response_model=ScanStatusResponse,
+    response_model=SuccessEnvelope[ScanStatusResponse],
     summary="查询扫描任务进度",
 )
-async def get_scan_status(task_id: str) -> ScanStatusResponse:
+async def get_scan_status(task_id: str) -> SuccessEnvelope[ScanStatusResponse]:
     """查询扫描任务状态，从 Celery result backend 获取。"""
-    # Find the celery task by searching for tasks matching our task_id in meta
-    # Since we use a custom task_id in the payload (not celery's own id),
-    # we look for the result in the active/registered tasks.
-    # The approach: we use celery's AsyncResult with the celery task id.
-    # But our API task_id != celery task id. We store our task_id in the result dict.
-    # So we need to scan active results — instead, we use a simpler approach:
-    # store the celery task id in a Redis key when triggering.
-    # For simplicity in this implementation, we use celery's inspect to find
-    # the running task or check the result backend.
-
-    # Implementation: look up via celery inspect active/reserved tasks.
-    # Simpler: use the task_id as the celery task id by passing task_id explicitly.
     result = AsyncResult(task_id, app=celery_app)
 
     if result.state == "PENDING":
         # Task not found or still queued
-        return ScanStatusResponse(task_id=task_id, status="pending")
+        return ok(ScanStatusResponse(task_id=task_id, status="pending"))
     elif result.state == "RUNNING":
         meta = result.info or {}
-        return ScanStatusResponse(
+        return ok(ScanStatusResponse(
             task_id=task_id,
             status="running",
             scanned=meta.get("scanned"),
@@ -104,10 +102,10 @@ async def get_scan_status(task_id: str) -> ScanStatusResponse:
             skipped=meta.get("skipped"),
             errors=meta.get("errors"),
             elapsed_s=meta.get("elapsed_s"),
-        )
+        ))
     elif result.state == "SUCCESS":
         info = result.result or {}
-        return ScanStatusResponse(
+        return ok(ScanStatusResponse(
             task_id=task_id,
             status="success",
             scanned=info.get("scanned"),
@@ -116,23 +114,23 @@ async def get_scan_status(task_id: str) -> ScanStatusResponse:
             skipped=info.get("skipped"),
             errors=info.get("errors"),
             elapsed_s=info.get("elapsed_s"),
-        )
+        ))
     elif result.state == "FAILURE":
-        return ScanStatusResponse(
+        return ok(ScanStatusResponse(
             task_id=task_id,
             status="failed",
             error_detail=str(result.info) if result.info else None,
-        )
+        ))
     else:
         # RETRY, REVOKED, etc.
-        return ScanStatusResponse(task_id=task_id, status=result.state.lower())
+        return ok(ScanStatusResponse(task_id=task_id, status=result.state.lower()))
 
 
 # ── GET /classifications ──────────────────────────────────────────────────────
 
 @router.get(
     "/classifications",
-    response_model=ClassificationListResponse,
+    response_model=SuccessEnvelope[list[ClassificationItem]],
     summary="查询分类记录列表",
 )
 async def list_classifications(
@@ -143,8 +141,13 @@ async def list_classifications(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
     session: AsyncSession = Depends(get_db),
-) -> ClassificationListResponse:
-    """按条件查询分类记录，支持分页。"""
+) -> SuccessEnvelope[list[ClassificationItem]]:
+    """按条件查询分类记录，支持分页。
+
+    Feature-017 临时保留 ``limit/offset`` 参数；阶段 5 T054 将统一迁移到
+    ``page/page_size``。当前使用 ``page(...)`` 构造器时，把 ``offset/limit``
+    换算成 ``page/page_size`` 填入 meta 以保证信封结构一致。
+    """
     stmt = select(CoachVideoClassification)
     count_stmt = select(func.count()).select_from(CoachVideoClassification)
 
@@ -173,21 +176,23 @@ async def list_classifications(
     records = result.scalars().all()
 
     items = [ClassificationItem.model_validate(r) for r in records]
-    return ClassificationListResponse(total=total, items=items)
+    # 换算 offset/limit → page/page_size，阶段 5 T054 再整改为原生 page 参数
+    derived_page = (offset // limit) + 1 if limit > 0 else 1
+    return page(items, page=derived_page, page_size=limit, total=total)
 
 
 # ── GET /classifications/summary ──────────────────────────────────────────────
 
 @router.get(
     "/classifications/summary",
-    response_model=ClassificationSummaryResponse,
+    response_model=SuccessEnvelope[list[CoachSummaryItem]],
     summary="按教练统计技术分类汇总",
 )
 async def get_summary(
     coach_name: Optional[str] = Query(None),
     session: AsyncSession = Depends(get_db),
-) -> ClassificationSummaryResponse:
-    """按教练 + 技术类别统计视频数量和已提取知识库数量。"""
+) -> SuccessEnvelope[list[CoachSummaryItem]]:
+    """按教练 + 技术类别统计视频数量和已提取知识库数量."""
     # Group by coach_name, tech_category
     stmt = select(
         CoachVideoClassification.coach_name,
@@ -221,7 +226,7 @@ async def get_summary(
         coaches_map[cname]["total_videos"] += row.count
         coaches_map[cname]["kb_extracted"] += int(row.kb_count or 0)
 
-    coaches = []
+    coaches: list[CoachSummaryItem] = []
     for cname, data in coaches_map.items():
         breakdown = [
             TechBreakdownItem(
@@ -241,31 +246,43 @@ async def get_summary(
             )
         )
 
-    return ClassificationSummaryResponse(coaches=coaches)
+    return ok(coaches)
 
 
 # ── PATCH /classifications/{id} ───────────────────────────────────────────────
 
 @router.patch(
     "/classifications/{classification_id}",
-    response_model=ClassificationPatchResponse,
+    response_model=SuccessEnvelope[ClassificationPatchResponse],
     summary="人工修正技术分类",
 )
 async def patch_classification(
     classification_id: uuid.UUID,
     body: ClassificationPatchRequest,
     session: AsyncSession = Depends(get_db),
-) -> ClassificationPatchResponse:
-    """人工修正单条记录的技术分类，source 强制设为 manual，confidence=1.0。"""
+) -> SuccessEnvelope[ClassificationPatchResponse]:
+    """人工修正单条记录的技术分类，source 强制设为 manual，confidence=1.0."""
     if body.tech_category not in TECH_CATEGORIES:
-        raise HTTPException(
-            status_code=400,
-            detail=f"invalid tech_category: '{body.tech_category}' is not a valid TechCategory",
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message=f"invalid tech_category: {body.tech_category!r}",
+            details={
+                "field": "tech_category",
+                "value": body.tech_category,
+                "allowed": sorted(TECH_CATEGORIES),
+            },
         )
 
     record = await session.get(CoachVideoClassification, classification_id)
     if record is None:
-        raise HTTPException(status_code=404, detail="classification record not found")
+        raise AppException(
+            ErrorCode.NOT_FOUND,
+            message="classification record not found",
+            details={
+                "resource": "classification",
+                "resource_id": str(classification_id),
+            },
+        )
 
     record.tech_category = body.tech_category
     if body.tech_tags is not None:
@@ -276,4 +293,4 @@ async def patch_classification(
     await session.commit()
     await session.refresh(record)
 
-    return ClassificationPatchResponse.model_validate(record)
+    return ok(ClassificationPatchResponse.model_validate(record))

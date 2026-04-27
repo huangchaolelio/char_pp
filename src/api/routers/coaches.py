@@ -7,19 +7,23 @@ Endpoints:
   PATCH  /coaches/{coach_id}         → update coach name/bio
   DELETE /coaches/{coach_id}         → soft-delete (204)
   PATCH  /tasks/{task_id}/coach      → associate coach to task
+
+Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException`` 改为 ``AppException``
+（章程 v1.4.0 原则 IX）。``PATCH /tasks/{task_id}/coach`` 暂留此处，后续阶段 5 T050
+搬迁到 tasks.py（仅跨文件剪切，业务逻辑不动）。
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
 from src.api.schemas.coach import (
     CoachCreate,
     CoachResponse,
@@ -27,6 +31,7 @@ from src.api.schemas.coach import (
     TaskCoachResponse,
     TaskCoachUpdate,
 )
+from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask
 from src.models.coach import Coach
@@ -37,11 +42,11 @@ router = APIRouter(tags=["coaches"])
 
 # ── POST /coaches ─────────────────────────────────────────────────────────────
 
-@router.post("/coaches", status_code=201, response_model=CoachResponse)
+@router.post("/coaches", status_code=201, response_model=SuccessEnvelope[CoachResponse])
 async def create_coach(
     body: CoachCreate,
     db: AsyncSession = Depends(get_db),
-) -> CoachResponse:
+) -> SuccessEnvelope[CoachResponse]:
     """Create a new coach. Name must be globally unique."""
     coach = Coach(name=body.name, bio=body.bio)
     db.add(coach)
@@ -50,68 +55,68 @@ async def create_coach(
         await db.refresh(coach)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "COACH_NAME_CONFLICT",
-                "message": f"教练名称 '{body.name}' 已存在",
-                "details": {"name": body.name},
-            },
+        raise AppException(
+            ErrorCode.COACH_NAME_CONFLICT,
+            message=f"教练名称 '{body.name}' 已存在",
+            details={"name": body.name},
         )
     logger.info("coach created id=%s name=%s", coach.id, coach.name)
-    return CoachResponse.model_validate(coach)
+    return ok(CoachResponse.model_validate(coach))
 
 
 # ── GET /coaches ──────────────────────────────────────────────────────────────
 
-@router.get("/coaches", response_model=list[CoachResponse])
+@router.get("/coaches", response_model=SuccessEnvelope[list[CoachResponse]])
 async def list_coaches(
     include_inactive: bool = False,
     db: AsyncSession = Depends(get_db),
-) -> list[CoachResponse]:
-    """List coaches. By default only returns active coaches."""
+) -> SuccessEnvelope[list[CoachResponse]]:
+    """List coaches. By default only returns active coaches.
+
+    非分页全量列表：``meta=null``。分页由 阶段 5 T054 引入。
+    """
     stmt = select(Coach)
     if not include_inactive:
         stmt = stmt.where(Coach.is_active.is_(True))
     stmt = stmt.order_by(Coach.created_at)
     result = await db.execute(stmt)
     coaches = result.scalars().all()
-    return [CoachResponse.model_validate(c) for c in coaches]
+    return ok([CoachResponse.model_validate(c) for c in coaches])
 
 
 # ── GET /coaches/{coach_id} ───────────────────────────────────────────────────
 
-@router.get("/coaches/{coach_id}", response_model=CoachResponse)
+@router.get("/coaches/{coach_id}", response_model=SuccessEnvelope[CoachResponse])
 async def get_coach(
     coach_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
-) -> CoachResponse:
+) -> SuccessEnvelope[CoachResponse]:
     """Get a single coach by ID."""
     result = await db.execute(select(Coach).where(Coach.id == coach_id))
     coach = result.scalar_one_or_none()
     if coach is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "COACH_NOT_FOUND", "message": "教练不存在"},
+        raise AppException(
+            ErrorCode.COACH_NOT_FOUND,
+            details={"coach_id": str(coach_id)},
         )
-    return CoachResponse.model_validate(coach)
+    return ok(CoachResponse.model_validate(coach))
 
 
 # ── PATCH /coaches/{coach_id} ─────────────────────────────────────────────────
 
-@router.patch("/coaches/{coach_id}", response_model=CoachResponse)
+@router.patch("/coaches/{coach_id}", response_model=SuccessEnvelope[CoachResponse])
 async def update_coach(
     coach_id: uuid.UUID,
     body: CoachUpdate,
     db: AsyncSession = Depends(get_db),
-) -> CoachResponse:
+) -> SuccessEnvelope[CoachResponse]:
     """Update coach name and/or bio."""
     result = await db.execute(select(Coach).where(Coach.id == coach_id))
     coach = result.scalar_one_or_none()
     if coach is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "COACH_NOT_FOUND", "message": "教练不存在"},
+        raise AppException(
+            ErrorCode.COACH_NOT_FOUND,
+            details={"coach_id": str(coach_id)},
         )
     if body.name is not None:
         coach.name = body.name
@@ -122,16 +127,13 @@ async def update_coach(
         await db.refresh(coach)
     except IntegrityError:
         await db.rollback()
-        raise HTTPException(
-            status_code=409,
-            detail={
-                "code": "COACH_NAME_CONFLICT",
-                "message": f"教练名称 '{body.name}' 已被占用",
-                "details": {"name": body.name},
-            },
+        raise AppException(
+            ErrorCode.COACH_NAME_CONFLICT,
+            message=f"教练名称 '{body.name}' 已被占用",
+            details={"name": body.name},
         )
     logger.info("coach updated id=%s name=%s", coach.id, coach.name)
-    return CoachResponse.model_validate(coach)
+    return ok(CoachResponse.model_validate(coach))
 
 
 # ── DELETE /coaches/{coach_id} ────────────────────────────────────────────────
@@ -141,19 +143,19 @@ async def soft_delete_coach(
     coach_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> None:
-    """Soft-delete a coach (sets is_active=False). Historical task data is preserved."""
+    """Soft-delete a coach (sets is_active=False). Historical task data is preserved.
+
+    204 响应按约定不携带响应体（信封不适用）。
+    """
     result = await db.execute(select(Coach).where(Coach.id == coach_id))
     coach = result.scalar_one_or_none()
     if coach is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "COACH_NOT_FOUND", "message": "教练不存在"},
+        raise AppException(
+            ErrorCode.COACH_NOT_FOUND,
+            details={"coach_id": str(coach_id)},
         )
     if not coach.is_active:
-        raise HTTPException(
-            status_code=409,
-            detail={"code": "COACH_ALREADY_INACTIVE", "message": "教练已处于停用状态"},
-        )
+        raise AppException(ErrorCode.COACH_ALREADY_INACTIVE)
     coach.is_active = False
     await db.commit()
     logger.info("coach soft-deleted id=%s name=%s", coach.id, coach.name)
@@ -161,12 +163,12 @@ async def soft_delete_coach(
 
 # ── PATCH /tasks/{task_id}/coach ──────────────────────────────────────────────
 
-@router.patch("/tasks/{task_id}/coach", response_model=TaskCoachResponse)
+@router.patch("/tasks/{task_id}/coach", response_model=SuccessEnvelope[TaskCoachResponse])
 async def assign_coach_to_task(
     task_id: uuid.UUID,
     body: TaskCoachUpdate,
     db: AsyncSession = Depends(get_db),
-) -> TaskCoachResponse:
+) -> SuccessEnvelope[TaskCoachResponse]:
     """Assign (or remove) a coach for an expert video task."""
     task_result = await db.execute(
         select(AnalysisTask).where(
@@ -176,30 +178,27 @@ async def assign_coach_to_task(
     )
     task = task_result.scalar_one_or_none()
     if task is None:
-        raise HTTPException(
-            status_code=404,
-            detail={"code": "TASK_NOT_FOUND", "message": "任务不存在"},
+        raise AppException(
+            ErrorCode.TASK_NOT_FOUND,
+            details={"task_id": str(task_id)},
         )
 
-    coach_name: Optional[str] = None
+    coach_name: str | None = None
     if body.coach_id is not None:
         coach_result = await db.execute(
             select(Coach).where(Coach.id == body.coach_id)
         )
         coach = coach_result.scalar_one_or_none()
         if coach is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "COACH_NOT_FOUND", "message": "教练不存在"},
+            raise AppException(
+                ErrorCode.COACH_NOT_FOUND,
+                details={"coach_id": str(body.coach_id)},
             )
         if not coach.is_active:
-            raise HTTPException(
-                status_code=422,
-                detail={
-                    "code": "COACH_INACTIVE",
-                    "message": "无法关联已停用的教练",
-                    "details": {"coach_id": str(body.coach_id)},
-                },
+            raise AppException(
+                ErrorCode.COACH_INACTIVE,
+                message="无法关联已停用的教练",
+                details={"coach_id": str(body.coach_id)},
             )
         coach_name = coach.name
 
@@ -208,8 +207,8 @@ async def assign_coach_to_task(
     logger.info(
         "task coach assigned task_id=%s coach_id=%s", task_id, body.coach_id
     )
-    return TaskCoachResponse(
+    return ok(TaskCoachResponse(
         task_id=task_id,
         coach_id=body.coach_id,
         coach_name=coach_name,
-    )
+    ))
