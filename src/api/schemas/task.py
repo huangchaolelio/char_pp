@@ -248,14 +248,5 @@ class TaskListItemResponse(BaseModel):
     completed_at: Optional[datetime] = None
 
 
-class TaskListResponse(BaseModel):
-    """Paginated task list response."""
-    items: List[TaskListItemResponse]
-    total: int
-    page: int
-    page_size: int
-    total_pages: int
-
-
 # Rebuild TaskStatusResponse to resolve forward reference to TaskSummary
 TaskStatusResponse.model_rebuild()

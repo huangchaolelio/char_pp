@@ -21,12 +21,7 @@ class KnowledgeBaseVersionItem(BaseModel):
     approved_at: Optional[datetime] = None
 
 
-class KnowledgeBaseVersionsResponse(BaseModel):
-    versions: list[KnowledgeBaseVersionItem]
-
-
-# ── Version detail ───────────────────────────────────────────────────────────
-
+# ── Version detail ─────────────────────────────────────────────────────────��
 class TechPointDetail(BaseModel):
     action_type: str
     dimension: str

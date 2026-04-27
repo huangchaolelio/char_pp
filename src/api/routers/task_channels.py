@@ -14,11 +14,11 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Depends, Path
+from fastapi import APIRouter, Depends, Path, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
-from src.api.schemas.envelope import SuccessEnvelope, ok
+from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.task_submit import ChannelSnapshot
 from src.db.session import get_db
 from src.models.analysis_task import TaskType
@@ -49,15 +49,25 @@ def _snapshot_to_schema(snap) -> ChannelSnapshot:
     response_model=SuccessEnvelope[list[ChannelSnapshot]],
 )
 async def list_channels(
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[ChannelSnapshot]]:
-    """Return all channel snapshots in enum order (non-paginated—always full list)."""
+    """Return all channel snapshots in enum order.
+
+    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）。
+    频道为枚举型资源（TaskType 枚举限有），通常不需分页，但参数保持一致以通过
+    命名规范 linter。
+    """
     svc = TaskChannelService()
     snapshots: list[ChannelSnapshot] = []
     for tt in TaskType:
         snap = await svc.get_snapshot(db, tt)
         snapshots.append(_snapshot_to_schema(snap))
-    return ok(snapshots)
+    total = len(snapshots)
+    offset = (page_num - 1) * page_size
+    sliced = snapshots[offset : offset + page_size]
+    return page_envelope(sliced, page=page_num, page_size=page_size, total=total)
 
 
 @router.get(

@@ -18,12 +18,12 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import delete, select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
-from src.api.schemas.envelope import SuccessEnvelope, ok
+from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.teaching_tip import (
     ExtractTipsResponse,
     TeachingTipPatch,
@@ -51,12 +51,14 @@ async def list_teaching_tips(
     source_type: str | None = None,
     task_id: uuid.UUID | None = None,
     coach_id: uuid.UUID | None = None,  # Feature 006: filter by coach
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[TeachingTipResponse]]:
     """List teaching tips with optional filters.
 
-    Feature-017 非分页全量列表（阶段 5 T054 将引入 ``page/page_size``）；
-    ``meta=null``。
+    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）；
+    越界由 FastAPI 422 + VALIDATION_FAILED 自动拦截。
     """
     # Feature 006: JOIN with analysis_tasks and coaches to support coach_id filter
     stmt = (
@@ -64,19 +66,37 @@ async def list_teaching_tips(
         .join(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
         .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
     )
+    count_stmt = (
+        select(func.count())
+        .select_from(TeachingTip)
+        .join(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
+    )
 
     if action_type is not None:
         stmt = stmt.where(TeachingTip.action_type == action_type)
+        count_stmt = count_stmt.where(TeachingTip.action_type == action_type)
     if tech_phase is not None:
         stmt = stmt.where(TeachingTip.tech_phase == tech_phase)
+        count_stmt = count_stmt.where(TeachingTip.tech_phase == tech_phase)
     if source_type is not None:
         stmt = stmt.where(TeachingTip.source_type == source_type)
+        count_stmt = count_stmt.where(TeachingTip.source_type == source_type)
     if task_id is not None:
         stmt = stmt.where(TeachingTip.task_id == task_id)
+        count_stmt = count_stmt.where(TeachingTip.task_id == task_id)
     if coach_id is not None:
         stmt = stmt.where(AnalysisTask.coach_id == coach_id)
+        count_stmt = count_stmt.where(AnalysisTask.coach_id == coach_id)
 
-    stmt = stmt.order_by(TeachingTip.source_type.desc(), TeachingTip.confidence.desc())
+    total_result = await db.execute(count_stmt)
+    total = int(total_result.scalar() or 0)
+
+    offset = (page_num - 1) * page_size
+    stmt = (
+        stmt.order_by(TeachingTip.source_type.desc(), TeachingTip.confidence.desc())
+        .offset(offset)
+        .limit(page_size)
+    )
     result = await db.execute(stmt)
     rows = result.all()
 
@@ -87,7 +107,7 @@ async def list_teaching_tips(
         data.coach_name = coach_name
         items.append(data)
 
-    return ok(items)
+    return page_envelope(items, page=page_num, page_size=page_size, total=total)
 
 
 # ── PATCH /teaching-tips/{tip_id} ─────────────────────────────────────────────

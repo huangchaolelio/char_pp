@@ -74,7 +74,11 @@ class TestChannelStatusContract:
         body = response.json()
         # Feature-017：从返回 ``{"channels":[...]}`` 改为 SuccessEnvelope。
         assert body["success"] is True
-        assert body["meta"] is None  # 非分页接口
+        # Feature-017 阶段 5 T054：统一分页参数后 meta 恒非空（即使枚举型全量返回）
+        assert body["meta"] is not None
+        assert body["meta"]["page"] == 1
+        assert body["meta"]["page_size"] == 20
+        assert body["meta"]["total"] == 4
         channels = body["data"]
         # Feature-016 adds the preprocessing channel, bringing the total to 4.
         assert len(channels) == 4

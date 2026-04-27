@@ -41,7 +41,6 @@ from src.api.schemas.task import (
     ResultSummary,
     TaskDeleteResponse,
     TaskListItemResponse,
-    TaskListResponse,
     TaskResultAthleteResponse,
     TaskResultExpertResponse,
     TaskStatusResponse,
@@ -80,7 +79,7 @@ _MAX_PAGE_SIZE = 100
 @router.get("/tasks", response_model=SuccessEnvelope[list[TaskListItemResponse]])
 async def list_tasks(
     page: int = Query(1, ge=1, description="页码，从 1 开始"),
-    page_size: int = Query(20, ge=1, description="每页条数，最大 100（章程 v1.4.0）"),
+    page_size: int = Query(20, ge=1, le=_MAX_PAGE_SIZE, description="每页条数，最大 100（章程 v1.4.0）"),
     sort_by: str = Query("created_at", description="排序字段: created_at / completed_at"),
     order: str = Query("desc", description="排序方向: asc / desc"),
     status: Optional[str] = Query(None, description="按任务状态筛选"),
@@ -93,16 +92,15 @@ async def list_tasks(
     """List all non-deleted tasks with pagination, filtering and sorting.
 
     - Default: page=1, page_size=20, sort_by=created_at, order=desc
-    - page_size is capped at 200 automatically
+    - page_size 由 Pydantic ``Query(le=100)`` 硬约束；越界直接 422 + VALIDATION_FAILED（章程 v1.4.0）
     - Multiple filters are combined with AND logic
     - completed_at ordering uses NULLS LAST
     """
     t_start = time.monotonic()
 
     # ── Parameter validation ──────────────────────────────────
-    if page_size > _MAX_PAGE_SIZE:
-        page_size = _MAX_PAGE_SIZE
-
+    # Feature-017 阶段 5 T054：``page_size`` 由 Query ``le=100`` 预约束；
+    # 原静默截断逻辑删除、成为 422 + VALIDATION_FAILED 羻伟失败。
     if sort_by not in _VALID_SORT_BY:
         raise AppException(
             ErrorCode.INVALID_ENUM_VALUE,

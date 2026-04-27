@@ -290,11 +290,11 @@ async def test_filter_tech_category(client: AsyncClient, sample_records: list):
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_pagination(client: AsyncClient, sample_records: list):
-    response = await client.get("/api/v1/classifications?limit=2&offset=0")
+    response = await client.get("/api/v1/classifications?page=1&page_size=2")
     assert response.status_code == 200
     body = response.json()
     assert len(body["data"]) <= 2
-    # Feature-017：limit/offset 被路由换算为 page/page_size 填入 meta（阶段 5 T054 再整改为原生参数）
+    # Feature-017 阶段 5 T054：统一 page/page_size 分页参数（limit/offset 已下线）
     assert body["meta"]["page_size"] == 2
     assert body["meta"]["page"] == 1
     assert body["meta"]["total"] >= len(sample_records)

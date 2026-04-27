@@ -7,11 +7,11 @@ Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException``
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
-from src.api.schemas.envelope import SuccessEnvelope, ok
+from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.knowledge_base import (
     ApproveRequest,
     ApproveResponse,
@@ -37,11 +37,20 @@ router = APIRouter(tags=["knowledge-base"])
     response_model=SuccessEnvelope[list[KnowledgeBaseVersionItem]],
 )
 async def list_kb_versions(
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[KnowledgeBaseVersionItem]]:
-    """List all knowledge base versions, newest first."""
+    """List all knowledge base versions, newest first.
+
+    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）。
+    知识库版本数量通常较少，服务层 ``list_versions`` 返回全量后路由层切片。
+    """
     versions = await knowledge_base_svc.list_versions(db)
-    return ok([
+    total = len(versions)
+    offset = (page_num - 1) * page_size
+    sliced = versions[offset : offset + page_size]
+    items = [
         KnowledgeBaseVersionItem(
             version=kb.version,
             status=kb.status.value,
@@ -49,8 +58,9 @@ async def list_kb_versions(
             point_count=kb.point_count,
             approved_at=kb.approved_at,
         )
-        for kb in versions
-    ])
+        for kb in sliced
+    ]
+    return page_envelope(items, page=page_num, page_size=page_size, total=total)
 
 
 # ── GET /knowledge-base/{version} ────────────────────────────────────────────

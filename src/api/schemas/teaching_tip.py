@@ -1,10 +1,11 @@
 """Pydantic schemas for Teaching Tips API (Feature 005).
 
-Endpoints:
-  GET  /teaching-tips           → TeachingTipListResponse
-  PATCH /teaching-tips/{id}     → TeachingTipResponse
+Endpoints (Feature-017 aligned: list 采用 SuccessEnvelope[list[TeachingTipResponse]]
++ PaginationMeta 来包装，包装类 TeachingTipListResponse 已下线):
+  GET  /teaching-tips           → SuccessEnvelope[list[TeachingTipResponse]]
+  PATCH /teaching-tips/{id}     → SuccessEnvelope[TeachingTipResponse]
   DELETE /teaching-tips/{id}    → 204 No Content
-  POST /tasks/{task_id}/extract-tips → ExtractTipsResponse
+  POST /tasks/{task_id}/extract-tips → SuccessEnvelope[ExtractTipsResponse]
 """
 
 from __future__ import annotations
@@ -32,11 +33,6 @@ class TeachingTipResponse(BaseModel):
     coach_name: Optional[str] = None
 
     model_config = {"from_attributes": True}
-
-
-class TeachingTipListResponse(BaseModel):
-    total: int
-    items: list[TeachingTipResponse]
 
 
 class TeachingTipPatch(BaseModel):

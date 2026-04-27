@@ -89,15 +89,6 @@ class ExtractionJobDetail(BaseModel):
     conflict_count: int = 0
 
 
-# ── Pagination envelope ─────────────────────────────────────────────────────
-
-class ExtractionJobListResponse(BaseModel):
-    total: int
-    page: int
-    page_size: int
-    items: list[ExtractionJobSummary]
-
-
 # ── Rerun ───────────────────────────────────────────────────────────────────
 
 class RerunRequest(BaseModel):

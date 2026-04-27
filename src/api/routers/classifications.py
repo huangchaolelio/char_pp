@@ -10,7 +10,7 @@ Endpoints:
 Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException`` 改为 ``AppException``；
 ``scan_mode`` 非法从裸字符串改为 ``INVALID_ENUM_VALUE``；``tech_category`` 非法改为
 ``INVALID_ENUM_VALUE``；``classification record not found`` 改为 ``NOT_FOUND``。
-注意：``limit/offset`` 分页参数保留现状（阶段 5 T054 再整改为 ``page/page_size``）。
+注意：``page/page_size`` 分页参数已于阶段 5 T054 统一（``limit/offset`` 已下线）。
 """
 
 from __future__ import annotations
@@ -138,15 +138,16 @@ async def list_classifications(
     tech_category: Optional[str] = Query(None),
     kb_extracted: Optional[bool] = Query(None),
     classification_source: Optional[str] = Query(None),
-    limit: int = Query(50, ge=1, le=200),
-    offset: int = Query(0, ge=0),
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[ClassificationItem]]:
     """按条件查询分类记录，支持分页。
 
-    Feature-017 临时保留 ``limit/offset`` 参数；阶段 5 T054 将统一迁移到
-    ``page/page_size``。当前使用 ``page(...)`` 构造器时，把 ``offset/limit``
-    换算成 ``page/page_size`` 填入 meta 以保证信封结构一致。
+    Feature-017 阶段 5 T054：统一使用 ``page/page_size`` 查询参数（1-based page、
+    page_size 默认 20 / 最大 100）。原 ``limit/offset`` 参数已彻底下线，调用方
+    需改用 ``page`` 与 ``page_size``；越界由 FastAPI 422 + VALIDATION_FAILED
+    自动拦截。
     """
     stmt = select(CoachVideoClassification)
     count_stmt = select(func.count()).select_from(CoachVideoClassification)
@@ -171,14 +172,13 @@ async def list_classifications(
     total_result = await session.execute(count_stmt)
     total = total_result.scalar_one()
 
-    stmt = stmt.order_by(CoachVideoClassification.created_at.desc()).offset(offset).limit(limit)
+    offset = (page_num - 1) * page_size
+    stmt = stmt.order_by(CoachVideoClassification.created_at.desc()).offset(offset).limit(page_size)
     result = await session.execute(stmt)
     records = result.scalars().all()
 
     items = [ClassificationItem.model_validate(r) for r in records]
-    # 换算 offset/limit → page/page_size，阶段 5 T054 再整改为原生 page 参数
-    derived_page = (offset // limit) + 1 if limit > 0 else 1
-    return page(items, page=derived_page, page_size=limit, total=total)
+    return page(items, page=page_num, page_size=page_size, total=total)
 
 
 # ── GET /classifications/summary ──────────────────────────────────────────────
@@ -190,9 +190,15 @@ async def list_classifications(
 )
 async def get_summary(
     coach_name: Optional[str] = Query(None),
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[CoachSummaryItem]]:
-    """按教练 + 技术类别统计视频数量和已提取知识库数量."""
+    """按教练 + 技术类别统计视频数量和已提取知识库数量.
+
+    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）；
+    本端点返回聚合统计（教练 × 技术类别），记录数通常较少，服务层计算完再切片。
+    """
     # Group by coach_name, tech_category
     stmt = select(
         CoachVideoClassification.coach_name,
@@ -246,7 +252,8 @@ async def get_summary(
             )
         )
 
-    return ok(coaches)
+    return page(coaches[(page_num - 1) * page_size : page_num * page_size],
+                page=page_num, page_size=page_size, total=len(coaches))
 
 
 # ── PATCH /classifications/{id} ───────────────────────────────────────────────

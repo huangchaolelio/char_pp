@@ -62,11 +62,6 @@ class ClassificationItem(BaseModel):
     model_config = {"from_attributes": True}
 
 
-class ClassificationListResponse(BaseModel):
-    total: int
-    items: list[ClassificationItem]
-
-
 class TechBreakdownItem(BaseModel):
     tech_category: str
     label: str

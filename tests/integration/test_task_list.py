@@ -59,11 +59,15 @@ async def test_list_tasks_custom_pagination(async_client: AsyncClient) -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_tasks_page_size_capped_at_100(async_client: AsyncClient) -> None:
-    """page_size > 100 is automatically truncated to 100（章程 v1.4.0）."""
+async def test_list_tasks_page_size_over_max_rejected(async_client: AsyncClient) -> None:
+    """page_size > 100 返回 422 + VALIDATION_FAILED（Feature-017 阶段 5 T054：
+    章程 v1.4.0 禁止静默截断，原 `_MAX_PAGE_SIZE` 截断逻辑已下线，改由 Pydantic
+    ``Query(le=100)`` 硬约束）."""
     response = await async_client.get("/api/v1/tasks?page_size=999")
-    assert response.status_code == 200
-    assert response.json()["meta"]["page_size"] == 100
+    assert response.status_code == 422
+    body = response.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "VALIDATION_FAILED"
 
 
 @pytest.mark.asyncio

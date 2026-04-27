@@ -32,24 +32,40 @@ def client():
 class TestGetTeachingTipsContract:
 
     def test_response_schema_empty(self, client):
-        """GET /teaching-tips returns valid schema even when DB is empty."""
+        """GET /teaching-tips returns valid SuccessEnvelope even when DB is empty.
+
+        Feature-017 aligned: 原 TeachingTipListResponse 包装类已删除，改用
+        SuccessEnvelope[list[TeachingTipResponse]] + PaginationMeta 套信封。
+        """
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = []
+        mock_result.scalar.return_value = 0  # total count
 
         async def mock_execute(*args, **kwargs):
             return mock_result
 
-        with patch("src.api.routers.teaching_tips.get_db") as mock_get_db:
-            mock_session = AsyncMock()
-            mock_session.execute = mock_execute
-            mock_get_db.return_value = mock_session
+        from src.db.session import get_db
+        from src.api.main import app as real_app
 
-            # Direct model validation test (no HTTP call needed for schema)
-            from src.api.schemas.teaching_tip import TeachingTipListResponse
-            resp = TeachingTipListResponse(total=0, items=[])
+        mock_session = AsyncMock()
+        mock_session.execute = mock_execute
 
-            assert resp.total == 0
-            assert resp.items == []
+        async def _db_override():
+            yield mock_session
+
+        real_app.dependency_overrides[get_db] = _db_override
+        try:
+            resp = client.get("/api/v1/teaching-tips")
+        finally:
+            real_app.dependency_overrides.pop(get_db, None)
+
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["success"] is True
+        assert body["data"] == []
+        assert body["meta"]["total"] == 0
+        assert body["meta"]["page"] == 1
+        assert body["meta"]["page_size"] == 20
 
     def test_teaching_tip_response_has_required_fields(self):
         """TeachingTipResponse schema has all required fields from contracts/."""

@@ -18,8 +18,8 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -31,7 +31,7 @@ from src.api.schemas.coach import (
     TaskCoachResponse,
     TaskCoachUpdate,
 )
-from src.api.schemas.envelope import SuccessEnvelope, ok
+from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask
 from src.models.coach import Coach
@@ -69,19 +69,30 @@ async def create_coach(
 @router.get("/coaches", response_model=SuccessEnvelope[list[CoachResponse]])
 async def list_coaches(
     include_inactive: bool = False,
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[CoachResponse]]:
     """List coaches. By default only returns active coaches.
 
-    非分页全量列表：``meta=null``。分页由 阶段 5 T054 引入。
+    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）；
+    越界由 FastAPI 422 + VALIDATION_FAILED 自动拦截。
     """
     stmt = select(Coach)
+    count_stmt = select(func.count()).select_from(Coach)
     if not include_inactive:
         stmt = stmt.where(Coach.is_active.is_(True))
-    stmt = stmt.order_by(Coach.created_at)
+        count_stmt = count_stmt.where(Coach.is_active.is_(True))
+
+    total_result = await db.execute(count_stmt)
+    total = int(total_result.scalar() or 0)
+
+    offset = (page_num - 1) * page_size
+    stmt = stmt.order_by(Coach.created_at).offset(offset).limit(page_size)
     result = await db.execute(stmt)
     coaches = result.scalars().all()
-    return ok([CoachResponse.model_validate(c) for c in coaches])
+    items = [CoachResponse.model_validate(c) for c in coaches]
+    return page_envelope(items, page=page_num, page_size=page_size, total=total)
 
 
 # ── GET /coaches/{coach_id} ───────────────────────────────────────────────────
