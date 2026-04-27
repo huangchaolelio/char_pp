@@ -22,10 +22,16 @@ from src.models.diagnosis_report import (
     DiagnosisReport,
 )
 from src.models.video_classification import VideoClassification
+from src.models.coach_video_classification import CoachVideoClassification
 from src.models.task_channel_config import TaskChannelConfig
 from src.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
 from src.models.kb_conflict import KbConflict
+from src.models.video_preprocessing_job import (
+    PreprocessingJobStatus,
+    VideoPreprocessingJob,
+)
+from src.models.video_preprocessing_segment import VideoPreprocessingSegment
 
 __all__ = [
     "AnalysisTask",
@@ -60,6 +66,7 @@ __all__ = [
     "DeviationLevel",
     "DiagnosisDeviationDirection",
     "VideoClassification",
+    "CoachVideoClassification",
     "TaskChannelConfig",
     "ExtractionJob",
     "ExtractionJobStatus",
@@ -67,4 +74,7 @@ __all__ = [
     "PipelineStepStatus",
     "StepType",
     "KbConflict",
+    "VideoPreprocessingJob",
+    "PreprocessingJobStatus",
+    "VideoPreprocessingSegment",
 ]
