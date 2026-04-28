@@ -11,6 +11,7 @@ from DB / Celery / COS concerns.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, patch
 from uuid import UUID, uuid4
 
@@ -60,8 +61,8 @@ def _submit_outcome(job_id: UUID, *, reused: bool, status: str = "running",
         cos_object_key=cos_object_key,
         segment_count=4 if reused else None,
         has_audio=True if reused else None,
-        started_at=datetime.now(timezone.utc),
-        completed_at=datetime.now(timezone.utc) if reused else None,
+        started_at=now_cst(),
+        completed_at=now_cst() if reused else None,
     )
 
 
@@ -330,8 +331,8 @@ class TestPreprocessingGetContract:
             cos_object_key="coach/video.mp4",
             status="success",
             force=False,
-            started_at=datetime.now(timezone.utc),
-            completed_at=datetime.now(timezone.utc),
+            started_at=now_cst(),
+            completed_at=now_cst(),
             duration_ms=600000,
             segment_count=4,
             has_audio=True,
@@ -411,7 +412,7 @@ class TestPreprocessingListContract:
             cos_object_key="coach/video.mp4",
             status="running",
             force=False,
-            started_at=datetime.now(timezone.utc),
+            started_at=now_cst(),
             completed_at=None,
             duration_ms=None,
             segment_count=None,
@@ -424,7 +425,7 @@ class TestPreprocessingListContract:
     def test_c1_default_pagination_returns_envelope_with_meta(self, client):
         """C1: GET 默认参数 → 200 SuccessEnvelope，meta.page=1/page_size=20/total=N."""
         rows = [
-            self._row(status="success", completed_at=datetime.now(timezone.utc),
+            self._row(status="success", completed_at=now_cst(),
                       duration_ms=600_000, segment_count=4, has_audio=True),
             self._row(status="running"),
             self._row(status="failed", error_message="VIDEO_QUALITY_REJECTED"),

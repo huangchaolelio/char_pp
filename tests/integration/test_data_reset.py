@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 
 import pytest
 from sqlalchemy import delete, func, select, text
@@ -87,7 +88,7 @@ async def _seed_task(session: AsyncSession, filename: str) -> uuid.UUID:
             status=TaskStatus.pending,
             cos_object_key=key,
             submitted_via="single",
-            created_at=datetime.now(timezone.utc),
+            created_at=now_cst(),
         )
     )
     await session.commit()

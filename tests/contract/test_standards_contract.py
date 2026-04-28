@@ -176,7 +176,7 @@ class TestGetStandardContract:
         mock_standard.source_quality = "multi_source"
         mock_standard.coach_count = 3
         mock_standard.point_count = 5
-        mock_standard.built_at = datetime(2026, 4, 22, tzinfo=timezone.utc)
+        mock_standard.built_at = datetime(2026, 4, 22)
         mock_standard.points = [mock_point]
 
         with patch(
@@ -242,7 +242,7 @@ class TestListStandardsContract:
         mock_std.version = 1
         mock_std.source_quality = "multi_source"
         mock_std.coach_count = 3
-        mock_std.built_at = datetime(2026, 4, 22, tzinfo=timezone.utc)
+        mock_std.built_at = datetime(2026, 4, 22)
         mock_std.points = []
 
         with patch(

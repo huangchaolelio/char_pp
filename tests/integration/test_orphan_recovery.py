@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 
 import pytest
 from sqlalchemy import delete, select
@@ -69,7 +70,7 @@ async def _insert_processing_task(
     started_delta_s: int,
 ) -> uuid.UUID:
     """Insert a ``processing`` row whose started_at is ``started_delta_s`` in the past."""
-    now = datetime.now(timezone.utc)
+    now = now_cst()
     started = now - timedelta(seconds=started_delta_s)
     tid = uuid.uuid4()
     key = f"pytest/f013-t035/{filename}"

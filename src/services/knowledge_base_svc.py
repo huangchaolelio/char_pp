@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from typing import Optional
 
 from sqlalchemy import select, update
@@ -282,7 +282,7 @@ async def approve_version(
     # Activate the new version
     kb.status = KBStatus.active
     kb.approved_by = approved_by
-    kb.approved_at = datetime.now(tz=timezone.utc)
+    kb.approved_at = now_cst()
     if notes:
         kb.notes = notes
 

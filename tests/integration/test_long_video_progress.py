@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,8 +33,8 @@ def make_task(
     task.id = uuid.uuid4()
     task.task_type = TaskType.expert_video
     task.status = status
-    task.created_at = datetime.now(tz=timezone.utc)
-    task.started_at = datetime.now(tz=timezone.utc)
+    task.created_at = now_cst()
+    task.started_at = now_cst()
     task.completed_at = None
     task.video_duration_seconds = None
     task.video_fps = None

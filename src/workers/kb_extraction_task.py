@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from uuid import UUID
 
 from celery import shared_task
@@ -53,7 +53,7 @@ async def _run_extract(task_id: str, cos_object_key: str) -> dict:
             .where(AnalysisTask.id == UUID(task_id))
             .values(
                 status=TaskStatus.processing,
-                started_at=datetime.now(timezone.utc),
+started_at=now_cst(),
             )
         )
         await session.commit()
@@ -83,7 +83,7 @@ async def _run_extract(task_id: str, cos_object_key: str) -> dict:
                 .where(AnalysisTask.id == UUID(task_id))
                 .values(
                     status=TaskStatus.failed,
-                    completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
                     error_message=str(exc)[:2000],
                 )
             )
@@ -107,7 +107,7 @@ async def _run_extract(task_id: str, cos_object_key: str) -> dict:
             .where(AnalysisTask.id == UUID(task_id))
             .values(
                 status=parent_status,
-                completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
                 error_message=error_message,
             )
         )

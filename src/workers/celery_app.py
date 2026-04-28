@@ -44,9 +44,9 @@ def create_celery_app() -> Celery:
         task_default_retry_delay=30,
         # Result expiry: 24 hours
         result_expires=86400,
-        # Timezone
+        # Timezone — 整体对齐北京时间（unit: 章程 v1.4.0 / Feature-018）
         timezone="Asia/Shanghai",
-        enable_utc=True,
+        enable_utc=False,
         # Worker settings
         worker_prefetch_multiplier=1,
         task_acks_late=True,

@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
+
+from src.utils.time_utils import now_cst
 from typing import Any, Optional
 from uuid import UUID
 
@@ -221,7 +223,7 @@ async def create_or_reuse(
     # force=True + existing success → supersede the old row + purge its COS objects.
     if existing is not None and force:
         existing.status = PreprocessingJobStatus.superseded.value
-        existing.completed_at = datetime.now(timezone.utc)
+        existing.completed_at = now_cst()
         session.add(existing)
         await session.flush()
         try:
@@ -237,7 +239,7 @@ async def create_or_reuse(
         cos_object_key=cos_object_key,
         status=PreprocessingJobStatus.running.value,
         force=force,
-        started_at=datetime.now(timezone.utc),
+        started_at=now_cst(),
         has_audio=False,
     )
     session.add(new_row)
@@ -316,7 +318,7 @@ async def record_job_failed(
         .values(
             status=PreprocessingJobStatus.failed.value,
             error_message=error_message,
-            completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
         )
     )
 
@@ -347,7 +349,7 @@ async def record_job_success(
             audio_cos_object_key=audio_cos_object_key,
             audio_size_bytes=audio_size_bytes,
             local_artifact_dir=local_artifact_dir,
-            completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
         )
     )
 

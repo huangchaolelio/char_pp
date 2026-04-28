@@ -19,7 +19,7 @@ on the way in so a single bad item never nukes the merge.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from typing import Any
 
 from sqlalchemy import select, update
@@ -80,7 +80,7 @@ async def execute(
     await session.execute(
         update(CoachVideoClassification)
         .where(CoachVideoClassification.cos_object_key == job.cos_object_key)
-        .values(kb_extracted=True, updated_at=datetime.now(timezone.utc))
+            .values(kb_extracted=True, updated_at=now_cst())
     )
     await session.commit()
 

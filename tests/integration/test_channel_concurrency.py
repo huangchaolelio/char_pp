@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 
 import pytest
 import pytest_asyncio
@@ -72,7 +73,7 @@ async def _cleanup():
 
 
 async def _seed(session, task_type: TaskType, *, pending: int, processing: int) -> None:
-    now = datetime.now(timezone.utc)
+    now = now_cst()
     for i in range(pending):
         session.add(
             AnalysisTask(

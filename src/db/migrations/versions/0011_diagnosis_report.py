@@ -47,9 +47,9 @@ def upgrade() -> None:
         sa.Column("strengths_summary", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.PrimaryKeyConstraint("id"),
     )

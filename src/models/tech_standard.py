@@ -31,6 +31,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -64,7 +65,7 @@ class TechStandard(Base):
     # Total number of ExpertTechPoints used (across all dimensions)
     point_count: Mapped[int] = mapped_column(Integer, nullable=False)
     built_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
 
     # Relationships

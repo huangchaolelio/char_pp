@@ -17,6 +17,7 @@ the HTTP contract defined in
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -73,7 +74,7 @@ def client_without_token(db_no_op):
 
 def _make_report(dry_run: bool) -> ResetReportData:
     return ResetReportData(
-        reset_at=datetime.now(timezone.utc),
+        reset_at=now_cst(),
         dry_run=dry_run,
         deleted_counts={
             "analysis_tasks": 2589,

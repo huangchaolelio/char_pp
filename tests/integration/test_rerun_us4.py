@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 from pathlib import Path
 from unittest.mock import patch
 
@@ -133,9 +134,9 @@ async def seeded_failed_job(session_factory):
             force=False,
             error_message="simulated audio_transcription failure",
             # completed_at in the past; cleanup window is still ahead.
-            started_at=datetime.now(timezone.utc) - timedelta(minutes=10),
-            completed_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-            intermediate_cleanup_at=datetime.now(timezone.utc) + timedelta(days=1),
+            started_at=now_cst() - timedelta(minutes=10),
+            completed_at=now_cst() - timedelta(minutes=5),
+            intermediate_cleanup_at=now_cst() + timedelta(days=1),
         )
         session.add(job)
         await session.flush()
@@ -198,8 +199,8 @@ async def seeded_failed_job(session_factory):
                     output_summary=summary,
                     output_artifact_path=artifact,
                     error_message=err,
-                    started_at=datetime.now(timezone.utc) - timedelta(minutes=6),
-                    completed_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+                    started_at=now_cst() - timedelta(minutes=6),
+                    completed_at=now_cst() - timedelta(minutes=5),
                 )
             )
         await session.commit()
@@ -292,7 +293,7 @@ async def test_rerun_full_flow(
             update(ExtractionJob)
             .where(ExtractionJob.id == job_id)
             .values(
-                intermediate_cleanup_at=datetime.now(timezone.utc)
+                intermediate_cleanup_at=now_cst()
                 - timedelta(hours=1)
             )
         )
@@ -314,7 +315,7 @@ async def test_rerun_full_flow(
             update(ExtractionJob)
             .where(ExtractionJob.id == job_id)
             .values(
-                intermediate_cleanup_at=datetime.now(timezone.utc)
+                intermediate_cleanup_at=now_cst()
                 + timedelta(days=1)
             )
         )
@@ -388,7 +389,7 @@ async def test_rerun_full_flow(
             .where(ExtractionJob.id == job_id)
             .values(
                 status=ExtractionJobStatus.failed,
-                intermediate_cleanup_at=datetime.now(timezone.utc)
+                intermediate_cleanup_at=now_cst()
                 - timedelta(hours=1),  # expired, but force overrides
             )
         )

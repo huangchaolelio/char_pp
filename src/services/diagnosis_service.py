@@ -23,7 +23,9 @@ import os
 import tempfile
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
+
+from src.utils.time_utils import now_cst
 from typing import Optional
 
 from sqlalchemy import select
@@ -258,7 +260,7 @@ class DiagnosisService:
                 overall_score=overall_score,
                 strengths=strengths,
                 dimensions=dim_results,
-                created_at=report.created_at or datetime.now(timezone.utc),
+            created_at=report.created_at or now_cst(),
             )
 
         finally:

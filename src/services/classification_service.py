@@ -15,7 +15,7 @@ filename + course series alone (matches how Feature-008's scanner works).
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from typing import Optional
 from uuid import uuid4
 
@@ -74,7 +74,7 @@ class ClassificationService:
             result.confidence,
         )
 
-        now = datetime.now(timezone.utc)
+        now = now_cst()
         existing = (
             await session.execute(
                 select(CoachVideoClassification).where(

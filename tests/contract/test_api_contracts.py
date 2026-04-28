@@ -16,17 +16,18 @@ from httpx._transports.asgi import ASGITransport
 
 from src.api.main import app
 from src.db.session import get_db
+from src.utils.time_utils import now_cst
 
 
 def _make_task(task_type="expert_video", status="success", deleted_at=None, kb_version="1.0.0"):
     from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     task = MagicMock(spec=AnalysisTask)
     task.id = uuid.uuid4()
     task.task_type = TaskType(task_type)
     task.status = TaskStatus(status)
-    task.created_at = datetime.now(timezone.utc)
+    task.created_at = now_cst()
     task.started_at = None
     task.completed_at = None
     task.video_duration_seconds = None
@@ -231,7 +232,7 @@ class TestFeature006TaskCoachContracts:
         from datetime import datetime, timezone
         resp = TaskStatusResponse(
             task_id=uuid.uuid4(), task_type="expert_video",
-            status="pending", created_at=datetime.now(timezone.utc),
+            status="pending", created_at=now_cst(),
             coach_id=uuid.uuid4(), coach_name="张教练",
         )
         assert resp.coach_name == "张教练"
@@ -242,7 +243,7 @@ class TestFeature006TaskCoachContracts:
         from datetime import datetime, timezone
         resp = TaskStatusResponse(
             task_id=uuid.uuid4(), task_type="expert_video",
-            status="pending", created_at=datetime.now(timezone.utc),
+            status="pending", created_at=now_cst(),
         )
         assert resp.coach_id is None
         assert resp.coach_name is None

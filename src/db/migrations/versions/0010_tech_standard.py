@@ -43,9 +43,9 @@ def upgrade() -> None:
         sa.Column("point_count", sa.Integer(), nullable=False),
         sa.Column(
             "built_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("tech_category", "version", name="uq_ts_tech_version"),

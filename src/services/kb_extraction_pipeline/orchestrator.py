@@ -17,7 +17,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import socket
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -35,6 +35,7 @@ from src.services.kb_extraction_pipeline.pipeline_definition import (
     dependents_of,
 )
 from src.services.kb_extraction_pipeline.retry_policy import run_with_retry
+from src.utils.time_utils import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ class Orchestrator:
         )
 
         # Mark the job as running (idempotent — reruns also pass here).
-        now = datetime.now(timezone.utc)
+        now = now_cst()
         job_row = (
             await session.execute(
                 select(ExtractionJob).where(ExtractionJob.id == job_id)
@@ -310,7 +311,7 @@ class Orchestrator:
         own connection instead of queuing on the driver's.
         """
         settings = get_settings()
-        started = datetime.now(timezone.utc)
+        started = now_cst()
 
         async with step_session_factory() as session:
             await session.execute(
@@ -399,7 +400,7 @@ class Orchestrator:
         error_message: str | None = None,
         started_at: datetime | None = None,
     ) -> None:
-        completed = datetime.now(timezone.utc)
+        completed = now_cst()
         duration_ms: int | None = None
         if started_at is not None:
             duration_ms = int((completed - started_at).total_seconds() * 1000)
@@ -471,7 +472,7 @@ class Orchestrator:
             .values(
                 status=PipelineStepStatus.failed,
                 error_message=reason,
-                completed_at=datetime.now(timezone.utc),
+                completed_at=now_cst(),
             )
         )
         await session.commit()
@@ -505,7 +506,7 @@ class Orchestrator:
                 else "merge_kb did not succeed"
             )
 
-        completed = datetime.now(timezone.utc)
+        completed = now_cst()
         await session.execute(
             update(ExtractionJob)
             .where(ExtractionJob.id == job_id)

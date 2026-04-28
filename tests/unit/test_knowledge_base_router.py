@@ -1,6 +1,5 @@
 """Unit tests for knowledge_base router — US1 endpoints (T028–T029)."""
-from datetime import datetime, timezone as _tz
-UTC = _tz.utc
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,7 +26,7 @@ class TestListKbVersions:
     @pytest.mark.asyncio
     async def test_returns_versions_list(self, client, override_db):
         kb = make_kb(version="1.0.0", status="active")
-        kb.approved_at = datetime(2026, 4, 17, 9, 0, 0, tzinfo=UTC)
+        kb.approved_at = datetime(2026, 4, 17, 9, 0, 0)
 
         with patch(
             "src.api.routers.knowledge_base.knowledge_base_svc.list_versions",
@@ -145,7 +144,7 @@ class TestApproveKbVersion:
 
     @pytest.mark.asyncio
     async def test_approve_success(self, client, override_db):
-        approved_at = datetime(2026, 4, 18, 10, 0, 0, tzinfo=UTC)
+        approved_at = datetime(2026, 4, 18, 10, 0, 0)
         kb = make_kb(version=KB_VERSION, status="active")
         kb.approved_by = "张教练"
         kb.approved_at = approved_at

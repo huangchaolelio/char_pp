@@ -16,6 +16,7 @@ from sqlalchemy import Boolean, Enum, Float, ForeignKey, Integer, String, TIMEST
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -54,7 +55,7 @@ class AthleteMotionAnalysis(Base):
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
 
     # Relationships

@@ -123,9 +123,11 @@ class TaskChannelService:
         current_processing = int((await session.execute(processing_q)).scalar_one())
 
         # Rate: tasks completed (success) in the last 10 min, averaged per minute.
-        from datetime import datetime, timedelta, timezone
+        from datetime import timedelta
 
-        window_start = datetime.now(timezone.utc) - timedelta(minutes=10)
+        from src.utils.time_utils import now_cst
+
+        window_start = now_cst() - timedelta(minutes=10)
         rate_q = (
             select(func.count())
             .select_from(AnalysisTask)

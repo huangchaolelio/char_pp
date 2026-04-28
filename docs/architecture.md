@@ -166,6 +166,16 @@ pending → processing → success
                     → rejected
 ```
 
+### 时区规范（全链路北京时间）
+
+全项目禁止使用 UTC 时间作为存储与传输口径，所有时间字段按北京时间（Asia/Shanghai）存储与序列化。
+
+- **应用层**：统一入口 `src/utils/time_utils.py::now_cst()` 返回 naive `datetime`（已剥离 tzinfo）。禁止使用 `datetime.now(timezone.utc)` / `datetime.utcnow()` / `datetime.now(UTC)`。
+- **ORM 模型**：所有时间列统一 `TIMESTAMP(timezone=False)`；`server_default` / `onupdate` 统一为 `text("timezone('Asia/Shanghai', now())")`，不依赖会话时区设置。
+- **数据库**：PostgreSQL 服务器 timezone 配置为 `Asia/Shanghai`；迁移文件默认值使用 `timezone('Asia/Shanghai', now())` 显式拼接，保证重放可复现。
+- **API 序列化**：响应中时间字段形如 `"2026-04-28T11:39:11.287972"`（无 `Z`、无 `+08:00`），所见即北京时间。
+- **Celery**：`timezone="Asia/Shanghai"` + `enable_utc=False`，beat 调度、任务时间戳与业务时间一致。
+
 ---
 
 ## API 接口层

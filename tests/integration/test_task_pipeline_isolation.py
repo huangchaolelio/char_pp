@@ -21,6 +21,7 @@ import asyncio
 import time
 import uuid
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 
 import pytest
 import pytest_asyncio
@@ -79,7 +80,7 @@ async def _cleanup():
 
 async def _saturate_classification_channel(session, n: int = 5) -> None:
     """Insert n pending classification rows directly to fill capacity=5."""
-    now = datetime.now(timezone.utc)
+    now = now_cst()
     for i in range(n):
         key = f"pytest/f013/coach/saturate_{i}.mp4"
         session.add(

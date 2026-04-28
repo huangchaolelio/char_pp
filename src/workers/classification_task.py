@@ -149,15 +149,15 @@ def scan_cos_videos(self, task_id: str, scan_mode: str = "full") -> dict:
 
 async def _run_classify(task_id: str, cos_object_key: str) -> dict:
     """Delegate to ClassificationService (Phase US3 T036/T037)."""
-    from datetime import datetime, timezone
     from uuid import UUID
 
     from sqlalchemy import select, update
 
     from src.models.analysis_task import AnalysisTask, TaskStatus
+    from src.utils.time_utils import now_cst
 
     factory = _make_session_factory()
-    started_at = datetime.now(timezone.utc)
+    started_at = now_cst()
 
     async with factory() as session:
         # Mark task as processing
@@ -188,7 +188,7 @@ async def _run_classify(task_id: str, cos_object_key: str) -> dict:
                 .where(AnalysisTask.id == UUID(task_id))
                 .values(
                     status=TaskStatus.success,
-                    completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
                 )
             )
             await session.commit()
@@ -200,7 +200,7 @@ async def _run_classify(task_id: str, cos_object_key: str) -> dict:
                 .where(AnalysisTask.id == UUID(task_id))
                 .values(
                     status=TaskStatus.failed,
-                    completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
                     error_message=str(exc)[:2000],
                 )
             )

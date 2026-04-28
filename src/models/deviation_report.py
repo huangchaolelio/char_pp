@@ -21,6 +21,7 @@ from sqlalchemy import Boolean, Enum, Float, ForeignKey, String, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -61,7 +62,7 @@ class DeviationReport(Base):
     # [0,1] normalized impact score; NULL until computed
     impact_score: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
 
     # Relationships

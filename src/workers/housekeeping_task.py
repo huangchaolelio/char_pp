@@ -9,7 +9,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
+
+from src.utils.time_utils import now_cst
 
 from celery import shared_task
 from sqlalchemy import delete, or_
@@ -49,7 +51,7 @@ def cleanup_expired_tasks() -> dict:
     async def _run_cleanup() -> int:
         settings = get_settings()
         retention_months = settings.data_retention_months
-        cutoff_date = datetime.now(tz=timezone.utc) - timedelta(days=retention_months * 30)
+        cutoff_date = now_cst() - timedelta(days=retention_months * 30)
         factory = _make_session_factory()
 
         async with factory() as session:
@@ -101,7 +103,7 @@ def cleanup_intermediate_artifacts() -> dict:
         root = Path(settings.extraction_artifact_root)
         factory = _make_session_factory()
 
-        now = datetime.now(tz=timezone.utc)
+        now = now_cst()
 
         async with factory() as session:
             from src.models.extraction_job import ExtractionJob
@@ -203,7 +205,7 @@ async def _cleanup_preprocessing_local() -> dict:
             "preprocessing_skipped_recent": 0,
         }
 
-    now_epoch = datetime.now(tz=timezone.utc).timestamp()
+    now_epoch = now_cst().timestamp()
     retention_s = settings.preprocessing_local_retention_hours * 3600
     active_window_s = 3600  # 1 hour grace for in-flight consumers
 

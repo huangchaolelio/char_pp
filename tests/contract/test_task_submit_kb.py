@@ -6,6 +6,7 @@ Focus: CLASSIFICATION_REQUIRED pre-check + happy path.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -38,7 +39,7 @@ def _ok_result():
             cos_object_key="videos/coach_a/forehand_loop.mp4",
         )],
         channel=snap,
-        submitted_at=datetime.now(timezone.utc),
+        submitted_at=now_cst(),
     )
 
 

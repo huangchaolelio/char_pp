@@ -69,14 +69,14 @@ def upgrade() -> None:
         ),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
-            server_default=sa.text("NOW()"),
+            sa.TIMESTAMP(timezone=False),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
             nullable=False,
         ),
         sa.Column(
             "updated_at",
-            sa.TIMESTAMP(timezone=True),
-            server_default=sa.text("NOW()"),
+            sa.TIMESTAMP(timezone=False),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
             nullable=False,
         ),
         sa.PrimaryKeyConstraint("id"),

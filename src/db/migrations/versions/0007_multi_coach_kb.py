@@ -42,9 +42,9 @@ def upgrade() -> None:
         ),
         sa.Column(
             "created_at",
-            TIMESTAMP(timezone=True),
+            TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.UniqueConstraint("name", name="uq_coaches_name"),
     )

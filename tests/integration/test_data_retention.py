@@ -8,6 +8,7 @@ Tests:
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,7 +27,7 @@ class TestSoftDelete:
         task.deleted_at = None
 
         # Simulate the soft delete operation
-        now = datetime.now(timezone.utc)
+        now = now_cst()
         task.deleted_at = now
 
         assert task.deleted_at is not None
@@ -37,7 +38,7 @@ class TestSoftDelete:
         from src.models.analysis_task import AnalysisTask
 
         task = MagicMock(spec=AnalysisTask)
-        task.deleted_at = datetime.now(timezone.utc)
+        task.deleted_at = now_cst()
         task.is_deleted = True  # Property should reflect deleted status
 
         assert task.is_deleted

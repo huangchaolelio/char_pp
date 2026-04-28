@@ -11,6 +11,7 @@ from sqlalchemy import Enum, Float, ForeignKey, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -53,7 +54,7 @@ class AudioTranscript(Base):
     # List of sentence dicts: [{start, end, text, confidence}]
     sentences: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
 
     # Relationships

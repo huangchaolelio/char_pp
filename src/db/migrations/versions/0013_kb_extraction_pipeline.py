@@ -119,13 +119,13 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.func.now(),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
-        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("intermediate_cleanup_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=False), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=False), nullable=True),
+        sa.Column("intermediate_cleanup_at", sa.TIMESTAMP(timezone=False), nullable=True),
     )
     op.create_index(
         "idx_extraction_jobs_status",
@@ -182,8 +182,8 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column("output_summary", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("output_artifact_path", sa.String(length=1000), nullable=True),
-        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=False), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=False), nullable=True),
         sa.Column("duration_ms", sa.Integer(), nullable=True),
         sa.UniqueConstraint("job_id", "step_type", name="uq_pipeline_steps_job_step"),
     )
@@ -222,15 +222,15 @@ def upgrade() -> None:
             sa.ForeignKey("extraction_jobs.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("resolved_at", sa.TIMESTAMP(timezone=False), nullable=True),
         sa.Column("resolved_by", sa.String(length=100), nullable=True),
         sa.Column("resolution", sa.String(length=20), nullable=True),
         sa.Column("resolution_value", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.func.now(),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
     )
     op.create_index("idx_kb_conflicts_job", "kb_conflicts", ["job_id"])

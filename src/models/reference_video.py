@@ -14,6 +14,7 @@ from sqlalchemy import Float, ForeignKey, Integer, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -50,12 +51,12 @@ class ReferenceVideo(Base):
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        TIMESTAMP(timezone=False),
         nullable=False,
-        server_default=func.now(),
+        server_default=text("timezone('Asia/Shanghai', now())"),
     )
 
     # Relationships

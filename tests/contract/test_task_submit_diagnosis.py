@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -34,7 +35,7 @@ def _ok_result():
             index=0, accepted=True, task_id=uuid4(), cos_object_key=None,
         )],
         channel=snap,
-        submitted_at=datetime.now(timezone.utc),
+        submitted_at=now_cst(),
     )
 
 

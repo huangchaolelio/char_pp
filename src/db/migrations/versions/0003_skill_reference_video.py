@@ -47,9 +47,9 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean, nullable=False, server_default="true"),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.UniqueConstraint("name", name="uq_skills_name"),
     )
@@ -93,18 +93,18 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text, nullable=True),
         sa.Column("rejection_reason", sa.Text, nullable=True),
         sa.Column("approved_by", sa.String(100), nullable=True),
-        sa.Column("approved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("approved_at", sa.TIMESTAMP(timezone=False), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.Column(
             "updated_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
     )
     op.create_index(
@@ -142,15 +142,15 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text, nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.Column(
             "updated_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.UniqueConstraint("execution_id", name="uq_reference_videos_execution_id"),
     )

@@ -13,6 +13,7 @@ import os
 import time
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 from pathlib import Path
 
 import pytest
@@ -177,14 +178,14 @@ class TestPreprocessingOrphanSweep:
                     id=job_id,
                     cos_object_key=cos_key,
                     status="running",
-                    started_at=datetime.now(tz=timezone.utc) - timedelta(hours=1),
+                    started_at=now_cst() - timedelta(hours=1),
                     has_audio=False,
                 )
             )
             await session.commit()
 
         # Sweep with cutoff = now - 30 min (older is orphan).
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=30)
+        cutoff = now_cst() - timedelta(minutes=30)
         try:
             async with session_factory() as session:
                 count = await _sweep_preprocessing_orphans(session, cutoff)
@@ -229,14 +230,14 @@ class TestPreprocessingOrphanSweep:
                     id=job_id,
                     cos_object_key=cos_key,
                     status="running",
-                    started_at=datetime.now(tz=timezone.utc) - timedelta(minutes=1),
+                    started_at=now_cst() - timedelta(minutes=1),
                     has_audio=False,
                 )
             )
             await session.commit()
 
         # Cutoff = 30 minutes ago → fresh job should NOT be reclaimed.
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=30)
+        cutoff = now_cst() - timedelta(minutes=30)
         try:
             async with session_factory() as session:
                 count = await _sweep_preprocessing_orphans(session, cutoff)
@@ -268,7 +269,7 @@ class TestPreprocessingOrphanSweep:
 
         cos_prefix = f"tests/feature016_orphan/{uuid.uuid4().hex[:8]}"
         job_ids: dict[str, uuid.UUID] = {}
-        ancient = datetime.now(tz=timezone.utc) - timedelta(days=1)
+        ancient = now_cst() - timedelta(days=1)
 
         async with session_factory() as session:
             for status in ("success", "failed", "superseded"):
@@ -286,7 +287,7 @@ class TestPreprocessingOrphanSweep:
                 )
             await session.commit()
 
-        cutoff = datetime.now(tz=timezone.utc) - timedelta(minutes=30)
+        cutoff = now_cst() - timedelta(minutes=30)
         try:
             async with session_factory() as session:
                 count = await _sweep_preprocessing_orphans(session, cutoff)

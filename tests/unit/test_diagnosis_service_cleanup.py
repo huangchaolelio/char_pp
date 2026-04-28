@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -44,7 +45,7 @@ def _make_session(standard=None):
         if hasattr(obj, "id") and obj.id is None:
             obj.id = uuid.uuid4()
         if not hasattr(obj, "created_at") or obj.created_at is None:
-            obj.created_at = datetime.now(timezone.utc)
+            obj.created_at = now_cst()
 
     session.add.side_effect = _add_side
     return session

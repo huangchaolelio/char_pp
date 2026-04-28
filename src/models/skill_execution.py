@@ -15,6 +15,7 @@ from sqlalchemy import Enum, ForeignKey, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -56,16 +57,16 @@ class SkillExecution(Base):
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
+        TIMESTAMP(timezone=False), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
+        TIMESTAMP(timezone=False),
         nullable=False,
-        server_default=func.now(),
-        onupdate=func.now(),
+        server_default=text("timezone('Asia/Shanghai', now())"),
+        onupdate=text("timezone('Asia/Shanghai', now())"),
     )
 
     # Relationships

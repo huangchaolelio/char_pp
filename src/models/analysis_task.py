@@ -11,6 +11,7 @@ from sqlalchemy import BigInteger, Enum, Float, ForeignKey, Integer, String, Tex
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 if TYPE_CHECKING:
     from src.models.coach import Coach
@@ -79,17 +80,17 @@ class AnalysisTask(Base):
     audio_fallback_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
     started_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
+        TIMESTAMP(timezone=False), nullable=True
     )
     completed_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
+        TIMESTAMP(timezone=False), nullable=True
     )
     # Soft-delete: set by DELETE endpoint; physical cleanup runs daily
     deleted_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
+        TIMESTAMP(timezone=False), nullable=True
     )
 
     # Feature 007: per-task processing timing

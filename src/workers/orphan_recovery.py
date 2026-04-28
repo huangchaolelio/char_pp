@@ -15,7 +15,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
+
+from src.utils.time_utils import now_cst
 
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
@@ -40,8 +42,8 @@ async def sweep_orphan_tasks() -> int:
     settings = get_settings()
     timeout_s = settings.orphan_task_timeout_seconds
     step_timeout_s = settings.extraction_step_timeout_seconds
-    cutoff = datetime.now(tz=timezone.utc) - timedelta(seconds=timeout_s)
-    step_cutoff = datetime.now(tz=timezone.utc) - timedelta(seconds=step_timeout_s)
+    cutoff = now_cst() - timedelta(seconds=timeout_s)
+    step_cutoff = now_cst() - timedelta(seconds=step_timeout_s)
 
     engine = create_async_engine(
         settings.database_url,
@@ -62,7 +64,7 @@ async def sweep_orphan_tasks() -> int:
                 )
                 .values(
                     status=TaskStatus.failed,
-                    completed_at=datetime.now(tz=timezone.utc),
+completed_at=now_cst(),
                     error_message="orphan recovered on worker restart",
                 )
                 .returning(AnalysisTask.id)
@@ -120,7 +122,7 @@ async def _sweep_preprocessing_orphans(
         )
         .values(
             status="failed",
-            completed_at=datetime.now(tz=timezone.utc),
+completed_at=now_cst(),
             error_message="orphan_recovered",
         )
         .returning(VideoPreprocessingJob.id)
@@ -167,7 +169,7 @@ async def _sweep_pipeline_step_orphans(
     if not stuck:
         return 0
 
-    now = datetime.now(tz=timezone.utc)
+    now = now_cst()
     affected_job_ids: set = set()
     for step in stuck:
         # Flip stuck step to failed.

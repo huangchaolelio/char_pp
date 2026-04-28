@@ -10,6 +10,7 @@ from sqlalchemy import Boolean, Float, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -53,11 +54,11 @@ class VideoClassification(Base):
 
     # Timestamps
     classified_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now(), nullable=False
+        TIMESTAMP(timezone=False), server_default=text("timezone('Asia/Shanghai', now())"), nullable=False
     )
     updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True),
-        server_default=func.now(),
-        onupdate=func.now(),
+        TIMESTAMP(timezone=False),
+        server_default=text("timezone('Asia/Shanghai', now())"),
+        onupdate=text("timezone('Asia/Shanghai', now())"),
         nullable=False,
     )

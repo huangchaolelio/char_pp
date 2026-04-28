@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 
 import pytest
 from sqlalchemy import delete, func, select
@@ -68,7 +69,7 @@ async def _cleanup():
 
 
 async def _prefill_classification(session: AsyncSession, n: int) -> None:
-    now = datetime.now(timezone.utc)
+    now = now_cst()
     for i in range(n):
         key = f"pytest/f013-t028/prefill_{i}.mp4"
         session.add(

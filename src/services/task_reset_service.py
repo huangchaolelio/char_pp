@@ -35,7 +35,9 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
+
+from src.utils.time_utils import now_cst
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -115,7 +117,7 @@ class TaskResetService:
 
         duration_ms = int((time.monotonic() - start) * 1000)
         report = ResetReportData(
-            reset_at=datetime.now(timezone.utc),
+reset_at=now_cst(),
             dry_run=dry_run,
             deleted_counts=deleted_counts,
             preserved_counts=preserved_counts,

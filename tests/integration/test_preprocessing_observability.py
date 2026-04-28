@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 
 import pytest
 import pytest_asyncio
@@ -55,7 +56,7 @@ async def seeded_jobs(session_factory):
     """
     ids: dict[str, uuid.UUID] = {}
     test_prefix = f"tests/feature016_obs/video_{uuid.uuid4().hex[:8]}"
-    now = datetime.now(timezone.utc)
+    now = now_cst()
 
     async with session_factory() as session:
         # ── success job (full metadata) ──────────────────────────────────

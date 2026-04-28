@@ -16,9 +16,10 @@ from __future__ import annotations
 import logging
 import time
 import uuid
-from datetime import datetime, timezone as _tz
-UTC = _tz.utc
+from datetime import datetime
 from pathlib import Path
+
+from src.utils.time_utils import now_cst
 from typing import Union, Optional
 
 from fastapi import APIRouter, Depends, Query
@@ -649,7 +650,7 @@ async def delete_task(
             details={"task_id": task_id},
         )
 
-    now = datetime.now(UTC)
+    now = now_cst()
     task.deleted_at = now
     await db.commit()
 
@@ -1030,7 +1031,7 @@ async def submit_kb_extraction_batch(
                 enabled=snap.enabled,
                 recent_completion_rate_per_min=snap.recent_completion_rate_per_min,
             ),
-            submitted_at=datetime.now(_tz.utc),
+        submitted_at=now_cst(),
         ))
 
     service_result = await _f13_submit(

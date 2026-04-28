@@ -19,7 +19,7 @@ can crash, stop, or be redeployed independently.
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -75,7 +75,7 @@ class KbExtractionService:
         # Flip the flag — idempotent: re-extraction is a no-op from the DB's
         # perspective (row.kb_extracted stays True, updated_at bumps).
         row.kb_extracted = True
-        row.updated_at = datetime.now(timezone.utc)
+        row.updated_at = now_cst()
         await session.commit()
 
         logger.info(

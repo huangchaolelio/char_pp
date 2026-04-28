@@ -49,15 +49,15 @@ def upgrade() -> None:
         sa.Column("original_text", sa.Text, nullable=True),
         sa.Column(
             "created_at",
-            TIMESTAMP(timezone=True),
+            TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.Column(
             "updated_at",
-            TIMESTAMP(timezone=True),
+            TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.CheckConstraint(
             "confidence >= 0.0 AND confidence <= 1.0",

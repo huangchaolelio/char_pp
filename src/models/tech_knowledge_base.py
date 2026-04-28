@@ -14,6 +14,7 @@ from sqlalchemy import CheckConstraint, Enum, Integer, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
+from sqlalchemy import text
 
 from src.db.session import Base
 
@@ -40,10 +41,10 @@ class TechKnowledgeBase(Base):
     )
     approved_by: Mapped[Optional[str]] = mapped_column(String(200), nullable=True)
     approved_at: Mapped[Optional[datetime]] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=True
+        TIMESTAMP(timezone=False), nullable=True
     )
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), nullable=False, server_default=func.now()
+        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
     notes: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 

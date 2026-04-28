@@ -88,7 +88,7 @@ def _build_mock_transport(
         key_for_job[jid] = cos_key
         job_for_task[tid] = jid
 
-    started = datetime(2026, 4, 25, 10, 0, 0, tzinfo=timezone.utc)
+    started = datetime(2026, 4, 25, 10, 0, 0)
     completed = started + timedelta(seconds=job_duration_s)
 
     def handler(request: httpx.Request) -> httpx.Response:

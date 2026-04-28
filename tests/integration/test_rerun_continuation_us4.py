@@ -17,6 +17,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 from pathlib import Path
 from unittest.mock import patch
 
@@ -189,9 +190,9 @@ async def test_rerun_skips_success_steps_end_to_end(
             audio_language="zh",
             force=False,
             error_message="simulated",
-            started_at=datetime.now(timezone.utc) - timedelta(minutes=10),
-            completed_at=datetime.now(timezone.utc) - timedelta(minutes=5),
-            intermediate_cleanup_at=datetime.now(timezone.utc)
+            started_at=now_cst() - timedelta(minutes=10),
+            completed_at=now_cst() - timedelta(minutes=5),
+            intermediate_cleanup_at=now_cst()
             + timedelta(hours=23),
         )
         session.add(job)
@@ -254,8 +255,8 @@ async def test_rerun_skips_success_steps_end_to_end(
                     output_summary=summary,
                     output_artifact_path=artifact,
                     error_message=err,
-                    started_at=datetime.now(timezone.utc) - timedelta(minutes=6),
-                    completed_at=datetime.now(timezone.utc) - timedelta(minutes=5),
+                    started_at=now_cst() - timedelta(minutes=6),
+                    completed_at=now_cst() - timedelta(minutes=5),
                 )
             )
         await session.commit()

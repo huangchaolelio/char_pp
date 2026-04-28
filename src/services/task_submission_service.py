@@ -25,8 +25,10 @@ from __future__ import annotations
 import hashlib
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any, Sequence
+
+from src.utils.time_utils import now_cst
 from uuid import UUID, uuid4
 
 from sqlalchemy import and_, select, text
@@ -157,7 +159,7 @@ class TaskSubmissionService:
                 f"batch size {len(items)} exceeds max {self._batch_max}"
             )
 
-        now = datetime.now(timezone.utc)
+        now = now_cst()
         outcomes: list[SubmissionOutcome] = []
 
         # Acquire channel-scoped advisory lock (released at commit/rollback).

@@ -17,8 +17,9 @@ Feature-017: 响应体统一迁移至 ``SuccessEnvelope``（章程 v1.4.0 原则
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
 from uuid import UUID
+
+from src.utils.time_utils import now_cst
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
@@ -284,7 +285,7 @@ async def rerun_extraction_job(
         )
 
     # Intermediate-retention guard (FR-013 + Q5).
-    now = datetime.now(timezone.utc)
+    now = now_cst()
     expired = (
         job.intermediate_cleanup_at is not None
         and job.intermediate_cleanup_at <= now

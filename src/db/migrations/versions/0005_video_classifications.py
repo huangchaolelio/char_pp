@@ -41,14 +41,14 @@ def upgrade() -> None:
         sa.Column("override_reason", sa.Text, nullable=True),
         sa.Column(
             "classified_at",
-            TIMESTAMP(timezone=True),
-            server_default=sa.text("now()"),
+            TIMESTAMP(timezone=False),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
             nullable=False,
         ),
         sa.Column(
             "updated_at",
-            TIMESTAMP(timezone=True),
-            server_default=sa.text("now()"),
+            TIMESTAMP(timezone=False),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
             nullable=False,
         ),
     )

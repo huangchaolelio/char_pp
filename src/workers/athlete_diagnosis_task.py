@@ -12,12 +12,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timezone
 from uuid import UUID
 
 from celery import shared_task
 from sqlalchemy import update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+
+from src.utils.time_utils import now_cst
 
 logger = logging.getLogger(__name__)
 
@@ -47,7 +48,7 @@ async def _run_diagnose(
         await session.execute(
             update(AnalysisTask)
             .where(AnalysisTask.id == UUID(task_id))
-            .values(status=TaskStatus.processing, started_at=datetime.now(timezone.utc))
+            .values(status=TaskStatus.processing, started_at=now_cst())
         )
         await session.commit()
 
@@ -75,7 +76,7 @@ async def _run_diagnose(
             await session.execute(
                 update(AnalysisTask)
                 .where(AnalysisTask.id == UUID(task_id))
-                .values(status=TaskStatus.success, completed_at=datetime.now(timezone.utc))
+            .values(status=TaskStatus.success, completed_at=now_cst())
             )
             await session.commit()
             return {"task_id": task_id, "status": "success", **summary}
@@ -86,7 +87,7 @@ async def _run_diagnose(
                 .where(AnalysisTask.id == UUID(task_id))
                 .values(
                     status=TaskStatus.failed,
-                    completed_at=datetime.now(timezone.utc),
+completed_at=now_cst(),
                     error_message=str(exc)[:2000],
                 )
             )

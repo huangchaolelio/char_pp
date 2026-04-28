@@ -65,9 +65,9 @@ def upgrade() -> None:
         sa.Column("sentences", postgresql.JSONB, nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
     )
     op.create_index("ix_audio_transcripts_task_id", "audio_transcripts", ["task_id"])
@@ -103,9 +103,9 @@ def upgrade() -> None:
         sa.Column("is_reference_note", sa.Boolean, nullable=False, server_default="false"),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("now()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
     )
     op.create_index("ix_tech_semantic_segments_transcript_id", "tech_semantic_segments", ["transcript_id"])

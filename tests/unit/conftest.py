@@ -90,7 +90,7 @@ def make_task(
     t.id = TASK_ID
     t.task_type = TaskType(task_type)
     t.status = TaskStatus(status)
-    t.created_at = datetime(2026, 4, 18, 10, 0, 0, tzinfo=timezone.utc)
+    t.created_at = datetime(2026, 4, 18, 10, 0, 0)
     t.started_at = None
     t.completed_at = None
     t.video_duration_seconds = None
@@ -121,7 +121,7 @@ def make_kb(version=KB_VERSION, status="draft"):
     kb.point_count = 2
     kb.approved_by = None
     kb.approved_at = None
-    kb.created_at = datetime(2026, 4, 18, 9, 0, 0, tzinfo=timezone.utc)
+    kb.created_at = datetime(2026, 4, 18, 9, 0, 0)
     kb.notes = None
     return kb
 

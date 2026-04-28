@@ -38,12 +38,12 @@ def upgrade() -> None:
             server_default="draft",
         ),
         sa.Column("approved_by", sa.String(200), nullable=True),
-        sa.Column("approved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("approved_at", sa.TIMESTAMP(timezone=False), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.Column("notes", sa.Text(), nullable=True),
     )
@@ -87,13 +87,13 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
-        sa.Column("started_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("completed_at", sa.TIMESTAMP(timezone=True), nullable=True),
-        sa.Column("deleted_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=False), nullable=True),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=False), nullable=True),
+        sa.Column("deleted_at", sa.TIMESTAMP(timezone=False), nullable=True),
         sa.ForeignKeyConstraint(
             ["knowledge_base_version"],
             ["tech_knowledge_bases.version"],
@@ -144,9 +144,9 @@ def upgrade() -> None:
         ),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.ForeignKeyConstraint(
             ["knowledge_base_version"],
@@ -213,9 +213,9 @@ def upgrade() -> None:
         sa.Column("knowledge_base_version", sa.String(20), nullable=False),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.ForeignKeyConstraint(
             ["task_id"],
@@ -265,9 +265,9 @@ def upgrade() -> None:
         sa.Column("impact_score", sa.Float(), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.ForeignKeyConstraint(
             ["analysis_id"],
@@ -318,9 +318,9 @@ def upgrade() -> None:
         sa.Column("reliability_note", sa.Text(), nullable=True),
         sa.Column(
             "created_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.text("NOW()"),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.ForeignKeyConstraint(
             ["deviation_id"],

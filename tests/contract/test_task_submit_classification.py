@@ -8,6 +8,7 @@ defined by specs/013-task-pipeline-redesign/contracts/task_submit.yaml.
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -61,7 +62,7 @@ def _make_service_result(accepted: int = 1, rejected: int = 0):
         rejected=rejected,
         items=outcomes,
         channel=snap,
-        submitted_at=datetime.now(timezone.utc),
+        submitted_at=now_cst(),
     )
 
 

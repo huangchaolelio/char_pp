@@ -18,6 +18,7 @@ mock the service layer and assert request/response wire shape, including:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -81,7 +82,7 @@ def _batch_result(
         rejected=rejected,
         items=outcomes,
         channel=_snap(task_type, pending=accepted, cap=cap),
-        submitted_at=datetime.now(timezone.utc),
+        submitted_at=now_cst(),
     )
 
 
@@ -244,7 +245,7 @@ class TestKbExtractionBatchContract:
                     rejected=0,
                     items=classified_outcomes,
                     channel=_snap(TaskType.kb_extraction, pending=2, cap=50),
-                    submitted_at=datetime.now(timezone.utc),
+                    submitted_at=now_cst(),
                 )
             )
 

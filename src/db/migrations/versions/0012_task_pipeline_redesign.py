@@ -136,9 +136,9 @@ def upgrade() -> None:
         sa.Column("enabled", sa.Boolean(), nullable=False, server_default=sa.true()),
         sa.Column(
             "updated_at",
-            sa.TIMESTAMP(timezone=True),
+            sa.TIMESTAMP(timezone=False),
             nullable=False,
-            server_default=sa.func.now(),
+            server_default=sa.text("timezone('Asia/Shanghai', now())"),
         ),
         sa.CheckConstraint("queue_capacity > 0", name="ck_task_channel_capacity_positive"),
         sa.CheckConstraint("concurrency > 0", name="ck_task_channel_concurrency_positive"),

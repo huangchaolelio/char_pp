@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timedelta, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import patch
 
 import pytest
@@ -231,7 +232,7 @@ async def test_channel_counts_by_job_not_substeps(
             .where(ExtractionJob.id == job_id)
             .values(
                 status=ExtractionJobStatus.failed,
-                intermediate_cleanup_at=datetime.now(timezone.utc)
+                intermediate_cleanup_at=now_cst()
                 + timedelta(days=1),
             )
         )

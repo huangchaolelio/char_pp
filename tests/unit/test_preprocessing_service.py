@@ -17,6 +17,7 @@ Covers:
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from src.utils.time_utils import now_cst
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
@@ -37,8 +38,8 @@ class _StubJobRow:
         self.status = status
         self.force = force
         self.error_message = None
-        self.started_at = datetime.now(timezone.utc)
-        self.completed_at = datetime.now(timezone.utc) if status == "success" else None
+        self.started_at = now_cst()
+        self.completed_at = now_cst() if status == "success" else None
         self.duration_ms = 600_000 if status == "success" else None
         self.segment_count = 4 if status == "success" else None
         self.has_audio = True
