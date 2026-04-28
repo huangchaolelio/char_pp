@@ -8,6 +8,7 @@ Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException``
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
@@ -20,6 +21,7 @@ from src.api.schemas.knowledge_base import (
     TechPointDetail,
 )
 from src.db.session import get_db
+from src.models.extraction_job import ExtractionJob
 from src.services import knowledge_base_svc
 from src.services.knowledge_base_svc import (
     ConflictUnresolvedError,
@@ -50,6 +52,19 @@ async def list_kb_versions(
     total = len(versions)
     offset = (page_num - 1) * page_size
     sliced = versions[offset : offset + page_size]
+
+    # 批量查询切片内所有 extraction_job，一次性获得每个 KB 版本对应的原始视频动作类型
+    job_ids = [kb.extraction_job_id for kb in sliced if kb.extraction_job_id is not None]
+    job_tech_map: dict[str, str] = {}
+    if job_ids:
+        rows = await db.execute(
+            select(ExtractionJob.id, ExtractionJob.tech_category).where(
+                ExtractionJob.id.in_(job_ids)
+            )
+        )
+        for job_id, tech_category in rows.all():
+            job_tech_map[str(job_id)] = tech_category
+
     items = [
         KnowledgeBaseVersionItem(
             version=kb.version,
@@ -57,6 +72,8 @@ async def list_kb_versions(
             action_types_covered=kb.action_types_covered,
             point_count=kb.point_count,
             approved_at=kb.approved_at,
+            job_id=str(kb.extraction_job_id) if kb.extraction_job_id else None,
+            tech_category=job_tech_map.get(str(kb.extraction_job_id)) if kb.extraction_job_id else None,
         )
         for kb in sliced
     ]
@@ -85,6 +102,13 @@ async def get_kb_version(
 
     points = await knowledge_base_svc.get_tech_points(db, version)
 
+    # 回溯关联的 extraction_job，取出原始视频动作类型 tech_category
+    tech_category: str | None = None
+    if kb.extraction_job_id is not None:
+        job = await db.get(ExtractionJob, kb.extraction_job_id)
+        if job is not None:
+            tech_category = job.tech_category
+
     return ok(KnowledgeBaseDetailResponse(
         version=kb.version,
         status=kb.status.value,
@@ -106,6 +130,8 @@ async def get_kb_version(
         approved_at=kb.approved_at,
         created_at=kb.created_at,
         notes=kb.notes,
+        job_id=str(kb.extraction_job_id) if kb.extraction_job_id else None,
+        tech_category=tech_category,
     ))
 
 
