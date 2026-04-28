@@ -189,7 +189,7 @@ pending → processing → success
 | `/api/v1/extraction-jobs` | `extraction_jobs.py` | KB 提取 DAG 作业查询 / 重跑（Feature-014） |
 | `/api/v1/task-channels` | `task_channels.py` | 通道实时快照（Feature-013） |
 | `/api/v1/admin/...` | `admin.py` | 通道热更新 + 管道重置（Feature-013） |
-| `/api/v1/video-preprocessing` | `video_preprocessing.py` | 预处理作业元数据审计（Feature-016） |
+| `/api/v1/video-preprocessing` | `video_preprocessing.py` | 预处理作业分页列表 + 单条审计详情（Feature-016） |
 | `—（哨兵）` | `_retired.py` | 7 条已下线接口的 `ENDPOINT_RETIRED` 哨兵路由 |
 
 **已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。

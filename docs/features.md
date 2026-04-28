@@ -615,6 +615,7 @@ Feature-015 部署烟测（2026-04-25）暴露两个核心问题：
 |------|------|------|
 | `POST` | `/api/v1/tasks/preprocessing` | 单条视频预处理提交（支持 `force`） |
 | `POST` | `/api/v1/tasks/preprocessing/batch` | 批量提交（上限 100，部分成功语义） |
+| `GET` | `/api/v1/video-preprocessing` | 分页列表：按 `status` / `cos_object_key` 过滤，运维/前端任务中心入口（预处理任务独立于 `/api/v1/tasks`） |
 | `GET` | `/api/v1/video-preprocessing/{job_id}` | 审计查询：原视频元数据 + 标准化参数 + 音频 + 分段列表 |
 
 ### 数据模型

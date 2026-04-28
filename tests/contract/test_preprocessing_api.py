@@ -388,3 +388,144 @@ class TestPreprocessingGetContract:
     def test_c5_non_uuid_job_id_422(self, client):
         response = client.get("/api/v1/video-preprocessing/not-a-uuid")
         assert response.status_code == 422
+
+
+# ── list_preprocessing_jobs.md ──────────────────────────────────────────────
+
+@pytest.mark.contract
+class TestPreprocessingListContract:
+    """contracts/list_preprocessing_jobs.md C1-C6（post-hoc 合约测试）."""
+
+    @staticmethod
+    def _row(**overrides):
+        """Build a fake VideoPreprocessingJob-shaped attribute bag.
+
+        List router reads attributes (``row.id``, ``row.cos_object_key``, ...)
+        via ``PreprocessingJobListItem(...)`` ctor kwargs, so a SimpleNamespace
+        is enough — we don't need a real ORM instance.
+        """
+        from types import SimpleNamespace
+
+        base = dict(
+            id=uuid4(),
+            cos_object_key="coach/video.mp4",
+            status="running",
+            force=False,
+            started_at=datetime.now(timezone.utc),
+            completed_at=None,
+            duration_ms=None,
+            segment_count=None,
+            has_audio=False,
+            error_message=None,
+        )
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def test_c1_default_pagination_returns_envelope_with_meta(self, client):
+        """C1: GET 默认参数 → 200 SuccessEnvelope，meta.page=1/page_size=20/total=N."""
+        rows = [
+            self._row(status="success", completed_at=datetime.now(timezone.utc),
+                      duration_ms=600_000, segment_count=4, has_audio=True),
+            self._row(status="running"),
+            self._row(status="failed", error_message="VIDEO_QUALITY_REJECTED"),
+        ]
+        with patch(
+            "src.api.routers.video_preprocessing._preprocessing_service.list_jobs",
+            new_callable=AsyncMock, return_value=(rows, 3),
+        ) as mocked:
+            response = client.get("/api/v1/video-preprocessing")
+        assert response.status_code == 200, response.text
+        body = response.json()
+        assert body["success"] is True
+        assert body["meta"] == {"page": 1, "page_size": 20, "total": 3}
+        assert len(body["data"]) == 3
+        # 字段完整：PreprocessingJobListItem 的全部键。
+        item = body["data"][0]
+        for k in (
+            "job_id", "cos_object_key", "status", "force", "started_at",
+            "completed_at", "duration_ms", "segment_count", "has_audio",
+            "error_message",
+        ):
+            assert k in item, f"missing field: {k}"
+        mocked.assert_awaited_once()
+        kwargs = mocked.await_args.kwargs
+        assert kwargs["page"] == 1 and kwargs["page_size"] == 20
+        assert kwargs["status"] is None
+        assert kwargs["cos_object_key"] is None
+        assert kwargs["sort_by"] == "started_at"
+        assert kwargs["order"] == "desc"
+
+    def test_c2_filter_status_forwarded_to_service(self, client):
+        """C2: ?status=failed 正确透传到 service.list_jobs."""
+        with patch(
+            "src.api.routers.video_preprocessing._preprocessing_service.list_jobs",
+            new_callable=AsyncMock, return_value=([], 0),
+        ) as mocked:
+            response = client.get("/api/v1/video-preprocessing?status=failed")
+        assert response.status_code == 200
+        body = response.json()
+        assert body["success"] is True
+        assert body["data"] == []
+        assert body["meta"]["total"] == 0
+        assert mocked.await_args.kwargs["status"] == "failed"
+
+    def test_c3_filter_cos_object_key_forwarded(self, client):
+        """C3: ?cos_object_key=... 精确匹配，透传。"""
+        key = "charhuang/tt_video/zhang/forehand.mp4"
+        with patch(
+            "src.api.routers.video_preprocessing._preprocessing_service.list_jobs",
+            new_callable=AsyncMock, return_value=([], 0),
+        ) as mocked:
+            response = client.get(
+                f"/api/v1/video-preprocessing?cos_object_key={key}"
+            )
+        assert response.status_code == 200
+        assert mocked.await_args.kwargs["cos_object_key"] == key
+
+    def test_c4_page_size_over_100_returns_422(self, client):
+        """C4: page_size>100 由 Query(le=100) 硬约束 → 422 VALIDATION_FAILED.
+
+        与 tasks.py 分页口径一致（Feature-017 章程 v1.4.0）.
+        """
+        # Service 不应被调用。
+        with patch(
+            "src.api.routers.video_preprocessing._preprocessing_service.list_jobs",
+            new_callable=AsyncMock,
+        ) as mocked:
+            response = client.get("/api/v1/video-preprocessing?page_size=500")
+        assert response.status_code == 422
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "VALIDATION_FAILED"
+        mocked.assert_not_awaited()
+
+    def test_c5_invalid_status_returns_400_invalid_enum(self, client):
+        """C5: 非法 status → 400 INVALID_ENUM_VALUE，details 含 allowed_values."""
+        with patch(
+            "src.api.routers.video_preprocessing._preprocessing_service.list_jobs",
+            new_callable=AsyncMock,
+        ) as mocked:
+            response = client.get("/api/v1/video-preprocessing?status=bogus")
+        assert response.status_code == 400
+        body = response.json()
+        assert body["success"] is False
+        assert body["error"]["code"] == "INVALID_ENUM_VALUE"
+        assert body["error"]["details"]["field"] == "status"
+        allowed = body["error"]["details"]["allowed_values"]
+        assert set(allowed) == {"running", "success", "failed", "superseded"}
+        mocked.assert_not_awaited()
+
+    def test_c6_invalid_sort_by_returns_400_invalid_enum(self, client):
+        """C6: 非法 sort_by → 400 INVALID_ENUM_VALUE."""
+        with patch(
+            "src.api.routers.video_preprocessing._preprocessing_service.list_jobs",
+            new_callable=AsyncMock,
+        ) as mocked:
+            response = client.get(
+                "/api/v1/video-preprocessing?sort_by=random_col"
+            )
+        assert response.status_code == 400
+        body = response.json()
+        assert body["error"]["code"] == "INVALID_ENUM_VALUE"
+        assert body["error"]["details"]["field"] == "sort_by"
+        mocked.assert_not_awaited()

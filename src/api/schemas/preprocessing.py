@@ -154,3 +154,31 @@ class PreprocessingJobResponse(BaseModel):
     target_standard: Optional[PreprocessingTargetStandard] = None
     audio: Optional[PreprocessingAudioView] = None
     segments: list[PreprocessingSegmentView] = Field(default_factory=list)
+
+
+# ── Response: job list (GET /video-preprocessing) ───────────────────────────
+
+class PreprocessingJobListItem(BaseModel):
+    """Summary row for ``GET /api/v1/video-preprocessing`` list endpoint.
+
+    Intentionally omits ``segments`` / ``original_meta`` / ``target_standard``
+    / ``audio`` to keep list payloads small — callers drill into
+    ``GET /api/v1/video-preprocessing/{job_id}`` for full detail.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    job_id: UUID
+    cos_object_key: str
+    status: str = Field(..., description="running | success | failed | superseded")
+    force: bool
+    started_at: datetime
+    completed_at: Optional[datetime] = None
+    duration_ms: Optional[int] = None
+    segment_count: Optional[int] = None
+    has_audio: bool
+    error_message: Optional[str] = None
+    original_meta: Optional[PreprocessingOriginalMeta] = None
+    target_standard: Optional[PreprocessingTargetStandard] = None
+    audio: Optional[PreprocessingAudioView] = None
+    segments: list[PreprocessingSegmentView] = Field(default_factory=list)

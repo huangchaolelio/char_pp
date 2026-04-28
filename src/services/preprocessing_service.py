@@ -433,3 +433,73 @@ async def get_job_view(
         audio=audio_view,
         segments=list(segs),
     )
+
+
+# ── List endpoint helpers ───────────────────────────────────────────────────
+
+_VALID_LIST_SORT_BY: frozenset[str] = frozenset({"started_at", "completed_at", "created_at"})
+_VALID_LIST_ORDER: frozenset[str] = frozenset({"asc", "desc"})
+
+
+async def list_jobs(
+    session: AsyncSession,
+    *,
+    page: int,
+    page_size: int,
+    status: Optional[str] = None,
+    cos_object_key: Optional[str] = None,
+    sort_by: str = "started_at",
+    order: str = "desc",
+) -> tuple[list[VideoPreprocessingJob], int]:
+    """Paginated list of preprocessing jobs for ``GET /api/v1/video-preprocessing``.
+
+    Args:
+        session: Async DB session.
+        page: 1-based page index.
+        page_size: items per page (caller enforces upper bound via Query).
+        status: optional exact-match filter (running / success / failed / superseded).
+        cos_object_key: optional exact-match filter on the source video key.
+        sort_by: one of ``started_at`` / ``completed_at`` / ``created_at``.
+        order: ``asc`` or ``desc``.
+
+    Returns:
+        (rows, total) — rows for the requested page, total count of matching jobs.
+    """
+    if sort_by not in _VALID_LIST_SORT_BY:
+        raise ValueError(
+            f"invalid sort_by={sort_by!r}; expected one of {sorted(_VALID_LIST_SORT_BY)}"
+        )
+    if order not in _VALID_LIST_ORDER:
+        raise ValueError(
+            f"invalid order={order!r}; expected one of {sorted(_VALID_LIST_ORDER)}"
+        )
+    if status is not None and status not in {
+        s.value for s in PreprocessingJobStatus
+    }:
+        raise ValueError(
+            f"invalid status={status!r}; expected one of "
+            f"{sorted(s.value for s in PreprocessingJobStatus)}"
+        )
+
+    base_stmt = select(VideoPreprocessingJob)
+    if status is not None:
+        base_stmt = base_stmt.where(VideoPreprocessingJob.status == status)
+    if cos_object_key is not None:
+        base_stmt = base_stmt.where(
+            VideoPreprocessingJob.cos_object_key == cos_object_key
+        )
+
+    # ── total count ─────────────────────────────────────────────────────────
+    count_stmt = select(func.count()).select_from(base_stmt.subquery())
+    total = int((await session.execute(count_stmt)).scalar_one())
+
+    # ── sort + paginate ─────────────────────────────────────────────────────
+    sort_col = getattr(VideoPreprocessingJob, sort_by)
+    if order == "desc":
+        base_stmt = base_stmt.order_by(sort_col.desc().nullslast())
+    else:
+        base_stmt = base_stmt.order_by(sort_col.asc().nullslast())
+
+    base_stmt = base_stmt.offset((page - 1) * page_size).limit(page_size)
+    rows = list((await session.execute(base_stmt)).scalars().all())
+    return rows, total
