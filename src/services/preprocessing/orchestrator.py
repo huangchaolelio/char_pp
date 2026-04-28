@@ -27,7 +27,7 @@ from typing import Any
 from uuid import UUID
 
 from src.config import get_settings
-from src.db.session import AsyncSessionFactory
+from src.db import session as db_session
 from src.services import cos_client as cos_client_mod
 from src.services import preprocessing_service
 from src.services.preprocessing import (
@@ -100,7 +100,7 @@ async def run_preprocessing(job_id: UUID) -> None:
     local_dir = _job_local_dir(job_id)
 
     # Load the job row up-front so we have cos_object_key etc.
-    async with AsyncSessionFactory() as s:
+    async with db_session.AsyncSessionFactory() as s:
         from src.models.video_preprocessing_job import VideoPreprocessingJob
         job = await s.get(VideoPreprocessingJob, job_id)
         if job is None:
@@ -124,7 +124,7 @@ async def run_preprocessing(job_id: UUID) -> None:
             "target_short_side": settings.video_preprocessing_target_short_side,
             "segment_duration_s": settings.video_preprocessing_segment_duration_s,
         }
-        async with AsyncSessionFactory() as s:
+        async with db_session.AsyncSessionFactory() as s:
             await preprocessing_service.persist_original_meta(
                 s, job_id,
                 original_meta=meta.to_json_dict(),
@@ -217,7 +217,7 @@ async def run_preprocessing(job_id: UUID) -> None:
         uploader.shutdown()
 
         # ── 8. Persist segment rows + finalise job ─────────────────────────
-        async with AsyncSessionFactory() as s:
+        async with db_session.AsyncSessionFactory() as s:
             for row in segment_rows:
                 await preprocessing_service.add_segment_row(
                     s,
@@ -279,7 +279,7 @@ async def run_preprocessing(job_id: UUID) -> None:
             )
         logger.exception("preprocessing %s FAILED — %s", job_id, msg)
         try:
-            async with AsyncSessionFactory() as s:
+            async with db_session.AsyncSessionFactory() as s:
                 await preprocessing_service.record_job_failed(s, job_id, msg)
                 await s.commit()
         except Exception:

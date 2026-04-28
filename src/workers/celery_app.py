@@ -8,7 +8,7 @@ Feature 013 — Task pipeline redesign:
 """
 
 from celery import Celery
-from celery.signals import celeryd_after_setup
+from celery.signals import celeryd_after_setup, worker_process_init
 from kombu import Queue
 
 from src.config import get_settings
@@ -102,3 +102,30 @@ def _sweep_orphans_on_worker_ready(sender, instance, **kwargs) -> None:  # noqa:
         import logging
 
         logging.getLogger(__name__).warning("orphan sweep on startup failed: %s", exc)
+
+
+@worker_process_init.connect
+def _reset_db_engine_in_forked_worker(**kwargs) -> None:  # noqa: ANN003
+    """Rebuild the async DB engine inside each prefork child process.
+
+    The module-level engine in ``src.db.session`` is created once in the
+    master process (when ``celery_app.py`` is imported), and its asyncpg
+    connection pool keeps Future objects bound to the master's event loop.
+    When a child process later runs ``asyncio.run(...)`` inside a task,
+    reusing those inherited connections triggers:
+
+        RuntimeError: got Future <...> attached to a different loop
+
+    The fix — mandatory for asyncpg + Celery prefork — is to discard the
+    inherited pool and build a fresh engine after ``fork()``.
+    """
+    try:
+        from src.db.session import reset_engine_for_forked_process
+
+        reset_engine_for_forked_process()
+    except Exception as exc:  # pragma: no cover — defensive
+        import logging
+
+        logging.getLogger(__name__).warning(
+            "reset DB engine in forked worker failed: %s", exc
+        )
