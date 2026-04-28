@@ -178,7 +178,3 @@ class PreprocessingJobListItem(BaseModel):
     segment_count: Optional[int] = None
     has_audio: bool
     error_message: Optional[str] = None
-    original_meta: Optional[PreprocessingOriginalMeta] = None
-    target_standard: Optional[PreprocessingTargetStandard] = None
-    audio: Optional[PreprocessingAudioView] = None
-    segments: list[PreprocessingSegmentView] = Field(default_factory=list)
