@@ -34,20 +34,47 @@ from src.db.session import Base
 
 
 class ActionType(str, enum.Enum):
-    # ── Forehand techniques ────────────────────────────────────────────────────
-    forehand_attack = "forehand_attack"            # 正手攻球
-    forehand_topspin = "forehand_topspin"          # 正手拉球 / 连续拉 / 发力拉 / 广式正手
-    forehand_chop_long = "forehand_chop_long"      # 正手劈长
-    forehand_counter = "forehand_counter"          # 正手快带
-    forehand_loop_underspin = "forehand_loop_underspin"  # 正手起下旋
-    forehand_flick = "forehand_flick"              # 正手挑打 / 挑球
-    forehand_position = "forehand_position"        # 正手跑位 / 两点 / 不定点（综合训练）
-    forehand_general = "forehand_general"          # 正手通用（兜底）
-    # ── Backhand techniques ───────────────────────────────────────────────────
-    backhand_push = "backhand_push"                # 反手推挡（原有）
-    backhand_topspin = "backhand_topspin"          # 反手拉球
-    backhand_flick = "backhand_flick"              # 反手弹打 / 拨球 / 反拉
-    backhand_general = "backhand_general"          # 反手通用（兜底）
+    """动作类型枚举 —— 与 :data:`src.services.tech_classifier.TECH_CATEGORIES` 对齐（21 类）。
+
+    历史上（Feature-002/004）本枚举仅覆盖 12 个视觉分类器可识别的细分动作，
+    而 Feature-008/013 的 ``tech_category`` 字段使用 21 类统一标签。两套枚举
+    空间不一致导致 ``merge_kb`` 执行时出现 "提交 forehand_attack / 入库 backhand_push"
+    的错配。Feature 审计修复（迁移 0015）把两套标签统一到同一空间。
+
+    注：保留原有 12 个旧值（forehand_chop_long / forehand_counter 等）以兼容
+    现有视觉分类器 + 测试代码，同时新增 TECH_CATEGORIES 中缺失的 9 项。
+    """
+
+    # ── TECH_CATEGORIES 21 类（与 tech_classifier.TECH_CATEGORIES 严格对齐）──
+    forehand_push_long = "forehand_push_long"                      # 正手劈长
+    forehand_attack = "forehand_attack"                            # 正手攻球
+    forehand_topspin = "forehand_topspin"                          # 正手拉球 / 上旋
+    forehand_topspin_backspin = "forehand_topspin_backspin"        # 正手拉下旋
+    forehand_loop_fast = "forehand_loop_fast"                      # 正手前冲弧圈
+    forehand_loop_high = "forehand_loop_high"                      # 正手高调弧圈
+    forehand_flick = "forehand_flick"                              # 正手挑打 / 拧拉 / 台内挑打
+    backhand_attack = "backhand_attack"                            # 反手攻球
+    backhand_topspin = "backhand_topspin"                          # 反手拉球
+    backhand_topspin_backspin = "backhand_topspin_backspin"        # 反手拉下旋
+    backhand_flick = "backhand_flick"                              # 反手弹击 / 快撕
+    backhand_push = "backhand_push"                                # 反手推挡 / 搓球
+    serve = "serve"                                                # 发球
+    receive = "receive"                                            # 接发球
+    footwork = "footwork"                                          # 步法
+    forehand_backhand_transition = "forehand_backhand_transition"  # 正反手转换
+    defense = "defense"                                            # 防守
+    penhold_reverse = "penhold_reverse"                            # 直拍横打
+    stance_posture = "stance_posture"                              # 站位 / 姿态
+    general = "general"                                            # 综合 / 通用
+    unclassified = "unclassified"                                  # 待分类（兜底）
+
+    # ── 视觉分类器兼容细分标签（Feature-002/004 遗留，不在 TECH_CATEGORIES 内）──
+    forehand_chop_long = "forehand_chop_long"                      # 正手劈长（细分，兼容保留）
+    forehand_counter = "forehand_counter"                          # 正手快带
+    forehand_loop_underspin = "forehand_loop_underspin"            # 正手起下旋（细分，兼容保留）
+    forehand_position = "forehand_position"                        # 正手跑位 / 两点 / 不定点
+    forehand_general = "forehand_general"                          # 正手通用（兜底）
+    backhand_general = "backhand_general"                          # 反手通用（兜底）
 
 
 class ExpertTechPoint(Base):
@@ -93,6 +120,14 @@ class ExpertTechPoint(Base):
     conflict_flag: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     # JSONB detail when conflict_flag=True: {"visual": {...}, "audio": {...}, "diff_pct": 0.18}
     conflict_detail: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
+
+    # Feature 审计修复（迁移 0015 / 方案 C2）：
+    # 记录提交 KB 提取任务时的 tech_category（来自 extraction_jobs.tech_category），
+    # 与视觉分类器自行判定写入的 action_type 并存。
+    # 用途：当两者不一致时可以对账分析分类器偏差，但不阻断落库。
+    submitted_tech_category: Mapped[Optional[str]] = mapped_column(
+        String(50), nullable=True
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")

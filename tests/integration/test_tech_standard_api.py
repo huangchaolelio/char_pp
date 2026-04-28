@@ -383,7 +383,11 @@ class TestUS3BatchBuild:
     async def test_batch_build_returns_all_action_types(
         self, client: AsyncClient, db_session: AsyncSession
     ):
-        """Batch build response contains one entry per ActionType (12 total)."""
+        """Batch build response contains one entry per ActionType.
+
+        注：ActionType 枚举于迁移 0015 扩容至 27 项（21 类 TECH_CATEGORIES +
+        6 项 Feature-002/004 细分兼容值），断言通过动态枚举集合比对而非硬编码数量。
+        """
         resp = await client.post("/api/v1/standards/build", json={})
         assert resp.status_code == 200
         envelope = resp.json()
@@ -394,7 +398,7 @@ class TestUS3BatchBuild:
         assert "results" in data
         assert "summary" in data
 
-        # All 12 ActionType categories covered
+        # 对齐 ActionType 枚举全集（迁移 0015 后 21+6=27 项）
         from src.models.expert_tech_point import ActionType as EtpActionType
         expected_categories = {at.value for at in EtpActionType}
         returned_categories = {r["tech_category"] for r in data["results"]}

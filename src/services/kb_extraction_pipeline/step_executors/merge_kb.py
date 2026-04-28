@@ -152,6 +152,9 @@ async def _ensure_kb_version(
 ) -> str:
     """Resolve (or create) the ``tech_knowledge_bases`` row for this job.
 
+    迁移 0015 / 方案 A1：新版本行同时写入 ``extraction_job_id`` FK，
+    notes 仅保留作为可读备注。
+
     We derive a version string ``0.{a}.{b}`` deterministically from the job UUID
     so reruns pick up the same version and can rely on the upstream UPSERT.
     """
@@ -169,12 +172,17 @@ async def _ensure_kb_version(
                 action_types_covered=_derive_action_types(merged, job.tech_category),
                 point_count=0,          # updated after insert
                 status=KBStatus.draft,
+                extraction_job_id=job.id,
                 notes=(
                     f"F-014 draft KB for extraction_job={job.id} "
-                    f"cos_key={job.cos_object_key}"
+                    f"cos_key={job.cos_object_key} tech_category={job.tech_category}"
                 ),
             )
         )
+        await session.flush()
+    elif existing.extraction_job_id is None:
+        # 兼容：历史版本条目（迁移前写入）重跑时回填 FK。
+        existing.extraction_job_id = job.id
         await session.flush()
     return version
 
@@ -259,6 +267,8 @@ async def _persist_merged_points(
                 source_type=m.source_type,
                 conflict_flag=False,  # F-014 conflicts go to kb_conflicts
                 conflict_detail=None,
+                # 迁移 0015 / 方案 C2：保留提交时的 tech_category 以供审计对账。
+                submitted_tech_category=job.tech_category,
             )
         )
         inserted += 1
