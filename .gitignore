@@ -55,6 +55,10 @@ logs/
 *.weights
 *.task
 models/
+# 例外：部署必需的小体积姿态估计模型（MediaPipe 无自动下载、YOLO 需外网）
+!models/
+!models/pose_landmarker_lite.task
+!yolov8n-pose.pt
 
 # SQLite dev/test databases
 *.sqlite3
