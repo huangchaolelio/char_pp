@@ -238,7 +238,8 @@ def _read_legacy_kb_items(payload: dict, tech_category: str) -> list[dict]:
             "param_ideal": float(raw["param_ideal"]),
             "unit": str(raw.get("unit", "")),
             "extraction_confidence": float(raw.get("extraction_confidence", 0.7)),
-            "action_type": str(raw.get("action_type") or tech_category),
+            # 短期对齐契约：audio 侧亦按提交类别落库（忽略 fixture 中的 action_type）。
+            "action_type": tech_category,
             "source_type": "audio",
         })
     return cleaned

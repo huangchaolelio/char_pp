@@ -87,22 +87,45 @@ async def execute(
         }
 
     # ── Real pose → classification → tech_extractor pipeline ─────────────────
-    def _run_extraction() -> tuple[list[dict], int, int]:
+    # 短期对齐契约（Feature 审计修复）：
+    #   规则分类器 v1 只能识别 forehand_topspin / backhand_push 两类，其余
+    #   19/21 类必回落为 "unknown"。历史上我们按分类器输出当权威标签写入，
+    #   事实上绝大多数场景都是悄悄退化为 job.tech_category——不如把这个契约
+    #   显式化：visual_kb_extract 的 action_type 一律取 job.tech_category，
+    #   分类器只用于审计（disagreement 计数），不再影响落库内容。
+    #   这样 `tech_knowledge_bases.action_types_covered` 与提交类别一定一致，
+    #   避免出现"提交 forehand_topspin / 入库 backhand_push"的错配。
+    def _run_extraction() -> tuple[list[dict], int, int, int]:
         segments: list[ActionSegment] = action_segmenter.segment_actions(frames)
         items: list[dict] = []
         segments_skipped = 0
+        classifier_disagreements = 0
         for segment in segments:
             segment_frames = frames_for_segment(frames, segment)
             classified: ClassifiedSegment = action_classifier.classify_segment(
                 segment_frames, segment
             )
+            # 审计：分类器规则给出的标签若与提交类别不一致，记录 WARNING。
+            # 不阻断落库，仅用于分类器偏差对账（submitted_tech_category）。
+            if (
+                classified.action_type
+                and classified.action_type != "unknown"
+                and classified.action_type != job.tech_category
+            ):
+                classifier_disagreements += 1
+                logger.warning(
+                    "visual_kb_extract job=%s segment=%dms-%dms: classifier=%r "
+                    "disagrees with job.tech_category=%r (keeping tech_category)",
+                    job.id, segment.start_ms, segment.end_ms,
+                    classified.action_type, job.tech_category,
+                )
+
             result = tech_extractor.extract_tech_points(
                 classified, frames, confidence_threshold=_CONFIDENCE_THRESHOLD
             )
             if not result.dimensions:
                 segments_skipped += 1
                 continue
-            action_type = _coerce_action_type(classified.action_type, job.tech_category)
             for dim in result.dimensions:
                 items.append({
                     "dimension": dim.dimension,
@@ -111,12 +134,18 @@ async def execute(
                     "param_ideal": float(dim.param_ideal),
                     "unit": dim.unit,
                     "extraction_confidence": float(dim.extraction_confidence),
-                    "action_type": action_type,
+                    # 显式契约：始终按提交类别落库，禁止分类器自由覆盖。
+                    "action_type": job.tech_category,
                     "source_type": "visual",
                 })
-        return items, len(segments), segments_skipped
+        return items, len(segments), segments_skipped, classifier_disagreements
 
-    kb_items, segments_processed, segments_skipped = await asyncio.to_thread(_run_extraction)
+    (
+        kb_items,
+        segments_processed,
+        segments_skipped,
+        classifier_disagreements,
+    ) = await asyncio.to_thread(_run_extraction)
 
     return {
         "status": PipelineStepStatus.success,
@@ -128,18 +157,10 @@ async def execute(
             "backend": "action_segmenter+tech_extractor",
             "segments_processed": segments_processed,
             "segments_skipped_low_confidence": segments_skipped,
+            "classifier_disagreements": classifier_disagreements,
         },
         "output_artifact_path": None,
     }
-
-
-def _coerce_action_type(classified_action: str, fallback: str) -> str:
-    """The classifier returns rule-based labels (e.g. ``"unknown"``); fall back
-    to the job's ``tech_category`` whenever the classifier is unsure, so the
-    merger can still coerce to a valid ``ActionType``."""
-    if classified_action and classified_action != "unknown":
-        return classified_action
-    return fallback
 
 
 def _read_legacy_kb_items(pose_path: Path, tech_category: str) -> list[dict]:
@@ -176,7 +197,8 @@ def _read_legacy_kb_items(pose_path: Path, tech_category: str) -> list[dict]:
             "param_ideal": float(raw["param_ideal"]),
             "unit": str(raw.get("unit", "")),
             "extraction_confidence": float(raw.get("extraction_confidence", 0.8)),
-            "action_type": str(raw.get("action_type") or tech_category),
+            # 短期对齐契约：visual 侧一律按提交类别落库（忽略 fixture 中的 action_type）。
+            "action_type": tech_category,
             "source_type": "visual",
         })
     return cleaned

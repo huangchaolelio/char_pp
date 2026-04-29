@@ -207,15 +207,39 @@ def _version_from_job_id(job_id) -> str:
 def _derive_action_types(
     merged: list[MergedPoint], fallback: str
 ) -> list[str]:
-    types: set[str] = set()
-    for m in merged:
-        if m.action_type:
-            types.add(m.action_type)
-    # If visual produced nothing that carries an action_type, fall back to the
-    # job's classified tech_category so the column is not empty.
-    if not types:
-        types.add(fallback or _FALLBACK_ACTION_TYPE)
-    return sorted(types)
+    """短期对齐契约（Feature 审计修复）：
+    `tech_knowledge_bases.action_types_covered` 一律以 ``job.tech_category``
+    为单一权威值，不再从 merged items 自由推导。
+
+    Rationale：
+      - 规则分类器 v1 只能识别 2/21 类，历史上通过 3 层 fallback 退化为
+        ``job.tech_category``，结果随数据波动，难以对账。
+      - 显式契约后，`action_types_covered` 永远只包含提交类别本身；
+        各点的 `action_type` 由 merge_kb._coerce_action_type 兜底，
+        分类器偏差通过 `submitted_tech_category` 审计列追溯。
+
+    若 merged items 中出现与 fallback 不一致的 action_type（理论上不应出现，
+    因为上游 executor 已强制对齐），仅记录 WARNING，不影响覆盖类别输出。
+    """
+    if not fallback:
+        # 极端防御：job.tech_category 为空时退回旧逻辑，避免 NOT NULL 列失败。
+        types: set[str] = set()
+        for m in merged:
+            if m.action_type:
+                types.add(m.action_type)
+        if not types:
+            types.add(_FALLBACK_ACTION_TYPE)
+        return sorted(types)
+
+    # 审计：发现 merged 中存在 action_type != fallback 的点，说明上游对齐被绕过。
+    stray = {m.action_type for m in merged if m.action_type and m.action_type != fallback}
+    if stray:
+        logger.warning(
+            "merge_kb._derive_action_types: merged items carry action_type %r "
+            "that disagrees with job.tech_category=%r (forcing [%r])",
+            sorted(stray), fallback, fallback,
+        )
+    return [fallback]
 
 
 async def _persist_merged_points(
