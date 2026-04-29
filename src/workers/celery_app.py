@@ -50,6 +50,15 @@ def create_celery_app() -> Celery:
         # Worker settings
         worker_prefetch_multiplier=1,
         task_acks_late=True,
+        # Per-task child-process recycle (treat-the-root-cause fix for the
+        # 2026-04-29 kb_extraction OOM incident). Heavy ML tasks — whisper,
+        # YOLOv8-pose, LLM bursts — keep allocator fragments in the prefork
+        # child across invocations, so memory creeps up until the worker is
+        # SIGKILL'd mid-job and leaves a zombie ``running`` row. Recycling
+        # the child after every single task forces a fresh process with a
+        # clean heap, GPU context, and open-fds table. Cost: +1 fork per
+        # task (~50ms); benefit: no memory accumulation, no WorkerLostError.
+        worker_max_tasks_per_child=1,
         # Four isolated queues — one dedicated worker per queue (see workflow.md)
         task_queues=(
             Queue("classification"),  # coach video -> tech_category  (cap 5,  conc 1)
@@ -66,6 +75,7 @@ def create_celery_app() -> Celery:
             "src.workers.athlete_diagnosis_task.diagnose_athlete": {"queue": "diagnosis"},
             "src.workers.housekeeping_task.cleanup_expired_tasks": {"queue": "default"},
             "src.workers.housekeeping_task.cleanup_intermediate_artifacts": {"queue": "default"},
+            "src.workers.housekeeping_task.sweep_orphan_jobs": {"queue": "default"},
             "src.workers.preprocessing_task.preprocess_video": {"queue": "preprocessing"},
         },
         # Beat schedule for data retention cleanup
@@ -78,6 +88,15 @@ def create_celery_app() -> Celery:
             "cleanup-extraction-artifacts": {
                 "task": "src.workers.housekeeping_task.cleanup_intermediate_artifacts",
                 "schedule": 3600,  # hourly
+            },
+            # Periodic orphan-recovery sweep (2026-04-29 OOM incident).
+            # Worker-startup-only sweep can't free channel slots until the next
+            # restart; running every 5 minutes keeps stuck ``running`` rows
+            # self-healing on the same timescale as the
+            # ``orphan_task_timeout_seconds`` cutoff.
+            "sweep-orphan-jobs": {
+                "task": "src.workers.housekeeping_task.sweep_orphan_jobs",
+                "schedule": 300,  # every 5 minutes
             },
         },
     )

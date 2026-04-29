@@ -241,3 +241,30 @@ async def _cleanup_preprocessing_local() -> dict:
         "preprocessing_dirs_removed": removed,
         "preprocessing_skipped_recent": skipped_recent,
     }
+
+
+@shared_task(
+    name="src.workers.housekeeping_task.sweep_orphan_jobs",
+    bind=False,
+)
+def sweep_orphan_jobs() -> dict:
+    """Periodic orphan-recovery sweep (driven by Celery beat).
+
+    Historically this logic only ran on worker startup via the
+    ``celeryd_after_setup`` signal (:mod:`src.workers.celery_app`), which
+    meant a SIGKILL'd task (e.g. OOM) could leave its ``analysis_tasks`` /
+    ``extraction_jobs`` / ``pipeline_steps`` / ``video_preprocessing_jobs``
+    rows stuck in ``running`` / ``processing`` until the next restart — and
+    in the meantime the Feature-013 channel counter refused new submissions.
+
+    Running the existing ``sweep_orphan_tasks_sync`` on a beat cadence
+    (every 5 minutes by default) closes that gap without any new recovery
+    logic — it reuses the Feature-014 / Feature-016 cascades that already
+    propagate failure to dependents, free channel slots, and set
+    ``error_message='orphan_recovered'``.
+    """
+    from src.workers.orphan_recovery import sweep_orphan_tasks_sync
+
+    count = sweep_orphan_tasks_sync()
+    logger.info("sweep_orphan_jobs: reclaimed=%s", count)
+    return {"reclaimed": count}

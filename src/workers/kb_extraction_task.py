@@ -39,6 +39,96 @@ def _make_session_factory():
     )
 
 
+def _force_fail_running_job(task_id: str, error_message: str) -> None:
+    """Best-effort synchronous rollback of ``processing`` → ``failed`` for an
+    ``analysis_tasks`` row plus its ``extraction_jobs`` + ``pipeline_steps``.
+
+    Mirrors the same "belt-and-braces" pattern used in
+    :mod:`src.workers.preprocessing_task`: runs on a fresh asyncpg connection
+    that is *independent* of the (possibly broken) SQLAlchemy async engine,
+    so it still succeeds when the async loop itself is corrupted (e.g.
+    ``got Future attached to a different loop`` or post-SIGKILL retry).
+    Never raises — bookkeeping errors must not mask the real task failure.
+
+    Covers the OOM scenario where Celery's ``WorkerLostError`` / SIGKILL
+    bypasses the ``orchestrator.run`` try/except and leaves the rows in
+    ``running``/``processing`` indefinitely. Downstream ``pending`` steps are
+    flipped to ``skipped`` so the DAG view remains consistent.
+    """
+    try:
+        import asyncpg
+
+        from src.config import get_settings
+
+        settings = get_settings()
+        dsn = settings.database_url.replace("postgresql+asyncpg://", "postgresql://")
+
+        async def _run() -> None:
+            conn = await asyncpg.connect(dsn)
+            try:
+                async with conn.transaction():
+                    # Resolve the job id linked to this analysis task (if any).
+                    job_id = await conn.fetchval(
+                        "SELECT extraction_job_id FROM analysis_tasks WHERE id = $1::uuid",
+                        task_id,
+                    )
+                    if job_id is not None:
+                        await conn.execute(
+                            """
+                            UPDATE pipeline_steps
+                               SET status = 'failed',
+                                   error_message = COALESCE(NULLIF(error_message, ''), $2),
+                                   completed_at = NOW()
+                             WHERE job_id = $1
+                               AND status = 'running'
+                            """,
+                            job_id,
+                            error_message,
+                        )
+                        await conn.execute(
+                            """
+                            UPDATE pipeline_steps
+                               SET status = 'skipped'
+                             WHERE job_id = $1
+                               AND status = 'pending'
+                            """,
+                            job_id,
+                        )
+                        await conn.execute(
+                            """
+                            UPDATE extraction_jobs
+                               SET status = 'failed',
+                                   error_message = COALESCE(NULLIF(error_message, ''), $2),
+                                   completed_at = NOW(),
+                                   updated_at = NOW()
+                             WHERE id = $1
+                               AND status = 'running'
+                            """,
+                            job_id,
+                            error_message,
+                        )
+                    await conn.execute(
+                        """
+                        UPDATE analysis_tasks
+                           SET status = 'failed',
+                               error_message = COALESCE(NULLIF(error_message, ''), $2),
+                               completed_at = NOW()
+                         WHERE id = $1::uuid
+                           AND status = 'processing'
+                        """,
+                        task_id,
+                        error_message,
+                    )
+            finally:
+                await conn.close()
+
+        asyncio.run(_run())
+    except Exception:
+        logger.exception(
+            "force_fail_running_job: failed to roll back analysis_task %s", task_id
+        )
+
+
 async def _run_extract(task_id: str, cos_object_key: str) -> dict:
     """Drive the F-014 Orchestrator against the ExtractionJob for this task_id."""
     from src.models.analysis_task import AnalysisTask, TaskStatus
@@ -155,9 +245,30 @@ def extract_kb(
         cos_object_key,
         self.request.id,
     )
+    # Per-task engine reset — same treat-the-root-cause hygiene as
+    # ``preprocess_video``: the prefork child may have inherited an async
+    # engine whose asyncpg pool is bound to a previous event loop. Rebuild
+    # it so ``asyncio.run(_run_extract)`` below starts on a clean slate.
+    try:
+        from src.db.session import reset_engine_for_forked_process
+
+        reset_engine_for_forked_process()
+    except Exception:
+        logger.exception("extract_kb: failed to reset DB engine, continuing")
+
     try:
         return asyncio.run(_run_extract(task_id, cos_object_key))
     except Exception as exc:
         logger.exception("extract_kb failed: task_id=%s error=%s", task_id, exc)
+        # Belt-and-braces: if the orchestrator's own try/except could not
+        # reach the DB (loop corruption, SIGKILL/WorkerLostError from OOM,
+        # etc.) the rows stay stuck in ``running``/``processing`` forever
+        # and the kb_extraction channel slot never frees. Roll everything
+        # back on a fresh connection that does not depend on the broken
+        # async engine. See the OOM incident on 2026-04-29.
+        _force_fail_running_job(
+            task_id,
+            f"KB_EXTRACTION_FAILED: task crashed — {type(exc).__name__}: {exc}",
+        )
         # No Celery-level retry — orchestrator already persisted the failure.
         return {"task_id": task_id, "status": "failed", "error": str(exc)[:2000]}
