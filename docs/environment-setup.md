@@ -385,7 +385,7 @@ PY
 
 ## 7. 启动服务
 
-项目章程规则 7 定义了一个 API + 五个 Celery Worker 的拓扑，一个队列一个 Worker，物理隔离。生产环境按 §7.2 部署；本地开发 / 快速冒烟可用 §7.3 的"一合一"形态。
+项目章程规则 7 定义了一个 API + 五个 Celery Worker + 一个 Celery Beat 的拓扑，一个队列一个 Worker，物理隔离；Beat 独占一个进程，**必须**启动——否则所有周期任务（每日 `cleanup_expired_tasks`、每小时 `cleanup_intermediate_artifacts`、每 5 分钟 `sweep_orphan_jobs`）都不会触发，僵尸 job 会卡死 kb_extraction 通道无法自愈。生产环境按 §7.2 部署；本地开发 / 快速冒烟可用 §7.3 的"一合一"形态。
 
 > 以下命令默认使用 Conda 路径；uv 路径只需把 `/opt/conda/envs/coaching/bin/` 换成 `.venv/bin/`。
 
@@ -398,7 +398,7 @@ nohup /opt/conda/envs/coaching/bin/uvicorn src.api.main:app \
     >> /tmp/uvicorn.log 2>&1 &
 ```
 
-### 7.2 生产形态：五个 Celery Worker（每队列一个进程）
+### 7.2 生产形态：五个 Celery Worker + 一个 Celery Beat（每队列一个进程）
 
 ```bash
 # 1. 分类队列
@@ -416,7 +416,7 @@ nohup /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app:celery_app w
     --loglevel=info --concurrency=2 -Q diagnosis \
     -n diagnosis_worker@%h >> /tmp/celery_diagnosis_worker.log 2>&1 &
 
-# 4. 默认队列（COS 扫描 + 清理）
+# 4. 默认队列（COS 扫描 + 清理 + orphan sweep）
 nohup /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app:celery_app worker \
     --loglevel=info --concurrency=1 -Q default \
     -n default_worker@%h >> /tmp/celery_default_worker.log 2>&1 &
@@ -425,9 +425,18 @@ nohup /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app:celery_app w
 nohup /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app:celery_app worker \
     --loglevel=info --concurrency=3 -Q preprocessing \
     -n preprocessing_worker@%h >> /tmp/celery_preprocessing_worker.log 2>&1 &
+
+# 6. Celery Beat（定时调度器，全局唯一，不带 worker/-Q 参数）
+#    驱动 cleanup_expired_tasks（每日）/ cleanup_intermediate_artifacts（每小时）/
+#    sweep_orphan_jobs（每 5 分钟，回收 OOM / WorkerLostError 卡住的 running 任务）。
+#    调度状态持久化到 /tmp/celerybeat-schedule（重启自动续跑）。
+#    ⚠️ 全集群只能启 1 个 beat，起多个会重复派发周期任务。
+nohup /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app:celery_app beat \
+    --loglevel=info --schedule=/tmp/celerybeat-schedule \
+    >> /tmp/celery_beat.log 2>&1 &
 ```
 
-> `.codebuddy/skills/system-init/restart_workers.sh` 已封装好上述五条，日常重启直接 `bash restart_workers.sh` 即可。
+> `.codebuddy/skills/system-init/restart_workers.sh` 已封装好上述六条，日常重启直接 `bash restart_workers.sh` 即可。
 
 ### 7.3 开发模式：单 Worker 合并 5 队列（快速验证）
 
@@ -456,8 +465,14 @@ curl -s http://127.0.0.1:8080/api/v1/health | head -c 200
 /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app:celery_app inspect ping
 # 期望：-> <worker_name>: OK    pong
 
-# 生产 5-worker 形态下，进程数应 ≥ 5
+# 生产 5-worker 形态下，worker 父进程数应 == 5
 ps -ef | grep -E "celery .* worker" | grep -v grep | awk '{print $NF}' | sort -u
+
+# 检查 Beat 是否在跑（有且仅有 1 个进程）；无此进程则所有周期任务都不会触发
+pgrep -af "celery.*celery_app.*beat" || echo "[WARN] celery beat 未启动"
+
+# 查看 Beat 最近调度日志（应能看到 "Scheduler: Sending due task sweep-orphan-jobs" 等）
+tail -n 30 /tmp/celery_beat.log
 ```
 
 ---

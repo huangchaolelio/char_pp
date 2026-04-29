@@ -175,15 +175,16 @@ echo " Step 4/6  清理本地 artifact / 预处理缓存 / 旧日志"
 echo "=============================================================="
 rm -rf "${PROJECT_ROOT}/.artifacts"                 2>/dev/null || true
 rm -rf /tmp/preprocess_* /tmp/kb_extract_*          2>/dev/null || true
-rm -rf /tmp/celery_*_worker.log /tmp/uvicorn.log    2>/dev/null || true
+rm -rf /tmp/celery_*_worker.log /tmp/celery_beat.log /tmp/uvicorn.log    2>/dev/null || true
+rm -f  /tmp/celerybeat-schedule*                    2>/dev/null || true
 echo "  ✓ 本地缓存与旧日志已清理"
 
 # ---------------------------------------------------------------------------
-# Step 5/6  重启 API + 5 个 Celery Worker
+# Step 5/6  重启 API + 5 个 Celery Worker + 1 个 Celery Beat
 # ---------------------------------------------------------------------------
 echo ""
 echo "=============================================================="
-echo " Step 5/6  重启 API + 5 个 Celery Worker"
+echo " Step 5/6  重启 API + 5 个 Celery Worker + 1 个 Celery Beat"
 echo "=============================================================="
 
 setsid "${UVICORN}" src.api.main:app --host 0.0.0.0 --port 8080 \
@@ -209,6 +210,13 @@ setsid "${CELERY}" -A src.workers.celery_app worker --loglevel=info --concurrenc
     -Q preprocessing -n preprocessing_worker@%h \
     >> /tmp/celery_preprocessing_worker.log 2>&1 < /dev/null &
 
+# Celery Beat（定时调度器，全局唯一）—— 驱动 cleanup_expired_tasks 每日、
+# cleanup_intermediate_artifacts 每小时、sweep_orphan_jobs 每 5 分钟。
+# 不启动 ⇒ 周期任务全部停摆，OOM/WorkerLostError 卡住的 running 任务将无人回收。
+setsid "${CELERY}" -A src.workers.celery_app beat --loglevel=info \
+    --schedule=/tmp/celerybeat-schedule \
+    >> /tmp/celery_beat.log 2>&1 < /dev/null &
+
 echo "  等待服务就绪（8 秒）..."
 sleep 8
 
@@ -219,15 +227,26 @@ echo ""
 echo "=============================================================="
 echo " Step 6/6  最终状态审计"
 echo "=============================================================="
-echo "  进程统计（期望：uvicorn 父进程=1；celery 父进程=5，含并发子进程总数会更多）："
+echo "  进程统计（期望：uvicorn 父进程=1；celery 父进程=6（5 worker + 1 beat），含并发子进程总数会更多）："
 echo "    uvicorn 实例 (父+子)  ：$(pgrep -f 'uvicorn src.api.main' | wc -l)"
 echo "    celery  实例 (父+子)  ：$(pgrep -f 'celery.*src.workers.celery_app' | wc -l)"
 
 echo ""
-echo "  5 个 celery 父进程明细（应恰好 5 行，每队列一个）："
+echo "  5 个 celery worker 父进程明细（应恰好 5 行，每队列一个）："
 ps -ef | grep -E "celery.*src.workers.celery_app.*-n [a-z_]+_worker@" | grep -v grep \
     | awk '{for(i=1;i<=NF;i++){if($i=="-Q"){q=$(i+1)}if($i=="-n"){n=$(i+1)}if($i=="--concurrency"){c=$(i+1)}}print "    queue="q" name="n" concurrency="c" pid="$2}' \
     | sort -u
+
+echo ""
+echo "  Celery Beat 进程（应恰好 1 个，多个会重复派发周期任务）："
+beat_cnt=$(pgrep -f "celery.*src.workers.celery_app.*beat" | wc -l)
+if [ "${beat_cnt}" -eq 0 ]; then
+    echo "    [WARN] celery beat 未启动 —— 周期任务（cleanup / sweep_orphan_jobs）将不会触发！"
+elif [ "${beat_cnt}" -gt 1 ]; then
+    echo "    [WARN] 检测到 ${beat_cnt} 个 beat 进程，应只保留 1 个"
+else
+    echo "    ✓ 1 个 beat 进程运行中 (pid=$(pgrep -f 'celery.*src.workers.celery_app.*beat'))"
+fi
 
 echo ""
 echo "  API 健康检查："
