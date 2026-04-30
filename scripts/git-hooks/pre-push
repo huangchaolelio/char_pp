@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# Feature-018 — pre-push hook：调用 `make drift-changed` 阻断漂移 push.
+#
+# 部署：scripts/install-git-hooks.sh 通过软链把本文件挂到 .git/hooks/pre-push.
+# 研发首次 clone 后执行一次 `bash scripts/install-git-hooks.sh` 即可。
+
+set -euo pipefail
+
+cd "$(git rev-parse --show-toplevel)"
+
+echo "[pre-push] running Feature-018 drift & spec-compliance scans..."
+
+if make drift-changed; then
+    echo "[pre-push] drift & spec-compliance: OK"
+    exit 0
+else
+    echo "[pre-push] drift / spec-compliance violated; push blocked."
+    echo "  修复方法：修订集中清单或补全 docs/business-workflow.md，提交原子 PR。"
+    echo "  本地复现：make drift-changed（默认）或 make drift-full（全量）"
+    exit 1
+fi

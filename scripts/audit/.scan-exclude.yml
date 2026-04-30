@@ -1,0 +1,29 @@
+# Feature-018 扫描排除清单
+# 作用：workflow_drift.py / spec_compliance.py 跳过下列历史 Feature 目录
+#      仅对 018+ 新 Feature 强制「业务阶段映射」段合规
+#
+# 维护规则：
+# - exclude_paths 下的目录在 spec_compliance --full 扫描中被跳过
+# - 新增 Feature 目录（019+）不得加入此列表
+# - 如某历史 Feature 主动升级到新模板，MUST 从此列表删除对应条目
+
+schema_version: 1
+
+exclude_paths:
+  - specs/001-video-coaching-advisor
+  - specs/002-audio-enhanced-kb-extraction
+  - specs/003-skill-kb-to-reference-video
+  - specs/004-video-classification
+  - specs/005-audio-kb-coaching-tips
+  - specs/006-multi-coach-kb
+  - specs/007-processing-speed-optimization
+  - specs/008-coach-tech-classification
+  - specs/009-sql-query-scripts
+  - specs/010-build-technique-standard
+  - specs/011-amateur-motion-diagnosis
+  - specs/012-task-query-all
+  - specs/013-task-pipeline-redesign
+  - specs/014-kb-extraction-pipeline
+  - specs/015-kb-pipeline-real-algorithms
+  - specs/016-video-preprocessing-pipeline
+  - specs/017-api-standardization

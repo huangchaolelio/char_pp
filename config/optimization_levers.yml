@@ -1,0 +1,95 @@
+# config/optimization_levers.yml — Feature-018 优化杠杆台账
+#
+# 与 docs/business-workflow.md § 9 表格双向同步（纳入 scripts/audit/workflow_drift.py 扫描）
+# 与 specs/018-workflow-standardization/data-model.md § 6 schema 对齐
+#
+# 分类统计（初始 9 条）：
+#   - runtime_params 非敏感: 2  (task_channel_configs.*.concurrency)
+#   - algorithm_models 非敏感: 2  (POSE_BACKEND, WHISPER_MODEL_SIZE)
+#   - rules_prompts 非敏感: 1  (tech_classification_rules.json)
+#   - 敏感键（跨分类）: 4  (VENUS_TOKEN / OPENAI_API_KEY / COS_SECRET_KEY / POSTGRES_PASSWORD)
+#
+# 加载时 schema 校验详见 src/services/optimization_levers_service.py
+# 字段：key / type / source / source_ref? / effective_in_seconds / restart_scope /
+#       business_phase / sensitive
+
+version: 1
+
+levers:
+  # ── runtime_params（热配置，30s 内生效） ────────────────────────
+  - key: task_channel_configs.kb_extraction.concurrency
+    type: runtime_params
+    source: db_table
+    source_ref: task_channel_configs
+    effective_in_seconds: 30
+    restart_scope: none
+    business_phase: [TRAINING]
+    sensitive: false
+
+  - key: task_channel_configs.athlete_diagnosis.concurrency
+    type: runtime_params
+    source: db_table
+    source_ref: task_channel_configs
+    effective_in_seconds: 30
+    restart_scope: none
+    business_phase: [INFERENCE]
+    sensitive: false
+
+  # ── algorithm_models（需重启 worker） ────────────────────────────
+  - key: POSE_BACKEND
+    type: algorithm_models
+    source: env
+    effective_in_seconds: null
+    restart_scope: worker
+    business_phase: [TRAINING, INFERENCE]
+    sensitive: false
+
+  - key: WHISPER_MODEL_SIZE
+    type: algorithm_models
+    source: env
+    effective_in_seconds: null
+    restart_scope: worker
+    business_phase: [TRAINING]
+    sensitive: false
+
+  # ── rules_prompts（需重启 API） ──────────────────────────────────
+  - key: config/tech_classification_rules.json
+    type: rules_prompts
+    source: config_file
+    effective_in_seconds: null
+    restart_scope: api
+    business_phase: [TRAINING]
+    sensitive: false
+
+  # ── 敏感键（响应中仅返回 is_configured，不泄露 current_value） ────
+  - key: VENUS_TOKEN
+    type: algorithm_models
+    source: env
+    effective_in_seconds: null
+    restart_scope: worker
+    business_phase: [TRAINING, INFERENCE]
+    sensitive: true
+
+  - key: OPENAI_API_KEY
+    type: algorithm_models
+    source: env
+    effective_in_seconds: null
+    restart_scope: worker
+    business_phase: [TRAINING, INFERENCE]
+    sensitive: true
+
+  - key: COS_SECRET_KEY
+    type: runtime_params
+    source: env
+    effective_in_seconds: null
+    restart_scope: worker
+    business_phase: [TRAINING, STANDARDIZATION]
+    sensitive: true
+
+  - key: POSTGRES_PASSWORD
+    type: runtime_params
+    source: env
+    effective_in_seconds: null
+    restart_scope: api
+    business_phase: [TRAINING, STANDARDIZATION, INFERENCE]
+    sensitive: true
