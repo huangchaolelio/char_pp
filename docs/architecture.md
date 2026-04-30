@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-04-30
+> 最后更新：2026-04-30 · Feature-020 运动员推理流水线交付
 ## 目录
 
 - [系统概述](#系统概述)
@@ -153,7 +153,9 @@ teaching_tips                       # LLM 提炼的教学建议
 | `VideoPreprocessingJob` | `video_preprocessing_jobs` | 预处理作业（Feature-016），running/success/failed/superseded 四状态 |
 | `VideoPreprocessingSegment` | `video_preprocessing_segments` | 分段 → COS object key 映射（Feature-016），(job_id, segment_index) 唯一 |
 | `Coach` | `coaches` | 教练信息，与 COS 目录 1:1 对应 |
-| `DiagnosisReport` | `diagnosis_reports` | 运动员诊断报告 |
+| `DiagnosisReport` | `diagnosis_reports` | 运动员诊断报告（Feature-020 新增 `cos_object_key` / `preprocessing_job_id` / `source` 三要素锚点） |
+| `Athlete` | `athletes` | **运动员实体（Feature-020），与运动员 COS 目录 1:1 对应；`created_via='athlete_scan'` 标识由扫描自动创建** |
+| `AthleteVideoClassification` | `athlete_video_classifications` | **运动员视频素材清单（Feature-020），与 `coach_video_classifications` 双表物理隔离（零交叉污染）** |
 
 ### 业务阶段双列（Feature-018 迁移 0016）
 
@@ -202,7 +204,7 @@ pending → processing → success
 > FastAPI 默认 404 `NOT_FOUND`。
 > 详见 `docs/api-standardization-guide.md` 与 `specs/017-api-standardization/contracts/`。
 
-### 路由模块（Feature-017 后的保留清单，12 个业务路由）
+### 路由模块（Feature-017 后的保留清单 + Feature-020 新增，15 个业务路由）
 
 | 前缀 | 文件 | 主要功能 |
 |------|------|---------|
@@ -217,7 +219,10 @@ pending → processing → success
 | `/api/v1/task-channels` | `task_channels.py` | 通道实时快照（Feature-013） |
 | `/api/v1/admin/...` | `admin.py` | 通道热更新 + 管道重置（Feature-013）+ **优化杠杆台账 `GET /admin/levers`（Feature-018 US3）** |
 | `/api/v1/video-preprocessing` | `video_preprocessing.py` | 预处理作业分页列表 + 单条审计详情（Feature-016） |
-| `/api/v1/business-workflow` | `business_workflow.py` | **业务阶段总览 `GET /business-workflow/overview`（Feature-018 US1，三阶段 × 八步骤计数/耗时/吞吐）** |
+| `/api/v1/business-workflow` | `business_workflow.py` | **业务阶段总览 `GET /business-workflow/overview`（Feature-018 US1，三阶段 × 十步骤计数/耗时/吞吐）** |
+| `/api/v1/athlete-classifications` | `athlete_classifications.py` | **运动员视频素材扫描/清单（Feature-020 US1）。与 `/classifications` 双表物理隔离** |
+| `/api/v1/tasks/athlete-preprocessing/batch` · `/tasks/athlete-diagnosis/batch` | `athlete_tasks.py` | **运动员批量预处理/诊断入口（Feature-020 US2/US3）** |
+| `/api/v1/diagnosis-reports` | `diagnosis_reports.py` | **诊断报告聚合查询（Feature-020 US5，9 维度过滤 + 排序 + 分页）** |
 
 **已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。下线采用直接物理删除策略（章程 v2.0.0 原则 IV + IX），不保留哨兵路由或台账文件。
 
@@ -323,11 +328,11 @@ pending → processing → success
 |------|-----------|---------|---------|---------|
 | `classification` | 1 | 5 | `classify_video` | ✅ |
 | `kb_extraction` | 2 | 50 | `extract_kb`（需 tech_category 非空） | ✅ |
-| `diagnosis` | 2 | 20 | `diagnose_athlete` | ✅ |
-| `preprocessing` | 3 | 20 | `preprocess_video`（Feature-016）| ✅ |
-| `default` | 1 | — | `scan_cos_videos` + `cleanup_expired_tasks` + `cleanup_intermediate_artifacts` | — |
+| `diagnosis` | 2 | 20 | `diagnose_athlete`（Feature-020 运动员诊断复用该队列） | ✅ |
+| `preprocessing` | 3 | 20 | `preprocess_video`（Feature-016）+ Feature-020 `preprocess_athlete_video` 复用 | ✅ |
+| `default` | 1 | — | `scan_cos_videos` + `scan_athlete_videos`（Feature-020）+ `cleanup_expired_tasks` + `cleanup_intermediate_artifacts` + `sweep_orphan_jobs` | — |
 
-> 前三队列容量/并发可通过 `PATCH /api/v1/admin/channels/{task_type}` 热更新，30 秒内生效（`TaskChannelService` TTL 缓存）。
+> Feature-020 **零新增队列**，复用现有 5 队列；仅新增 2 个 `task_type` 枚举（`athlete_video_classification` / `athlete_video_preprocessing`），`task_channel_configs` 相应扩容至 6 行。
 
 ### 主要任务
 
@@ -335,11 +340,13 @@ pending → processing → success
 |--------|------|------|
 | `classify_video` | `classification_task.py` | 单条视频技术分类 |
 | `extract_kb` | `kb_extraction_task.py` | 已分类视频 → 知识库条目 |
-| `diagnose_athlete` | `athlete_diagnosis_task.py` | 运动员视频 → 偏差+建议 |
-| `preprocess_video` | `preprocessing_task.py` | COS 原视频 → 标准化分段 + 整段 WAV（Feature-016） |
-| `scan_cos_videos` | `classification_task.py` | COS 全量扫描 |
+| `diagnose_athlete` | `athlete_diagnosis_task.py` | 运动员视频 → 偏差+建议（Feature-020 扩展支持 `classification_id` 走预处理后路径） |
+| `preprocess_video` | `preprocessing_task.py` | COS 原视频 → 标准化分段 + 整段 WAV（Feature-016 / Feature-020 共用） |
+| `scan_cos_videos` | `classification_task.py` | COS 全量扫描（教练侧） |
+| `scan_athlete_videos` | `athlete_scan_task.py` | **运动员 COS 根路径扫描 + 入库 `athlete_video_classifications`（Feature-020）** |
 | `cleanup_expired_tasks` | `housekeeping_task.py` | 周期性清理过期任务（beat 驱动） |
 | `cleanup_intermediate_artifacts` | `housekeeping_task.py` | 清理 KB 提取 / 预处理本地中间结果（每小时 beat） |
+| `sweep_orphan_jobs` | `housekeeping_task.py` | 每 5 分钟 beat 回收卡死的 running/processing 任务（`analysis_tasks` / `video_preprocessing_jobs` / `extraction_jobs` / `pipeline_steps`） |
 
 ### 限流与提交保护
 

@@ -114,13 +114,54 @@ class PreprocessingJobView:
 async def _fetch_classification(
     session: AsyncSession, cos_object_key: str
 ) -> Optional[CoachVideoClassification]:
-    return (
+    """Fetch by cos_object_key. Feature-020: fall back to athlete side.
+
+    Returns ``None`` only when neither table has this key (→ CosKeyNotClassifiedError).
+    The return type is typed as Coach for legacy compatibility; callers only
+    rely on truthiness + ``.cos_object_key`` attribute, both of which are
+    satisfied by :class:`AthleteVideoClassification` as well.
+    """
+    row = (
         await session.execute(
             select(CoachVideoClassification).where(
                 CoachVideoClassification.cos_object_key == cos_object_key
             )
         )
     ).scalar_one_or_none()
+    if row is not None:
+        return row
+    # Feature-020 fallback to athlete side (两侧 cos_object_key 路径物理隔离，无歧义)
+    from src.models.athlete_video_classification import AthleteVideoClassification
+
+    athlete_row = (
+        await session.execute(
+            select(AthleteVideoClassification).where(
+                AthleteVideoClassification.cos_object_key == cos_object_key
+            )
+        )
+    ).scalar_one_or_none()
+    return athlete_row  # type: ignore[return-value]
+
+
+async def mark_athlete_preprocessed(
+    session: AsyncSession,
+    *,
+    cos_object_key: str,
+    preprocessing_job_id: UUID,
+) -> None:
+    """Feature-020: mark the athlete-side classification as preprocessed.
+
+    Writes ``preprocessed=true`` + ``preprocessing_job_id=<job>`` back to
+    ``athlete_video_classifications``. Silently no-ops when the key isn't
+    on the athlete side (e.g. the job belongs to a coach video).
+    """
+    from src.models.athlete_video_classification import AthleteVideoClassification
+
+    await session.execute(
+        update(AthleteVideoClassification)
+        .where(AthleteVideoClassification.cos_object_key == cos_object_key)
+        .values(preprocessed=True, preprocessing_job_id=preprocessing_job_id)
+    )
 
 
 async def _fetch_success_job(

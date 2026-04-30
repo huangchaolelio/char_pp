@@ -57,6 +57,11 @@ class Settings(BaseSettings):
     # COS video root path — all coach videos (Feature 008)
     cos_video_all_cocah: str
 
+    # COS video root path — all athlete videos (Feature 020)
+    # 必须在 .env 中配置，如：charhuang/tt_video/athletes/
+    # 与 cos_video_all_cocah 物理隔离，禁止两侧共用一条根路径
+    cos_video_all_athlete: str
+
     # COS video selection — forehand / backhand keywords (comma-separated)
     cos_video_prefix: str
     forehand_video_keywords: str = "正手"   # comma-separated substrings matched against filename

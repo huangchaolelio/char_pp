@@ -65,7 +65,11 @@ class TestChannelStatusContract:
                 return _snap(tt, cap={"classification": 5,
                                       "kb_extraction": 50,
                                       "athlete_diagnosis": 20,
-                                      "video_preprocessing": 20}.get(tt.value, 5))
+                                      "video_preprocessing": 20,
+                                      # Feature-020 新增 2 个 task_type
+                                      "athlete_video_classification": 10,
+                                      "athlete_video_preprocessing": 20,
+                                      }.get(tt.value, 5))
 
             inst.get_snapshot = AsyncMock(side_effect=_side)
 
@@ -78,14 +82,16 @@ class TestChannelStatusContract:
         assert body["meta"] is not None
         assert body["meta"]["page"] == 1
         assert body["meta"]["page_size"] == 20
-        assert body["meta"]["total"] == 4
+        # Feature-020 新增 2 个 task_type（athlete_video_classification /
+        # athlete_video_preprocessing），端点枚举型全量返回 6 条。
+        assert body["meta"]["total"] == 6
         channels = body["data"]
-        # Feature-016 adds the preprocessing channel, bringing the total to 4.
-        assert len(channels) == 4
+        assert len(channels) == 6
         types = {c["task_type"] for c in channels}
         assert types == {
             "video_classification", "kb_extraction",
             "athlete_diagnosis", "video_preprocessing",
+            "athlete_video_classification", "athlete_video_preprocessing",
         }
         for ch in channels:
             assert set(ch.keys()) >= {

@@ -76,6 +76,10 @@ class TaskStatusResponse(BaseModel):
     timing_stats: Optional[dict] = None
     # Feature 012: related entity summary (only populated by GET /tasks/{task_id})
     summary: Optional["TaskSummary"] = None
+    # Feature 020: athlete-diagnosis task 专属字段（仅 task_type='athlete_diagnosis' 时填充）
+    athlete_video_classification_id: Optional[UUID] = None
+    tech_category: Optional[str] = None
+    standard_version: Optional[int] = None
 
 
 # ── Expert video result ──────────────────────────────────────────────────────

@@ -63,6 +63,21 @@ class DiagnosisReport(Base):
     overall_score: Mapped[float] = mapped_column(Float, nullable=False)
     # JSON list of dimension names that are within standard, e.g. '["elbow_angle"]'
     strengths_summary: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+
+    # ── Feature-020 新增 3 列（反查锚点） ────────────────────────────────
+    # `cos_object_key`：素材原始 COS key；F-011/F-013 旧行留 NULL，本 feature 必填。
+    cos_object_key: Mapped[Optional[str]] = mapped_column(String(1024), nullable=True)
+    # `preprocessing_job_id`：Feature-016 预处理 job 反查锚点。
+    preprocessing_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("video_preprocessing_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    # `source`：区分诊断报告来源；本 feature 产出的行统一 'athlete_pipeline'；旧行 'legacy'。
+    source: Mapped[str] = mapped_column(
+        String(20), nullable=False, server_default=text("'legacy'"), default="legacy"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
@@ -73,6 +88,13 @@ class DiagnosisReport(Base):
         back_populates="report",
         cascade="all, delete-orphan",
         lazy="selectin",
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "source IN ('legacy', 'athlete_pipeline')",
+            name="ck_dr_source",
+        ),
     )
 
 

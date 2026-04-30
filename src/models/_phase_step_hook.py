@@ -34,6 +34,8 @@ def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
     - video_preprocessing ⇒ (TRAINING, preprocess_video)
     - kb_extraction ⇒ (TRAINING, extract_kb)
     - athlete_diagnosis ⇒ (INFERENCE, diagnose_athlete)
+    - athlete_video_classification ⇒ (INFERENCE, scan_athlete_videos)     # Feature-020
+    - athlete_video_preprocessing ⇒ (INFERENCE, preprocess_athlete_video) # Feature-020
     """
     tt = row.task_type
     if tt == TaskType.video_classification:
@@ -45,6 +47,11 @@ def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
         return (BusinessPhase.TRAINING.value, "extract_kb")
     if tt == TaskType.athlete_diagnosis:
         return (BusinessPhase.INFERENCE.value, "diagnose_athlete")
+    # ── Feature-020 新增派生规则 ──────────────────────────────
+    if tt == TaskType.athlete_video_classification:
+        return (BusinessPhase.INFERENCE.value, "scan_athlete_videos")
+    if tt == TaskType.athlete_video_preprocessing:
+        return (BusinessPhase.INFERENCE.value, "preprocess_athlete_video")
     raise ValueError(f"PHASE_STEP_UNMAPPED: unknown task_type={tt!r}")
 
 

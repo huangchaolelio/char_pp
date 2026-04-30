@@ -114,8 +114,17 @@ class DiagnosisService:
         self,
         tech_category: str,
         video_path: str,
+        *,
+        athlete_cos_object_key: str | None = None,
+        athlete_preprocessing_job_id: uuid.UUID | None = None,
+        athlete_source: str | None = None,
     ) -> DiagnosisReportData:
         """Run full diagnosis and return a DiagnosisReportData.
+
+        Feature-020 `athlete_*` kwargs（可选，仅运动员侧链路使用）:
+          - athlete_cos_object_key: 写入 DiagnosisReport.cos_object_key 反查锚点
+          - athlete_preprocessing_job_id: 写入 DiagnosisReport.preprocessing_job_id
+          - athlete_source: 写入 DiagnosisReport.source（'athlete_pipeline' / 'legacy'）
 
         Raises:
             StandardNotFoundError: if no active standard for tech_category.
@@ -199,6 +208,10 @@ class DiagnosisService:
                 video_path=video_path,
                 overall_score=overall_score,
                 strengths_summary=json.dumps(strengths, ensure_ascii=False),
+                # Feature-020 三要素锚点（仅运动员链路非 None）
+                cos_object_key=athlete_cos_object_key,
+                preprocessing_job_id=athlete_preprocessing_job_id,
+                source=athlete_source or "legacy",
             )
             self._session.add(report)
             await self._session.flush()  # get report.id assigned
@@ -351,6 +364,99 @@ class DiagnosisService:
             }
         finally:
             self._session = prev_session
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Feature-020 · 基于 classification_id 的运动员诊断入口（T039）
+    # 不影响既有 diagnose_athlete_video(uri) 入口；按 classification 查回 cos/job.
+    # ──────────────────────────────────────────────────────────────────────
+    async def diagnose_athlete_by_classification_id(
+        self,
+        session: AsyncSession,
+        task_id: uuid.UUID,
+        classification_id: uuid.UUID,
+        *,
+        force: bool = False,
+    ) -> dict:
+        """Feature-020 US3 runner.
+
+        Flow:
+          1. Load AthleteVideoClassification row → cos_object_key + tech_category
+             + preprocessing_job_id
+          2. Call self.diagnose(tech_category, video_path=cos_object_key, athlete_* kwargs)
+          3. Upsert ``athlete_video_classifications.last_diagnosis_report_id``
+          4. Return summary dict for Celery result payload
+        """
+        from sqlalchemy import update
+
+        from src.api.errors import AppException, ErrorCode
+        from src.models.athlete_video_classification import AthleteVideoClassification
+
+        prev_session = self._session
+        if session is not None and session is not prev_session:
+            self._session = session
+
+        try:
+            row = (
+                await self._session.execute(
+                    select(AthleteVideoClassification).where(
+                        AthleteVideoClassification.id == classification_id
+                    )
+                )
+            ).scalar_one_or_none()
+            if row is None:
+                raise AppException(
+                    ErrorCode.ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND,
+                    details={"resource_id": str(classification_id)},
+                )
+
+            cos_key: str = row.cos_object_key
+            tech_category: str = row.tech_category
+            preprocessing_job_id = row.preprocessing_job_id
+
+            try:
+                report = await self.diagnose(
+                    tech_category=tech_category,
+                    video_path=cos_key,
+                    athlete_cos_object_key=cos_key,
+                    athlete_preprocessing_job_id=preprocessing_job_id,
+                    athlete_source="athlete_pipeline",
+                )
+            except ExtractionFailedError as exc:
+                # Feature-020: pose / extraction 全帧失败 → 专属错误码
+                raise AppException(
+                    ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE,
+                    details={
+                        "athlete_video_classification_id": str(classification_id),
+                        "reason": exc.reason,
+                    },
+                ) from exc
+            except StandardNotFoundError as exc:
+                raise AppException(
+                    ErrorCode.STANDARD_NOT_AVAILABLE,
+                    details={"tech_category": exc.tech_category},
+                ) from exc
+
+            # Upsert last_diagnosis_report_id
+            await self._session.execute(
+                update(AthleteVideoClassification)
+                .where(AthleteVideoClassification.id == classification_id)
+                .values(last_diagnosis_report_id=report.report_id)
+            )
+            await self._session.commit()
+
+            return {
+                "task_id": str(task_id),
+                "report_id": str(report.report_id),
+                "athlete_video_classification_id": str(classification_id),
+                "tech_category": report.tech_category,
+                "standard_version": report.standard_version,
+                "overall_score": report.overall_score,
+                "dimension_count": len(report.dimensions),
+            }
+        finally:
+            self._session = prev_session
+
+    # ──────────────────────────────────────────────────────────────────────
 
     # ---------------------------------------------------------------------------
     # Private helpers

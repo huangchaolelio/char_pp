@@ -278,6 +278,9 @@ OPENAI_API_KEY=xxxxxxxx
 # COS 视频全量根路径（Feature-008 之后新功能统一使用）
 COS_VIDEO_ALL_COCAH=charhuang/tt_video/乒乓球合集【较新】/
 
+# COS 运动员视频根路径（Feature-020 新增，必填；与 COS_VIDEO_ALL_COCAH 物理隔离，禁止共用）
+COS_VIDEO_ALL_ATHLETE=charhuang/tt_video/athletes/
+
 # 姿态估计后端
 POSE_BACKEND=auto              # auto | yolov8 | mediapipe
 ```

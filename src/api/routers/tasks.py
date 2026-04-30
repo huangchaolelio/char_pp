@@ -56,9 +56,11 @@ from src.config import get_settings
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, BusinessPhase, TaskStatus, TaskType
 from src.models.athlete_motion_analysis import AthleteMotionAnalysis
+from src.models.athlete_video_classification import AthleteVideoClassification
 from src.models.audio_transcript import AudioTranscript
 from src.models.coach import Coach
 from src.models.coaching_advice import CoachingAdvice
+from src.models.diagnosis_report import DiagnosisReport
 from src.models.deviation_report import DeviationReport
 from src.models.expert_tech_point import ExpertTechPoint
 from src.models.teaching_tip import TeachingTip
@@ -128,6 +130,8 @@ async def list_tasks(
     _VALID_BUSINESS_STEPS = {
         "scan_cos_videos", "preprocess_video", "classify_video", "extract_kb",
         "review_conflicts", "kb_version_activate", "build_standards", "diagnose_athlete",
+        # Feature-020 运动员推理流水线新增 2 步
+        "scan_athlete_videos", "preprocess_athlete_video",
     }
     step_val: Optional[str] = (
         validate_enum_choice(business_step, field="business_step", allowed=_VALID_BUSINESS_STEPS)
@@ -334,6 +338,36 @@ async def get_task_status(
         advice_count=advice_count,
     )
 
+    # ── Feature-020 T066: athlete_diagnosis 专属字段 ─────────────────────────
+    athlete_video_classification_id: Optional[uuid.UUID] = None
+    athlete_tech_category: Optional[str] = None
+    athlete_standard_version: Optional[int] = None
+    if task.task_type == TaskType.athlete_diagnosis and task.cos_object_key:
+        avc_row = (
+            await db.execute(
+                select(
+                    AthleteVideoClassification.id,
+                    AthleteVideoClassification.tech_category,
+                ).where(AthleteVideoClassification.cos_object_key == task.cos_object_key)
+            )
+        ).first()
+        if avc_row is not None:
+            athlete_video_classification_id = avc_row[0]
+            athlete_tech_category = avc_row[1]
+        # standard_version 仅在任务成功后可用（来自 diagnosis_reports）
+        if task.status == TaskStatus.success:
+            sv_row = (
+                await db.execute(
+                    select(DiagnosisReport.standard_version)
+                    .where(DiagnosisReport.cos_object_key == task.cos_object_key)
+                    .where(DiagnosisReport.source == "athlete_pipeline")
+                    .order_by(DiagnosisReport.created_at.desc())
+                    .limit(1)
+                )
+            ).first()
+            if sv_row is not None:
+                athlete_standard_version = int(sv_row[0])
+
     return ok(TaskStatusResponse(
         task_id=task.id,
         task_type=task.task_type.value,
@@ -361,6 +395,10 @@ async def get_task_status(
         timing_stats=task.timing_stats,
         # Feature 012: related entity summary
         summary=summary,
+        # Feature-020 T066: athlete_diagnosis 专属字段（其他 task_type 保持 None）
+        athlete_video_classification_id=athlete_video_classification_id,
+        tech_category=athlete_tech_category,
+        standard_version=athlete_standard_version,
     ))
 
 

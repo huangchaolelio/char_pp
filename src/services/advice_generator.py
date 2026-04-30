@@ -155,9 +155,12 @@ async def generate_advice(
     advice_list: list[CoachingAdvice] = []
 
     # Feature 005: pre-load matching TeachingTips for this action_type (human first)
+    # Feature-019 schema 迁移：TeachingTip.action_type 已重命名为 tech_category，
+    # 语义等价（两者都标识技术类别）。函数参数名 action_type 保持不变以避免
+    # 调用方签名变动；仅 ORM 列引用修正。
     tips_result = await session.execute(
         select(TeachingTip)
-        .where(TeachingTip.action_type == action_type)
+        .where(TeachingTip.tech_category == action_type)
         .order_by(
             # human tips first, then by confidence desc
             TeachingTip.source_type.desc(),  # 'human' > 'auto' alphabetically

@@ -15,7 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-# 与 _phase_step_hook.BusinessStep 保持同步（8 值集合，Clarification Q1 决议）
+# 与 _phase_step_hook.BusinessStep 保持同步（Feature-020 扩容至 10 值）
 BusinessStepLiteral = Literal[
     "scan_cos_videos",
     "preprocess_video",
@@ -25,6 +25,9 @@ BusinessStepLiteral = Literal[
     "kb_version_activate",
     "build_standards",
     "diagnose_athlete",
+    # Feature-020 — 运动员推理流水线 INFERENCE 阶段新增 2 步
+    "scan_athlete_videos",
+    "preprocess_athlete_video",
 ]
 
 BusinessPhaseLiteral = Literal["TRAINING", "STANDARDIZATION", "INFERENCE"]
