@@ -147,8 +147,8 @@ teaching_tips                       # LLM 提炼的教学建议
 |------|------|------|
 | `AnalysisTask` | `analysis_tasks` | 视频处理任务，含状态机（pending→processing→success/failed） |
 | `ExpertTechPoint` | `expert_tech_points` | 单帧姿态关键点数据 |
-| `TechKnowledgeBase` | `tech_knowledge_bases` | 知识库版本，semver 格式（X.Y.Z） |
-| `TechStandard` | `tech_standards` | 聚合后的技术标准（中位数+P25/P75） |
+| `TechKnowledgeBase` | `tech_knowledge_bases` | 知识库版本（Feature-019 重构：**复合主键 `(tech_category, version INTEGER)`**，per-category 独立生命周期；`uq_tech_kb_active_per_category` partial unique index 保证每类别单 active） |
+| `TechStandard` | `tech_standards` | 聚合后的技术标准（中位数+P25/P75；Feature-019 新增 `source_fingerprint CHAR(64)` 列 + `uq_ts_fingerprint_per_category` 局部唯一索引支持 build 幂等） |
 | `CoachVideoClassification` | `coach_video_classifications` | COS 全量视频分类（Feature-008） + 新增 `preprocessed` 字段（Feature-016） |
 | `VideoPreprocessingJob` | `video_preprocessing_jobs` | 预处理作业（Feature-016），running/success/failed/superseded 四状态 |
 | `VideoPreprocessingSegment` | `video_preprocessing_segments` | 分段 → COS object key 映射（Feature-016），(job_id, segment_index) 唯一 |

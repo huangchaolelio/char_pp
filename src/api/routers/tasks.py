@@ -412,31 +412,35 @@ async def get_task_result(
             details={"task_id": task_id, "status": task.status.value},
         )
 
-    # ── kb_extraction branch ─────────────────────────────────────────────────
+    # ── kb_extraction branch ────────────────────────────────────────────────
     if task.task_type == TaskType.kb_extraction:
-        # Load all tech points with their source segment timestamps (FR-008)
-        points_result = await db.execute(
-            select(ExpertTechPoint, TechSemanticSegment)
-            .outerjoin(
-                TechSemanticSegment,
-                ExpertTechPoint.transcript_segment_id == TechSemanticSegment.id,
+        # Feature-019: 旧签名用 task.knowledge_base_version (VARCHAR)；新名用
+        # task.kb_tech_category + task.kb_version (复合键)。此处既有代码
+        # 先打开下面判断：若复合键未填，直接空返回。
+        task_kb_tc = task.kb_tech_category
+        task_kb_ver = task.kb_version
+        if task_kb_tc is None or task_kb_ver is None:
+            points = []
+            kb = None
+        else:
+            # Load all tech points with their source segment timestamps (FR-008)
+            points_result = await db.execute(
+                select(ExpertTechPoint, TechSemanticSegment)
+                .outerjoin(
+                    TechSemanticSegment,
+                    ExpertTechPoint.transcript_segment_id == TechSemanticSegment.id,
+                )
+                .where(
+                    ExpertTechPoint.source_video_id == task_uuid,
+                    ExpertTechPoint.kb_tech_category == task_kb_tc,
+                    ExpertTechPoint.kb_version == task_kb_ver,
+                )
             )
-            .where(
-                ExpertTechPoint.source_video_id == task_uuid,
-                ExpertTechPoint.knowledge_base_version == task.knowledge_base_version,
-            )
-        )
-        points = points_result.all()
+            points = points_result.all()
 
-        # Determine whether the KB version is still pending approval (draft)
-        kb_result = await db.execute(
-            select(TechKnowledgeBase).where(
-                TechKnowledgeBase.version == task.knowledge_base_version
-            )
-        )
-        kb = kb_result.scalar_one_or_none()
+            # Determine whether the KB version is still pending approval (draft)
+            kb = await db.get(TechKnowledgeBase, (task_kb_tc, task_kb_ver))
         pending_approval = (kb is not None and kb.status == KBStatus.draft)
-
         extracted = [
             ExtractedTechPoint(
                 action_type=p.action_type.value,

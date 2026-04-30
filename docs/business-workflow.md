@@ -115,18 +115,22 @@ wave4:  merge_kb
 
 ### 4.2 三条硬约束（章程 / DB 级强制）
 
-1. **单 active 约束**：`tech_knowledge_bases` 任意时刻最多 1 行 `status='active'`
-2. **冲突不可绕过**：`approve_version` 会扫描 `ExpertTechPoint.conflict_flag`，存在未解决冲突直接抛 `ConflictUnresolvedError` → `409 CONFLICT_UNRESOLVED`
-3. **版本链可追溯**：`tech_knowledge_bases.extraction_job_id` → `extraction_jobs.id` → `cos_object_key`，从一条诊断结果可一路回溯到"哪段专家视频、哪个片段、哪一路（visual/audio）贡献了这条规则"
+1. **单 active 约束（per-tech_category）**：`tech_knowledge_bases` 在**每个 `tech_category` 维度上**任意时刻最多 1 行 `status='active'`（Feature-019）。由 partial unique index `uq_tech_kb_active_per_category ON tech_knowledge_bases (tech_category) WHERE status='active'` 在 DB 层强制；主键为复合键 `(tech_category, version INTEGER)`，每类别独立递增版本。
+2. **冲突不可绕过**：`approve_version(tech_category, version)` 会扫描该 `(tc, ver)` 下 `ExpertTechPoint.conflict_flag`，存在未解决冲突直接抛。Feature-019 新增专属错误码 `KB_CONFLICT_UNRESOLVED` (409)；原 `CONFLICT_UNRESOLVED` 仍保留以兼容老端点。
+3. **版本链可追溯**：`tech_knowledge_bases.extraction_job_id` 被 Feature-019 提升为 NOT NULL，FK 指向 `extraction_jobs.id` → `cos_object_key`，从一条诊断结果可一路回溯到"哪段专家视频、哪个片段、哪一路（visual/audio）贡献了这条规则"。
 
 ### 4.3 状态机
 
 ```
-[draft] --approve--> [active] --(newer approve)--> [archived]
+[draft] --approve--> [active] --(newer approve same category)--> [archived]
    |                    ^
-   |                    | 单 active 强制（DB check）
-   +-- 未解决冲突不可 approve
+   |                    | 单 active 强制（DB partial unique index）
+   +-- 未解决冲突 / point_count=0 不可 approve
 ```
+
+> **作用域 = 单 tech_category**（Feature-019）：所有状态转换按 `tech_category` 分桶。
+> 审批反手拉不影响正手攻球的 active；每类别独立版本链。
+> 同事务内联动 `teaching_tips` 状态迁移：旧 active KB 的 `auto` tips 批量归档，新 KB 的 draft tips 批量激活（`human` 行不参与批量归档，FR-024）。
 
 ---
 
@@ -212,6 +216,8 @@ video_preprocessing_segments
   └─ segment_index / start_ms / end_ms / cos_object_key / upload_status
 ```
 
+步骤级指标 tag（指标维度）：`step_name` + `phase` + **`tech_category`**（Feature-019 新增）。其中 `kb_version_activate` / `build_standards` 两步在统计 per-category 成功/失败计数时必须携 `tech_category` tag，以支持按类别级度的定位与曲线切片。
+
 ### 7.3 诊断级（已有）
 
 ```
@@ -245,6 +251,10 @@ diagnosis_reports
 | `LLM_UNCONFIGURED:` | Venus / OpenAI 均未配置 | 否（fail-fast）|
 | `LLM_JSON_PARSE:` | LLM 返回非 JSON | 否 |
 | `LLM_CALL_FAILED:` | LLM 上游调用失败 | 指数退避重试 |
+| `KB_CONFLICT_UNRESOLVED:` | Feature-019 — `(tc, ver)` 下存在 `conflict_flag=true` 的 points，approve 拒绝 | 否（需人工解冲突）|
+| `KB_EMPTY_POINTS:` | Feature-019 — `point_count=0` 的 KB 不可 approve | 否 |
+| `NO_ACTIVE_KB_FOR_CATEGORY:` | Feature-019 — 该 `tech_category` 尚无 active KB（诊断读 / standards build 依赖）| 否（先审批该类别的 draft）|
+| `STANDARD_ALREADY_UP_TO_DATE:` | Feature-019 — 构建指纹与同类别 active standard 一致，幂等拒绝 | 否 |
 ### 7.5 建议补强的三类指标
 
 | 类别 | 指标 | 建议落点 | 用途 |

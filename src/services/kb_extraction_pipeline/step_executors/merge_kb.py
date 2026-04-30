@@ -1,4 +1,4 @@
-"""merge_kb executor (Feature 014 — US2 real implementation).
+"""merge_kb executor (Feature 014 — US2 real implementation; Feature-019 adapted).
 
 Responsibilities (FR-011):
   1. Read visual + audio KB item lists from upstream step output_summary.
@@ -10,10 +10,12 @@ Responsibilities (FR-011):
      visual items only (FR-012).
   6. Flip ``coach_video_classifications.kb_extracted=True``.
 
-The actual value mapping from the upstream ``output_summary.kb_items`` lists
-to the merger's input shape is intentionally permissive — extractors can
-surface dicts with minor schema drift (missing ``unit``, etc.), and we coerce
-on the way in so a single bad item never nukes the merge.
+Feature-019 变更:
+  - tech_knowledge_bases 使用复合主键 ``(tech_category, version INTEGER)``
+  - version 由 `knowledge_base_svc.create_draft_version` 计算（per-category MAX+1）
+  - 每条 extraction_job 产出恰好 1 条 KB（绑 job.tech_category）；若 merged 点中
+    出现跨类别（理论不应，上游已对齐）仅 warning 不分裂
+  - ExpertTechPoint 用复合 FK (kb_tech_category, kb_version)
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ from src.models.extraction_job import ExtractionJob
 from src.models.kb_conflict import KbConflict
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
+from src.services import knowledge_base_svc
 from src.services.kb_extraction_pipeline.merger import (
     ConflictItem,
     F14KbMerger,
@@ -69,9 +72,10 @@ async def execute(
     merger = F14KbMerger()
     merged, conflicts = merger.merge(visual_items, audio_items)
 
-    kb_version = await _ensure_kb_version(session, job, merged)
+    # Feature-019: per-category draft KB（复合键 (tech_category, version)）
+    kb_tech_category, kb_version_int = await _ensure_kb_record(session, job, merged)
     inserted = await _persist_merged_points(
-        session, job, kb_version, merged
+        session, job, kb_tech_category, kb_version_int, merged
     )
     await _persist_conflicts(session, job, conflicts)
 
@@ -89,12 +93,16 @@ async def execute(
         "inserted_tech_points": inserted,
         "conflict_items": len(conflicts),
         "degraded_mode": degraded,
-        "kb_version": kb_version,
+        # Feature-019: 回报复合键；保留 kb_version（整数）+ 新增 kb_tech_category
+        "kb_tech_category": kb_tech_category,
+        "kb_version": kb_version_int,
         "kb_extracted_flag_set": True,
     }
     logger.info(
-        "merge_kb job=%s: merged=%d inserted=%d conflicts=%d degraded=%s",
+        "merge_kb job=%s: merged=%d inserted=%d conflicts=%d degraded=%s "
+        "kb=(%s, %d)",
         job.id, len(merged), inserted, len(conflicts), degraded,
+        kb_tech_category, kb_version_int,
     )
     return {
         "status": PipelineStepStatus.success,
@@ -145,110 +153,74 @@ def _safe_items(output_summary: dict | None) -> list[dict]:
     return cleaned
 
 
-async def _ensure_kb_version(
+async def _ensure_kb_record(
     session: AsyncSession,
     job: ExtractionJob,
     merged: list[MergedPoint],
-) -> str:
+) -> tuple[str, int]:
     """Resolve (or create) the ``tech_knowledge_bases`` row for this job.
 
-    迁移 0015 / 方案 A1：新版本行同时写入 ``extraction_job_id`` FK，
-    notes 仅保留作为可读备注。
+    Feature-019 语义:
+      - 每个 extraction_job 产出恰好 1 条 KB（绑 job.tech_category）
+      - 若该 job 已产出过（幂等重跑），返回现有记录
+      - 否则调用 knowledge_base_svc.create_draft_version 产出新 draft KB
+        （per-category MAX(version)+1）
 
-    We derive a version string ``0.{a}.{b}`` deterministically from the job UUID
-    so reruns pick up the same version and can rely on the upstream UPSERT.
+    审计: 若 merged 中存在 action_type != job.tech_category 的点，仅 warning
+    不分裂成多条 KB（FR-020：一条 KB 对应一个技术类别，跨类别由上游对齐保证）。
     """
-    version = _version_from_job_id(job.id)
+    tech_category = job.tech_category
+    if not tech_category:
+        raise RuntimeError(
+            f"extraction_job {job.id} has empty tech_category; "
+            "cannot create per-category KB record"
+        )
 
+    # 幂等：同 extraction_job_id 已有 KB 则复用
     existing = (
         await session.execute(
-            select(TechKnowledgeBase).where(TechKnowledgeBase.version == version)
-        )
-    ).scalar_one_or_none()
-    if existing is None:
-        session.add(
-            TechKnowledgeBase(
-                version=version,
-                action_types_covered=_derive_action_types(merged, job.tech_category),
-                point_count=0,          # updated after insert
-                status=KBStatus.draft,
-                extraction_job_id=job.id,
-                notes=(
-                    f"F-014 draft KB for extraction_job={job.id} "
-                    f"cos_key={job.cos_object_key} tech_category={job.tech_category}"
-                ),
+            select(TechKnowledgeBase).where(
+                TechKnowledgeBase.extraction_job_id == job.id,
+                TechKnowledgeBase.tech_category == tech_category,
             )
         )
-        await session.flush()
-    elif existing.extraction_job_id is None:
-        # 兼容：历史版本条目（迁移前写入）重跑时回填 FK。
-        existing.extraction_job_id = job.id
-        await session.flush()
-    return version
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing.tech_category, existing.version
 
-
-def _version_from_job_id(job_id) -> str:
-    """Derive a stable semver-compatible version string from a UUID.
-
-    The ``tech_knowledge_bases.version`` column is ``VARCHAR(20)``, so we
-    keep each numeric segment short: two 16-bit chunks from the UUID give
-    a max string of ``"0.65535.65535"`` = 13 chars, well within budget.
-
-    Collisions are theoretically possible at 2^32 range but the KB-extraction
-    channel's concurrency is 2 and daily job volume is tiny (~5/day per
-    spec assumptions), so the birthday-bound is negligible for this use case.
-    """
-    raw = job_id.hex if hasattr(job_id, "hex") else str(job_id).replace("-", "")
-    a = int(raw[:4], 16)
-    b = int(raw[4:8], 16)
-    return f"0.{a}.{b}"
-
-
-def _derive_action_types(
-    merged: list[MergedPoint], fallback: str
-) -> list[str]:
-    """短期对齐契约（Feature 审计修复）：
-    `tech_knowledge_bases.action_types_covered` 一律以 ``job.tech_category``
-    为单一权威值，不再从 merged items 自由推导。
-
-    Rationale：
-      - 规则分类器 v1 只能识别 2/21 类，历史上通过 3 层 fallback 退化为
-        ``job.tech_category``，结果随数据波动，难以对账。
-      - 显式契约后，`action_types_covered` 永远只包含提交类别本身；
-        各点的 `action_type` 由 merge_kb._coerce_action_type 兜底，
-        分类器偏差通过 `submitted_tech_category` 审计列追溯。
-
-    若 merged items 中出现与 fallback 不一致的 action_type（理论上不应出现，
-    因为上游 executor 已强制对齐），仅记录 WARNING，不影响覆盖类别输出。
-    """
-    if not fallback:
-        # 极端防御：job.tech_category 为空时退回旧逻辑，避免 NOT NULL 列失败。
-        types: set[str] = set()
-        for m in merged:
-            if m.action_type:
-                types.add(m.action_type)
-        if not types:
-            types.add(_FALLBACK_ACTION_TYPE)
-        return sorted(types)
-
-    # 审计：发现 merged 中存在 action_type != fallback 的点，说明上游对齐被绕过。
-    stray = {m.action_type for m in merged if m.action_type and m.action_type != fallback}
+    # 审计 merged 中不一致的 action_type
+    stray = {m.action_type for m in merged if m.action_type and m.action_type != tech_category}
     if stray:
         logger.warning(
-            "merge_kb._derive_action_types: merged items carry action_type %r "
-            "that disagrees with job.tech_category=%r (forcing [%r])",
-            sorted(stray), fallback, fallback,
+            "merge_kb._ensure_kb_record: merged items carry action_type %r "
+            "that disagrees with job.tech_category=%r (KB written under %r)",
+            sorted(stray), tech_category, tech_category,
         )
-    return [fallback]
+
+    # Feature-019: 通过 svc 创建 draft（per-category MAX+1 自增）
+    kb = await knowledge_base_svc.create_draft_version(
+        session,
+        tech_category=tech_category,
+        extraction_job_id=job.id,
+        point_count=0,   # point_count 由 _persist_merged_points 后续 UPDATE
+        notes=(
+            f"F-014 draft KB for extraction_job={job.id} "
+            f"cos_key={job.cos_object_key} tech_category={tech_category}"
+        ),
+    )
+    return kb.tech_category, kb.version
 
 
 async def _persist_merged_points(
     session: AsyncSession,
     job: ExtractionJob,
-    kb_version: str,
+    kb_tech_category: str,
+    kb_version: int,
     merged: list[MergedPoint],
 ) -> int:
     """INSERT one ExpertTechPoint row per merged item. Returns inserted count.
+
+    Feature-019: expert_tech_points 绑复合 FK (kb_tech_category, kb_version)。
 
     Silently skips points whose ``action_type`` can't be mapped to the
     ``ActionType`` enum (e.g. the job's tech_category is one of the F-014 21
@@ -279,7 +251,8 @@ async def _persist_merged_points(
 
         session.add(
             ExpertTechPoint(
-                knowledge_base_version=kb_version,
+                kb_tech_category=kb_tech_category,
+                kb_version=kb_version,
                 action_type=action_enum,
                 dimension=m.dimension,
                 param_min=p_min,
@@ -297,11 +270,14 @@ async def _persist_merged_points(
         )
         inserted += 1
 
-    # Bump point_count on the KB row.
+    # Bump point_count on the KB row (Feature-019 复合键)
     if inserted:
         await session.execute(
             update(TechKnowledgeBase)
-            .where(TechKnowledgeBase.version == kb_version)
+            .where(
+                TechKnowledgeBase.tech_category == kb_tech_category,
+                TechKnowledgeBase.version == kb_version,
+            )
             .values(point_count=TechKnowledgeBase.point_count + inserted)
         )
     return inserted

@@ -83,11 +83,16 @@ class ErrorCode(str, Enum):
     DB_UPSTREAM_FAILED = "DB_UPSTREAM_FAILED"
     WHISPER_UPSTREAM_FAILED = "WHISPER_UPSTREAM_FAILED"
 
-    # ── Feature-018 业务阶段/步骤 + 优化杠杆（3） ───────────────────────
+    # ── Feature-018 业务阶段/步骤 + 优化杠杆（3） ─────────────────
     INVALID_PHASE_STEP_COMBO = "INVALID_PHASE_STEP_COMBO"
     PHASE_STEP_UNMAPPED = "PHASE_STEP_UNMAPPED"
     OPTIMIZATION_LEVERS_YAML_INVALID = "OPTIMIZATION_LEVERS_YAML_INVALID"
 
+    # ── Feature-019 KB per-category 生命周期（4） ────────────────
+    KB_CONFLICT_UNRESOLVED = "KB_CONFLICT_UNRESOLVED"
+    KB_EMPTY_POINTS = "KB_EMPTY_POINTS"
+    NO_ACTIVE_KB_FOR_CATEGORY = "NO_ACTIVE_KB_FOR_CATEGORY"
+    STANDARD_ALREADY_UP_TO_DATE = "STANDARD_ALREADY_UP_TO_DATE"
 
 # ── 错误码 → HTTP 状态（单一事实来源） ────────────────────────────────────
 ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
@@ -146,6 +151,12 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.INVALID_PHASE_STEP_COMBO: HTTPStatus.BAD_REQUEST,          # 400
     ErrorCode.PHASE_STEP_UNMAPPED: HTTPStatus.INTERNAL_SERVER_ERROR,     # 500
     ErrorCode.OPTIMIZATION_LEVERS_YAML_INVALID: HTTPStatus.INTERNAL_SERVER_ERROR,  # 500
+
+    # Feature-019（KB per-category 生命周期）
+    ErrorCode.KB_CONFLICT_UNRESOLVED: HTTPStatus.CONFLICT,               # 409
+    ErrorCode.KB_EMPTY_POINTS: HTTPStatus.CONFLICT,                      # 409
+    ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY: HTTPStatus.CONFLICT,            # 409
+    ErrorCode.STANDARD_ALREADY_UP_TO_DATE: HTTPStatus.CONFLICT,          # 409
 }
 
 
@@ -206,6 +217,12 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.INVALID_PHASE_STEP_COMBO: "业务阶段/步骤与任务类型不匹配",
     ErrorCode.PHASE_STEP_UNMAPPED: "业务阶段/步骤派生失败（内部错误）",
     ErrorCode.OPTIMIZATION_LEVERS_YAML_INVALID: "优化杠杆台账配置加载失败",
+
+    # Feature-019（KB per-category 生命周期）
+    ErrorCode.KB_CONFLICT_UNRESOLVED: "知识库存在未解决的冲突点",
+    ErrorCode.KB_EMPTY_POINTS: "知识库为空，无法批准",
+    ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY: "该技术类别无已激活的知识库",
+    ErrorCode.STANDARD_ALREADY_UP_TO_DATE: "标准已是最新，无需重建",
 }
 
 

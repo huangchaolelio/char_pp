@@ -21,6 +21,26 @@ def _db_override(mock_session):
     async def _get_mock_db():
         yield mock_session
 
+    # Feature-019: 路由层 `async with session.begin():` 打开事务
+    # mock 的 AsyncMock 默认不实现 __aenter__/__aexit__，手动注入
+    async def _begin():
+        class _Ctx:
+            async def __aenter__(self_inner):
+                return mock_session
+            async def __aexit__(self_inner, exc_type, exc, tb):
+                return None
+        return _Ctx()
+
+    mock_session.begin = MagicMock(side_effect=_begin)
+    # 并做一个当作上下文直接返回 _Ctx 的适配（FastAPI router 写的是 `async with db.begin():`）
+    _ctx_holder = {}
+    class _Ctx:
+        async def __aenter__(self_inner):
+            return mock_session
+        async def __aexit__(self_inner, exc_type, exc, tb):
+            return None
+    mock_session.begin = MagicMock(return_value=_Ctx())
+
     app.dependency_overrides[get_db] = _get_mock_db
     return mock_session
 
@@ -94,56 +114,11 @@ class TestBuildSingleTechContract:
 
 
 # ---------------------------------------------------------------------------
-# POST /api/v1/standards/build — batch (no tech_category)
+# POST /api/v1/standards/build — batch 模式已删除（Feature-019 FR-015: tech_category 必填）
 # ---------------------------------------------------------------------------
-
-class TestBuildBatchContract:
-    """POST /api/v1/standards/build without tech_category triggers batch."""
-
-    async def test_batch_response_structure(self, client):
-        mock_session = AsyncMock()
-        _db_override(mock_session)
-
-        from src.services.tech_standard_builder import BatchBuildResult, BuildResult
-
-        mock_results = [
-            BuildResult(
-                tech_category="forehand_topspin",
-                result="success",
-                standard_id=1,
-                version=1,
-                dimension_count=3,
-                coach_count=2,
-            ),
-            BuildResult(
-                tech_category="backhand_push",
-                result="skipped",
-                reason="no_valid_points",
-            ),
-        ]
-        mock_batch = BatchBuildResult(results=mock_results)
-
-        with patch(
-            "src.api.routers.standards.TechStandardBuilder"
-        ) as MockBuilder:
-            instance = MockBuilder.return_value
-            instance.build_all = AsyncMock(return_value=mock_batch)
-
-            resp = await client.post("/api/v1/standards/build", json={})
-
-        _clear_overrides()
-        assert resp.status_code == 200
-        envelope = resp.json()
-        assert envelope["success"] is True
-        data = envelope["data"]
-        assert "mode" in data
-        assert data["mode"] == "batch"
-        assert "results" in data
-        assert "summary" in data
-        summary = data["summary"]
-        assert "success_count" in summary
-        assert "skipped_count" in summary
-        assert "failed_count" in summary
+# 原 TestBuildBatchContract 类测试的 `mode=batch` 经已不存在：路由层现要求
+# `tech_category` 为必填，缺失直接返回 422 VALIDATION_FAILED。新语义的合约测试
+# 见 tests/contract/test_standards_build_per_category.py::test_build_422_missing_tech_category。
 
 
 # ---------------------------------------------------------------------------

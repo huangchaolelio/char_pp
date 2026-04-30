@@ -87,16 +87,17 @@ class TestExpertVideoPipeline:
             assert exc.value.reason == "fps_too_low"
 
     async def test_kb_service_create_and_approve(self):
-        """KnowledgeBase service creates a draft and approves it correctly."""
+        """Feature-019: create_draft_version(tech_category, extraction_job_id) 新签名."""
+        import uuid
         from unittest.mock import AsyncMock, MagicMock
         from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
         from src.services import knowledge_base_svc
 
         session = AsyncMock()
 
-        # No existing version (fresh start)
+        # No existing version (fresh start) — func.max 聚合返回 0
         mock_latest_result = MagicMock()
-        mock_latest_result.scalar_one_or_none.return_value = None
+        mock_latest_result.scalar_one.return_value = 1  # MAX(version)+1 → 1
 
         created_kb = None
 
@@ -105,6 +106,7 @@ class TestExpertVideoPipeline:
 
         session.execute = mock_execute
         session.flush = AsyncMock()
+        session.rollback = AsyncMock()
 
         def capture_add(obj):
             nonlocal created_kb
@@ -114,9 +116,12 @@ class TestExpertVideoPipeline:
 
         kb = await knowledge_base_svc.create_draft_version(
             session,
-            action_types=["forehand_topspin"],
+            tech_category="forehand_topspin",
+            extraction_job_id=uuid.uuid4(),
+            point_count=0,
             notes="Test draft",
         )
 
-        assert kb.version == "1.0.0"
+        assert kb.tech_category == "forehand_topspin"
+        assert kb.version == 1
         assert kb.status == KBStatus.draft

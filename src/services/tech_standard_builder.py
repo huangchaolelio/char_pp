@@ -22,6 +22,8 @@ Version management:
 
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
 import uuid
 from dataclasses import dataclass, field
@@ -31,7 +33,9 @@ import numpy as np
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
 from src.models.expert_tech_point import ExpertTechPoint
+from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_standard import SourceQuality, StandardStatus, TechStandard, TechStandardPoint
 from src.services.tech_classifier import TECH_CATEGORIES
 
@@ -126,25 +130,44 @@ class TechStandardBuilder:
         self._session = session
 
     async def build_standard(self, tech_category: str) -> BuildResult:
-        """Build or rebuild the standard for a single tech_category.
+        """Build or rebuild the standard for a single tech_category (Feature-019).
 
-        Steps:
-        1. Fetch valid ExpertTechPoints (confidence >= 0.7, conflict_flag=False)
-           where action_type matches tech_category (as string value)
-        2. Group by dimension
-        3. Compute median + P25/P75 per dimension
-        4. Determine source_quality from distinct source_video_ids
-        5. Archive previous active version (if any)
-        6. Insert new TechStandard + TechStandardPoints
-        7. Commit is handled by caller
+        Feature-019 契约改变（spec.md FR-014~FR-019）：
+          - 数据源 MUST 限定为 "该 tech_category 当前 active KB 所含 expert_tech_points"
+          - 若该类别无 active KB ⇒ 抛 `NO_ACTIVE_KB_FOR_CATEGORY`（409）
+          - 指纹幂等：同一 active KB + 相同 points 集合 ⇒ `STANDARD_ALREADY_UP_TO_DATE`（409）
+          - 新产出的 TechStandard 直接 status=active（FR-014a，不走 draft）
 
-        Returns BuildResult with result='skipped' if no valid points exist.
+        步骤:
+          1. 查该类别 active KB，无则抛
+          2. 从该 KB 下取 valid ExpertTechPoints（confidence >= 0.7 且 conflict_flag=False）
+          3. 计算 source_fingerprint → 对比同类别现 active 标准的指纹，一致则抛
+          4. 按 dimension 聚合 → median + P25/P75
+          5. 归档同类别旧 active standard（仅同类别）
+          6. INSERT 新 TechStandard → status='active' + source_fingerprint
+          7. INSERT TechStandardPoints
+
+        Returns BuildResult（result='success' 或 'skipped'）。
         """
         session = self._session
 
-        # --- Fetch valid points for this tech_category ---
+        # --- Step 1: 查该类别 active KB ---------------------------
+        active_kb = (await session.execute(
+            select(TechKnowledgeBase).where(
+                TechKnowledgeBase.tech_category == tech_category,
+                TechKnowledgeBase.status == KBStatus.active,
+            )
+        )).scalar_one_or_none()
+        if active_kb is None:
+            raise AppException(
+                ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY,
+                details={"tech_category": tech_category},
+            )
+
+        # --- Step 2: 取该 active KB 下的 valid ExpertTechPoints ---
         stmt = select(ExpertTechPoint).where(
-            ExpertTechPoint.action_type == tech_category,
+            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_version == active_kb.version,
             ExpertTechPoint.extraction_confidence >= 0.7,
             ExpertTechPoint.conflict_flag.is_(False),
         )
@@ -154,7 +177,7 @@ class TechStandardBuilder:
         if not all_points:
             logger.info(
                 "build_standard skipped: no_valid_points",
-                extra={"tech_category": tech_category},
+                extra={"tech_category": tech_category, "kb_version": active_kb.version},
             )
             return BuildResult(
                 tech_category=tech_category,
@@ -162,7 +185,35 @@ class TechStandardBuilder:
                 reason="no_valid_points",
             )
 
-        # --- Group by dimension ---
+        # --- Step 3: 幂等检查 source_fingerprint ---------------------
+        # FR-019 口径：sha256(sorted_json([(ep.id, ep.param_ideal, ep.extraction_confidence) for ep in points]))
+        fingerprint_src = sorted(
+            [
+                [str(p.id), float(p.param_ideal), float(p.extraction_confidence)]
+                for p in all_points
+            ]
+        )
+        fingerprint = hashlib.sha256(
+            json.dumps(fingerprint_src, separators=(",", ":"), sort_keys=True).encode("utf-8")
+        ).hexdigest()
+
+        existing_active = (await session.execute(
+            select(TechStandard).where(
+                TechStandard.tech_category == tech_category,
+                TechStandard.status == StandardStatus.active.value,
+            )
+        )).scalar_one_or_none()
+        if existing_active is not None and existing_active.source_fingerprint == fingerprint:
+            raise AppException(
+                ErrorCode.STANDARD_ALREADY_UP_TO_DATE,
+                details={
+                    "tech_category": tech_category,
+                    "current_version": existing_active.version,
+                    "source_kb_version": active_kb.version,
+                },
+            )
+
+        # --- Step 4: 按 dimension 聚合 ----------------------------------
         dim_map: dict[str, list[float]] = {}
         dim_unit: dict[str, Optional[str]] = {}
         dim_videos: dict[str, list] = {}
@@ -179,7 +230,6 @@ class TechStandardBuilder:
             dim_videos[dim].append(vid)
             all_video_ids.append(vid)
 
-        # --- Determine source_quality ---
         source_quality = determine_source_quality(all_video_ids)
         if source_quality is None:
             return BuildResult(
@@ -188,15 +238,17 @@ class TechStandardBuilder:
                 reason="no_valid_points",
             )
 
-        # --- Determine next version ---
-        version_stmt = select(TechStandard.version).where(
-            TechStandard.tech_category == tech_category
-        ).order_by(TechStandard.version.desc()).limit(1)
+        # --- Step 5: 计算下一 version + 归档同类别旧 active ---------
+        version_stmt = (
+            select(TechStandard.version)
+            .where(TechStandard.tech_category == tech_category)
+            .order_by(TechStandard.version.desc())
+            .limit(1)
+        )
         version_row = await session.execute(version_stmt)
         last_version = version_row.scalar_one_or_none()
         next_version = (last_version or 0) + 1
 
-        # --- Archive previous active version ---
         archive_stmt = (
             update(TechStandard)
             .where(
@@ -207,7 +259,7 @@ class TechStandardBuilder:
         )
         await session.execute(archive_stmt)
 
-        # --- Compute aggregated points ---
+        # --- Step 6: 聚合 standard_points --------------------------------
         standard_points: list[dict[str, Any]] = []
         total_point_count = 0
         for dim, values in dim_map.items():
@@ -232,7 +284,7 @@ class TechStandardBuilder:
             )
             total_point_count += len(values)
 
-        # --- Insert new TechStandard ---
+        # --- Step 7: Insert 新 standard（status 直接 active） ------------
         standard = TechStandard(
             tech_category=tech_category,
             version=next_version,
@@ -240,11 +292,11 @@ class TechStandardBuilder:
             source_quality=source_quality,
             coach_count=len(set(str(v) for v in all_video_ids)),
             point_count=total_point_count,
+            source_fingerprint=fingerprint,
         )
         session.add(standard)
         await session.flush()  # get standard.id
 
-        # --- Insert TechStandardPoints ---
         for sp in standard_points:
             point = TechStandardPoint(
                 standard_id=standard.id,
@@ -263,6 +315,7 @@ class TechStandardBuilder:
                 "point_count": total_point_count,
                 "dimension_count": len(standard_points),
                 "source_quality": source_quality,
+                "source_kb_version": active_kb.version,
             },
         )
 

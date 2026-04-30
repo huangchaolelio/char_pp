@@ -67,6 +67,8 @@ class TechStandard(Base):
     built_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
+    # Feature-019: FR-019 幂等检查指纹列（sha256 of valid expert_tech_points subset）
+    source_fingerprint: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # Relationships
     points: Mapped[List["TechStandardPoint"]] = relationship(

@@ -1,0 +1,154 @@
+openapi: 3.0.3
+info:
+  title: Feature-019 · KB Versions List
+  version: "1.0.0"
+  description: |
+    列表查询所有 KB 记录（每条 = 一个 `(tech_category, version)`），
+    支持按 tech_category / status / extraction_job_id 过滤 + 标准分页。
+    响应遵循章程 v1.4.0 统一信封：`SuccessEnvelope[list[KbVersionItem]] + PaginationMeta`。
+
+paths:
+  /api/v1/knowledge-base/versions:
+    get:
+      summary: 列表查询 KB 版本
+      operationId: list_kb_versions
+      parameters:
+        - in: query
+          name: tech_category
+          schema:
+            type: string
+          description: "精确匹配（21 类之一）。忽略大小写，服务端归一化为小写下划线。"
+        - in: query
+          name: status
+          schema:
+            type: string
+            enum: [draft, active, archived]
+          description: "精确匹配单一状态。"
+        - in: query
+          name: extraction_job_id
+          schema:
+            type: string
+            format: uuid
+          description: "精确匹配，定位一次提取作业产出的全部 KB 记录。"
+        - in: query
+          name: page
+          schema: { type: integer, minimum: 1, default: 1 }
+        - in: query
+          name: page_size
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SuccessEnvelopeListKb'
+              example:
+                success: true
+                data:
+                  - tech_category: forehand_attack
+                    version: 3
+                    status: active
+                    point_count: 12
+                    extraction_job_id: 8f4c8a3b-9a0e-4aef-9a3b-1a2d6c9e7f00
+                    approved_by: coach_zhang
+                    approved_at: "2026-04-30T15:13:34+08:00"
+                    created_at: "2026-04-30T14:59:01+08:00"
+                    notes: "正手攻球首版审核通过"
+                  - tech_category: backhand_topspin
+                    version: 1
+                    status: draft
+                    point_count: 8
+                    extraction_job_id: b2ef1e9f-4f7e-4e10-a9c2-77a6c2c8f991
+                    approved_by: null
+                    approved_at: null
+                    created_at: "2026-04-30T16:12:00+08:00"
+                    notes: null
+                meta:
+                  page: 1
+                  page_size: 20
+                  total: 42
+        '400':
+          description: 参数越界
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              examples:
+                page_size_too_large:
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_PAGE_SIZE
+                      message: "page_size 不得超过 100"
+                      details:
+                        field: page_size
+                        max: 100
+                        got: 500
+                invalid_enum:
+                  value:
+                    success: false
+                    error:
+                      code: INVALID_ENUM_VALUE
+                      message: "status 非法值"
+                      details:
+                        field: status
+                        allowed: [draft, active, archived]
+                        got: "pending"
+        '500':
+          description: 未预期异常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                error: { code: INTERNAL_ERROR, message: "内部服务器错误", details: null }
+
+components:
+  schemas:
+    KbVersionItem:
+      type: object
+      required: [tech_category, version, status, point_count, extraction_job_id, created_at]
+      properties:
+        tech_category: { type: string }
+        version: { type: integer, minimum: 1 }
+        status: { type: string, enum: [draft, active, archived] }
+        point_count: { type: integer, minimum: 0 }
+        extraction_job_id: { type: string, format: uuid }
+        approved_by: { type: string, nullable: true }
+        approved_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+        notes: { type: string, nullable: true }
+
+    PaginationMeta:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: { type: integer }
+        page_size: { type: integer }
+        total: { type: integer }
+
+    SuccessEnvelopeListKb:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          type: array
+          items: { $ref: '#/components/schemas/KbVersionItem' }
+        meta: { $ref: '#/components/schemas/PaginationMeta' }
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details:
+              type: object
+              additionalProperties: true
+              nullable: true

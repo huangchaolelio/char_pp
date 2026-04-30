@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Enum, Float, ForeignKey, Integer, String, TIMESTAMP
+from sqlalchemy import Boolean, Enum, Float, ForeignKey, ForeignKeyConstraint, Integer, String, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -49,11 +49,9 @@ class AthleteMotionAnalysis(Base):
     is_low_confidence: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False
     )
-    knowledge_base_version: Mapped[str] = mapped_column(
-        String(20),
-        ForeignKey("tech_knowledge_bases.version", ondelete="RESTRICT"),
-        nullable=False,
-    )
+    # Feature-019: 复合 FK
+    kb_tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_version: Mapped[int] = mapped_column(Integer, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
@@ -65,10 +63,19 @@ class AthleteMotionAnalysis(Base):
     )
     knowledge_base: Mapped["TechKnowledgeBase"] = relationship(  # noqa: F821
         "TechKnowledgeBase",
-        foreign_keys=[knowledge_base_version],
+        foreign_keys=[kb_tech_category, kb_version],
     )
     deviation_reports: Mapped[list["DeviationReport"]] = relationship(  # noqa: F821
         "DeviationReport",
         back_populates="analysis",
         cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_tech_category", "kb_version"],
+            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ondelete="RESTRICT",
+            name="fk_athlete_motion_analyses_kb",
+        ),
     )
