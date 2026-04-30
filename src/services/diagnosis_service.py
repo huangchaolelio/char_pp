@@ -380,15 +380,19 @@ class DiagnosisService:
         return video_path
 
     async def _download_from_cos(self, cos_path: str) -> str:
-        """Download a COS object to a temp file and return the local path."""
+        """Download a COS object to a temp file and return the local path.
+
+        URI 解析约定（与分类 / 预处理 / KB 提取通道保持一致）：
+          - 项目的 COS bucket 来自 ``.env::COS_BUCKET``（单租户），对象 key
+            本身的第一段（如 ``charhuang/``）属于 key，不是 S3 风格的 bucket。
+          - 输入允许两种等价形式：
+              * ``cos://charhuang/tt_video/foo.mp4`` — 仅剥 ``cos://`` scheme
+              * ``charhuang/tt_video/foo.mp4``     — 裸 key，直接下载
+            二者落到 ``download_to_temp`` 的 object key 完全相同。
+        """
         from src.services.cos_client import download_to_temp
 
-        # Strip cos:// prefix if present
-        object_key = cos_path
-        if cos_path.startswith("cos://"):
-            # cos://bucket/path/to/key → path/to/key
-            parts = cos_path[6:].split("/", 1)
-            object_key = parts[1] if len(parts) > 1 else parts[0]
+        object_key = cos_path[6:] if cos_path.startswith("cos://") else cos_path
 
         tmp_path = await asyncio.get_event_loop().run_in_executor(
             None, download_to_temp, object_key
@@ -404,8 +408,11 @@ class DiagnosisService:
         Returns empty dict if no valid segments found.
         """
         from src.services.pose_estimator import estimate_pose
-        from src.services.action_segmenter import segment_actions
-        from src.services.action_classifier import classify_segments
+        from src.services.action_segmenter import (
+            frames_for_segment,
+            segment_actions,
+        )
+        from src.services.action_classifier import classify_segment
         from src.services.tech_extractor import extract_tech_points
 
         # Run CPU-bound work in executor to not block event loop
@@ -418,16 +425,23 @@ class DiagnosisService:
             if not segments:
                 return {}
 
-            classified = classify_segments(segments, target_action=tech_category)
+            # v1 action_classifier 只提供单段 API ``classify_segment``；遍历并
+            # 过滤出目标 tech_category。未命中目标时沿用段序第一条作为兜底，
+            # 与 v1 "best effort" 语义一致。
+            classified_all = [
+                classify_segment(frames_for_segment(frame_results, seg), seg)
+                for seg in segments
+            ]
+            matched = [c for c in classified_all if c.action_type == tech_category]
+            classified = matched or classified_all
             if not classified:
                 return {}
 
-            # Take the first matching segment's extraction result
-            extraction_results = extract_tech_points(classified[:1], frame_results)
-            if not extraction_results:
+            # extract_tech_points 是单对象 API（ClassifiedSegment → ExtractionResult）
+            result = extract_tech_points(classified[0], frame_results)
+            if not result or not result.dimensions:
                 return {}
 
-            result = extraction_results[0]
             return {
                 dim.dimension: dim.param_ideal
                 for dim in result.dimensions
