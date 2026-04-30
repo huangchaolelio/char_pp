@@ -49,7 +49,7 @@
 - **错误响应统一**：服务层/路由层 MUST 抛 `AppException(ErrorCode.XXX)`；禁止直接抛 `HTTPException` 或返回错误字典
   - 422 `VALIDATION_FAILED` / 404 资源专属 code / 400 \| 409 状态冲突 / 503 队列容量 / 502 上游失败 / 500 `INTERNAL_ERROR`（含 `logging.exception`）
 - **错误码集中化**：`ErrorCode` 枚举 + `ERROR_STATUS_MAP` + `ERROR_DEFAULT_MESSAGE` 单一事实来源于 `src/api/errors.py`，新增必须同步 3 张表 + `contracts/error-codes.md`
-- **已下线接口**：保留哨兵路由返回 404 + `ENDPOINT_RETIRED`（`details.successor` + `migration_note`），禁止物理删除；台账登记于 `_retired.py::RETIREMENT_LEDGER` + `contracts/retirement-ledger.md`
+- **接口下线**：采用直接物理删除（路由代码 + 合约测试 + 契约文件一并删除），不保留哨兵路由或台账文件（章程 v2.0.0 原则 IV / 原则 IX）；下线迁移说明 SHOULD 记录在对应 Feature 的 `spec.md` 或 changelog 中
 - 新增/变更接口在 `contracts/` 下提供契约，并先于实现创建 `tests/contract/` 合约测试
 
 **业务流程对齐验证要点（原则 X，v1.5.0）**:

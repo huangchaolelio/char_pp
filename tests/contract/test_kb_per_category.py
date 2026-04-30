@@ -279,16 +279,3 @@ async def test_approve_missing_approved_by(app_kb: FastAPI) -> None:
         )
         assert resp.status_code == 422
         assert_error_envelope(resp.json(), code="VALIDATION_FAILED")
-
-
-@pytest.mark.asyncio
-async def test_approve_legacy_single_key_endpoint_retired(app_kb: FastAPI) -> None:
-    """T020 — 老路径必须返回 ENDPOINT_RETIRED 哨兵（章程原则 IX）."""
-    async with AsyncClient(transport=ASGITransport(app=app_kb), base_url="http://t") as c:
-        resp = await c.post(
-            "/api/v1/knowledge-base/1.2.3/approve",
-            json={"approved_by": "coach_zhang"},
-        )
-        assert resp.status_code == 404
-        err = assert_error_envelope(resp.json(), code="ENDPOINT_RETIRED")
-        assert "successor" in err.get("details", {})

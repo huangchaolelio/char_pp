@@ -17,7 +17,6 @@ from src.api.schemas.envelope import (
     ErrorBody,
     ErrorEnvelope,
     PaginationMeta,
-    RetiredErrorDetails,
     SuccessEnvelope,
     UpstreamErrorDetails,
     ValidationErrorDetails,
@@ -148,26 +147,8 @@ class TestConstructors:
             page([], page=1, page_size=999, total=0)
 
 
-# ── 专用 Details 子类 ──────────────────────────────────────────────────────
+# ── 专用 Details 子类 ────────────────────────────────────────────────────
 class TestDetailsSubclasses:
-    def test_retired_details_successor_str(self) -> None:
-        d = RetiredErrorDetails(successor="/api/v1/tasks/diagnosis", migration_note="同步→异步")
-        assert d.model_dump() == {
-            "successor": "/api/v1/tasks/diagnosis",
-            "migration_note": "同步→异步",
-        }
-
-    def test_retired_details_successor_list(self) -> None:
-        d = RetiredErrorDetails(
-            successor=["/api/v1/tasks/classification", "/api/v1/tasks/kb-extraction"],
-            migration_note=None,
-        )
-        assert isinstance(d.successor, list) and len(d.successor) == 2
-
-    def test_retired_details_requires_successor(self) -> None:
-        with pytest.raises(ValidationError):
-            RetiredErrorDetails()  # type: ignore[call-arg]
-
     def test_validation_details_all_optional(self) -> None:
         d = ValidationErrorDetails()
         assert d.model_dump(exclude_none=True) == {}

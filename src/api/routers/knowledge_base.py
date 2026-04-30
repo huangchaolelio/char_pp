@@ -5,9 +5,9 @@ Breaking changes vs Feature-014/017:
   - GET  /knowledge-base/versions/{tech_category}/{version}    — detail (composite key)
   - POST /knowledge-base/versions/{tech_category}/{version}/approve — approve
 
-老路径（单列 version 主键）均保留 **ENDPOINT_RETIRED 哨兵**（章程原则 IX）:
-  - POST /knowledge-base/{version}/approve        → ENDPOINT_RETIRED
-  - GET  /knowledge-base/{version}                → ENDPOINT_RETIRED
+老路径（单列 version 主键）已物理下线（章程 v2.0.0 原则 IX），调用旧
+路径的客户端将收到 FastAPI 默认 404 `NOT_FOUND`；迁移说明已在 Feature-019
+changelog 中声明。
 
 Feature-019 不再通过 ``?business_phase=`` 过滤（已不适用，KB 恒为 STANDARDIZATION）。
 """
@@ -176,35 +176,4 @@ async def approve_kb_version(
             previous_active_version=result["previous_active_version"],
             tips_updated=TipsUpdatedStats(**result["tips_updated"]),
         )
-    )
-
-
-# ── T020 / T027：老路径 ENDPOINT_RETIRED 哨兵（章程原则 IX 强制）──────────
-
-@router.post("/{version}/approve", include_in_schema=False)
-async def _retired_approve_single_key(version: str) -> None:
-    """老的单列 version 主键 approve 路径 → 返回 ENDPOINT_RETIRED."""
-    raise AppException(
-        ErrorCode.ENDPOINT_RETIRED,
-        details={
-            "successor": "/api/v1/knowledge-base/versions/{tech_category}/{version}/approve",
-            "migration_note": (
-                "Feature-019 将 KB 主键提升为 (tech_category, version) 复合键；"
-                "请使用新路径。"
-            ),
-        },
-    )
-
-
-@router.get("/{version}", include_in_schema=False)
-async def _retired_detail_single_key(version: str) -> None:
-    """老的单列 version 详情路径 → 返回 ENDPOINT_RETIRED."""
-    raise AppException(
-        ErrorCode.ENDPOINT_RETIRED,
-        details={
-            "successor": "/api/v1/knowledge-base/versions/{tech_category}/{version}",
-            "migration_note": (
-                "Feature-019 详情路径需同时指定 tech_category 与 version。"
-            ),
-        },
     )

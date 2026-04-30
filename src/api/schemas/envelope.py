@@ -59,16 +59,7 @@ class SuccessEnvelope(BaseModel, Generic[DataT]):
     meta: PaginationMeta | None = None
 
 
-# ── 错误详情（专用子类） ────────────────────────────────────────────────────
-class RetiredErrorDetails(BaseModel):
-    """``ENDPOINT_RETIRED`` 专用 details 结构."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    successor: str | list[str]
-    migration_note: str | None = None
-
-
+# ── 错误详情（专用子类） ──────────────────────────────────────────
 class ValidationErrorDetails(BaseModel):
     """``VALIDATION_FAILED`` / ``INVALID_PAGE_SIZE`` / ``INVALID_ENUM_VALUE`` 共用结构."""
 
@@ -98,7 +89,7 @@ class ErrorBody(BaseModel):
     code: str
     message: str
     # 不同错误码的 details 语义不同，此处接受任意 dict 或 None；
-    # 专用子类（RetiredErrorDetails 等）在抛 AppException 时通过 `.model_dump()` 传入
+    # 专用子类（ValidationErrorDetails / UpstreamErrorDetails）在抛 AppException 时通过 `.model_dump()` 传入
     details: dict[str, Any] | None = None
 
 
@@ -148,7 +139,6 @@ __all__ = [
     "SuccessEnvelope",
     "ErrorBody",
     "ErrorEnvelope",
-    "RetiredErrorDetails",
     "ValidationErrorDetails",
     "UpstreamErrorDetails",
     "ok",

@@ -42,10 +42,6 @@ class TestErrorCodeIntegrity:
         unknown = [k for k in ERROR_STATUS_MAP if not isinstance(k, ErrorCode)]
         assert unknown == []
 
-    def test_endpoint_retired_maps_to_404(self) -> None:
-        """澄清决策 Q3：下线接口返回 404 而非 410."""
-        assert ERROR_STATUS_MAP[ErrorCode.ENDPOINT_RETIRED] == HTTPStatus.NOT_FOUND
-
     def test_internal_error_maps_to_500(self) -> None:
         assert ERROR_STATUS_MAP[ErrorCode.INTERNAL_ERROR] == HTTPStatus.INTERNAL_SERVER_ERROR
 

@@ -32,15 +32,13 @@ logger = logging.getLogger(__name__)
 class ErrorCode(str, Enum):
     """API 统一错误码枚举. 每个值绑定一个默认 HTTP 状态（见 ERROR_STATUS_MAP）."""
 
-    # ── 通用（7） ─────────────────────────────────────────────────────────
+    # ── 通用（6） ────────────────────────────────────────────────────
     VALIDATION_FAILED = "VALIDATION_FAILED"
     INVALID_ENUM_VALUE = "INVALID_ENUM_VALUE"
     INVALID_PAGE_SIZE = "INVALID_PAGE_SIZE"
     INVALID_INPUT = "INVALID_INPUT"
     NOT_FOUND = "NOT_FOUND"
-    ENDPOINT_RETIRED = "ENDPOINT_RETIRED"
     INTERNAL_ERROR = "INTERNAL_ERROR"
-
     # ── 认证（2） ─────────────────────────────────────────────────────────
     ADMIN_TOKEN_NOT_CONFIGURED = "ADMIN_TOKEN_NOT_CONFIGURED"
     ADMIN_TOKEN_INVALID = "ADMIN_TOKEN_INVALID"
@@ -102,7 +100,6 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.INVALID_PAGE_SIZE: HTTPStatus.BAD_REQUEST,
     ErrorCode.INVALID_INPUT: HTTPStatus.BAD_REQUEST,
     ErrorCode.NOT_FOUND: HTTPStatus.NOT_FOUND,                     # 404
-    ErrorCode.ENDPOINT_RETIRED: HTTPStatus.NOT_FOUND,              # 404（澄清决策 Q3）
     ErrorCode.INTERNAL_ERROR: HTTPStatus.INTERNAL_SERVER_ERROR,    # 500
 
     # 认证
@@ -168,7 +165,6 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.INVALID_PAGE_SIZE: "page_size 超出允许范围",
     ErrorCode.INVALID_INPUT: "输入参数非法",
     ErrorCode.NOT_FOUND: "资源不存在",
-    ErrorCode.ENDPOINT_RETIRED: "该接口已下线，请调用替代接口",
     ErrorCode.INTERNAL_ERROR: "服务器内部错误，请稍后重试",
 
     # 认证
@@ -233,7 +229,7 @@ class AppException(Exception):
     Args:
         code: 必填，来自 :class:`ErrorCode` 的枚举值
         message: 可选，覆盖 ``ERROR_DEFAULT_MESSAGE.get(code)`` 的默认消息
-        details: 可选，结构化上下文（RetiredErrorDetails / ValidationErrorDetails 等 dump 后的 dict）
+        details: 可选，结构化上下文（ValidationErrorDetails / UpstreamErrorDetails 等 dump 后的 dict）
     """
 
     def __init__(

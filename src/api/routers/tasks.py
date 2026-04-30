@@ -1,7 +1,7 @@
 """Tasks router — full endpoint implementations (T025–T027, T030, T036–T037, T041).
 
-Feature-017: expert-video / athlete-video 端点已物理下线（见 _retired.py 台账），
-替代为 /api/v1/tasks/classification、/api/v1/tasks/kb-extraction（原 expert-video）
+Feature-017: expert-video / athlete-video 端点已物理下线，替代为
+/api/v1/tasks/classification、/api/v1/tasks/kb-extraction（原 expert-video）
 与 /api/v1/tasks/diagnosis（原 athlete-video）。
 
 Feature 012: GET /tasks list endpoint with pagination, filtering and sorting.

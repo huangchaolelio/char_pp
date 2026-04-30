@@ -8,16 +8,13 @@ from fastapi import FastAPI, Request
 
 from src.api.errors import register_exception_handlers
 from src.api.routers import knowledge_base, tasks
-from src.api.routers._retired import build_retired_router
 from src.api.routers.calibration import router as calibration_router
 from src.api.routers.classifications import router as classifications_router
 from src.api.routers.coaches import router as coaches_router
-# Feature-017: videos.py 已物理下线 —— 全部 4 条 /videos/classifications* 端点
-#   并入 classifications.py，旧路径由 _retired.py 哨兵路由接管（返回 404+ENDPOINT_RETIRED）
+# Feature-017: videos.py 已下线 —— /videos/classifications* 端点并入 classifications.py
 from src.api.routers.teaching_tips import router as teaching_tips_router
 from src.api.routers.standards import router as standards_router
-# Feature-017: diagnosis.py 已物理下线 —— 同步 POST /diagnosis 端点并入
-#   异步 /api/v1/tasks/diagnosis，旧路径由 _retired.py 哨兵路由接管
+# Feature-017: diagnosis.py 已下线 —— 同步 POST /diagnosis 端点并入异步 /api/v1/tasks/diagnosis
 from src.api.routers.admin import router as admin_router
 from src.api.routers.task_channels import router as task_channels_router
 from src.api.routers.extraction_jobs import router as extraction_jobs_router
@@ -94,13 +91,6 @@ def create_app() -> FastAPI:
     app.include_router(video_preprocessing_router, prefix="/api/v1")
     # Feature-018 — 三阶段业务总览接口（US1）
     app.include_router(business_workflow_router, prefix="/api/v1")
-
-    # ── Feature-017 哨兵路由（已下线接口）────────────────────────────────
-    # 注意：build_retired_router() 返回的 router 其 path 本身已含 /api/v1 前缀，
-    # 因此挂载时必须使用空 prefix（否则会变成 /api/v1/api/v1/... 双重前缀）。
-    # 必须在所有业务 router 注册之后挂载，以确保已下线路径不会拦截尚存的同名路径
-    # （FastAPI 按注册顺序匹配）。
-    app.include_router(build_retired_router())
 
     @app.get("/health")
     async def health():

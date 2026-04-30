@@ -61,7 +61,7 @@
 │    standards  teaching-tips  calibration          │
 │    extraction-jobs  task-channels  admin          │
 │    video-preprocessing  business-workflow         │
-│    _retired（哨兵：7 条已下线接口 → 404 ENDPOINT_RETIRED）│└────────────┬──────────────────┬───────────────────┘
+└────────────┬──────────────────┬───────────────────┘
              │ asyncpg           │ Celery send_task
 ┌────────────▼──────┐  ┌────────▼─────────────────┐
 │    PostgreSQL      │  │   Redis (Broker)          │
@@ -195,12 +195,14 @@ pending → processing → success
 
 ## API 接口层
 
-> **Feature-017 已全面规范化（章程 v1.4.0 原则 IX）**：所有 `/api/v1/**` 接口统一使用
-> `SuccessEnvelope` / `ErrorEnvelope` 响应信封、集中化错误码（39 个 ErrorCode 枚举）、
-> 统一分页参数（`page`/`page_size`）、枚举归一化、7 条已下线接口的哨兵路由。
+> **Feature-017 已全面规范化（章程 v2.0.0 原则 IX）**：所有 `/api/v1/**` 接口统一使用
+> `SuccessEnvelope` / `ErrorEnvelope` 响应信封、集中化错误码（38 个 ErrorCode 枚举）、
+> 统一分页参数（`page`/`page_size`）、枚举归一化。接口下线采用**直接物理删除**策略
+> （章程 v2.0.0 原则 IV + IX）——老路径不再保留哨兵路由，客户端调用老路径直接收到
+> FastAPI 默认 404 `NOT_FOUND`。
 > 详见 `docs/api-standardization-guide.md` 与 `specs/017-api-standardization/contracts/`。
 
-### 路由模块（Feature-017 后的保留清单，11 个业务路由 + 1 个哨兵）
+### 路由模块（Feature-017 后的保留清单，12 个业务路由）
 
 | 前缀 | 文件 | 主要功能 |
 |------|------|---------|
@@ -216,10 +218,8 @@ pending → processing → success
 | `/api/v1/admin/...` | `admin.py` | 通道热更新 + 管道重置（Feature-013）+ **优化杠杆台账 `GET /admin/levers`（Feature-018 US3）** |
 | `/api/v1/video-preprocessing` | `video_preprocessing.py` | 预处理作业分页列表 + 单条审计详情（Feature-016） |
 | `/api/v1/business-workflow` | `business_workflow.py` | **业务阶段总览 `GET /business-workflow/overview`（Feature-018 US1，三阶段 × 八步骤计数/耗时/吞吐）** |
-| `—（哨兵）` | `_retired.py` | 7 条已下线接口的 `ENDPOINT_RETIRED` 哨兵路由 |
 
-**已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。
-详见 `specs/017-api-standardization/contracts/retirement-ledger.md`。
+**已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。下线采用直接物理删除策略（章程 v2.0.0 原则 IV + IX），不保留哨兵路由或台账文件。
 
 ### 响应信封（Feature-017 强制）
 
@@ -256,13 +256,13 @@ pending → processing → success
 
 失败统一抛 `AppException(INVALID_ENUM_VALUE)`，`details` 含 `field` / `value` / `allowed` 三元组。
 
-### 错误码集中化（39 个 ErrorCode 枚举）
+### 错误码集中化（38 个 ErrorCode 枚举）
 
 定义位置：`src/api/errors.py::ErrorCode`，按以下分组：
 
 | 分组 | 数量 | 示例 |
 |------|------|------|
-| 通用 | 7 | `VALIDATION_FAILED` / `NOT_FOUND` / `INTERNAL_ERROR` / `ENDPOINT_RETIRED` |
+| 通用 | 6 | `VALIDATION_FAILED` / `NOT_FOUND` / `INTERNAL_ERROR` |
 | 认证 | 2 | `ADMIN_TOKEN_INVALID` |
 | 资源不存在 | 6 | `TASK_NOT_FOUND` / `COACH_NOT_FOUND` / `TIP_NOT_FOUND` |
 | 状态/业务约束 | 18 | `TASK_NOT_READY` / `COACH_INACTIVE` / `KB_VERSION_NOT_DRAFT` |

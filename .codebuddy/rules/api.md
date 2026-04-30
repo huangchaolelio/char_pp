@@ -3,7 +3,7 @@ alwaysApply: false
 paths: src/api/**/*.py
 ---
 
-# API 设计规范（对齐章程 v1.4.0 / Feature-017）
+# API 设计规范（对齐章程 v2.0.0 / Feature-017）
 
 ## 基础约定
 
@@ -14,7 +14,7 @@ paths: src/api/**/*.py
 - 分页参数统一：`page`（从 1 开始，默认 1）+ `page_size`（默认 20，最大 100）；越界返回 400 + `INVALID_PAGE_SIZE`，禁止静默截断；禁止 `limit`/`offset`/`skip`/`take`
 - 枚举型查询参数（如 `tech_category`、`status`、`task_type`）在服务端统一按小写下划线归一化；非法值返回 400 + `INVALID_ENUM_VALUE`，`details` 含合法取值列表
 
-## 响应体统一信封（v1.4.0 强制）
+## 响应体统一信封（v2.0.0 强制）
 
 所有 `/api/v1/**` 接口的响应体必须匹配下列两种互斥信封之一，顶层 `success` 布尔位作为判别式。禁止裸对象 / 裸数组 / 其他形态。
 
@@ -50,7 +50,7 @@ paths: src/api/**/*.py
 - 非分页接口用 `ok(data)` 构造器，分页接口用 `page(items, page=, page_size=, total=)` 构造器
 - 禁止路由层手写 `return {"success": True, "data": ...}` 字典
 
-## 错误响应（v1.4.0 强制）
+## 错误响应（v2.0.0 强制）
 
 服务层与路由层统一抛 `AppException(code, message=None, details=None)`（定义于 `src/api/errors.py`），由全局异常处理器转为上述错误信封。**禁止直接抛 `HTTPException` 或返回错误字典**。
 
@@ -63,20 +63,17 @@ paths: src/api/**/*.py
 | 业务状态/约束冲突 | 400 \| 409 | 场景专属（`COACH_INACTIVE` / `KB_VERSION_NOT_DRAFT` / …） |
 | 通道容量 / 禁用 | 503 | `CHANNEL_QUEUE_FULL` / `CHANNEL_DISABLED` |
 | 上游依赖失败 | 502 | `LLM_/COS_/DB_/WHISPER_UPSTREAM_FAILED` |
-| 已下线接口 | 404 | `ENDPOINT_RETIRED`（见下） |
-| 未预期异常 | 500 | `INTERNAL_ERROR`（含 `logging.exception`，不泄露栈） |
+| 未预期异常 | 500 | `INTERNAL_ERROR`（含 `logging.exception`，不泄露栈）|
 
-**错误码集中化**：`ErrorCode` 枚举 + `ERROR_STATUS_MAP`（code→HTTP）+ `ERROR_DEFAULT_MESSAGE`（code→默认消息）统一定义于 `src/api/errors.py`，作为单一事实来源。禁止在业务代码中使用裸字符串错误码（CI 扫描阻断）。
+**错误码集中化**：`ErrorCode` 枚举 + `ERROR_STATUS_MAP`（code→HTTP）+ `ERROR_DEFAULT_MESSAGE`（code→默认消息）统一定义于 `src/api/errors.py`，作为单一事实来源。禁止在业务代码中使用裸字符串错误码（CI 扫描阻断）。已发布的错误码禁止改名或更换 HTTP 状态（只允许新增）。
 
-## 已下线接口哨兵路由
+## 接口下线
 
-接口下线必须保留哨兵路由（方法+路径不变），统一抛 `AppException(ENDPOINT_RETIRED, details={"successor": "/api/v1/...", "migration_note": "..."})`，禁止物理删除路由文件条目。下线台账双份维护：
+接口下线采用**直接物理删除**策略（章程 v2.0.0 原则 IV + IX）：
 
-- 代码侧：`src/api/routers/_retired.py::RETIREMENT_LEDGER`
-- 文档侧：`specs/<feature>/contracts/retirement-ledger.md`
-
-台账条目只可追加，不可删除；已发布的错误码禁止改名或更换 HTTP 状态（只允许新增）。
-
+- 直接删除路由代码、契约文件与合约测试，不保留哨兵路由或台账文件
+- 客户端调用已下线路径将收到 FastAPI 默认 404 `NOT_FOUND`
+- 迁移说明在 Feature changelog / `spec.md`「业务阶段映射」中一次性简述替代路径
 ## 分层职责
 
 - 路由层（`src/api/routers/`）只做参数校验 + 响应组装；业务逻辑一律归 `src/services/`
@@ -95,4 +92,4 @@ paths: src/api/**/*.py
 | `calibration.py` | `/api/v1/calibration` | 多教练知识库对比（Feature-006） |
 | `extraction_jobs.py` | `/api/v1/extraction-jobs` | KB 提取作业 DAG 状态查询与重跑（Feature-014） |
 
-> **已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步诊断通道）。详见 `specs/017-api-standardization/contracts/retirement-ledger.md`。
+> **已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步诊断通道）；下线采用直接物理删除策略（v2.0.0），不保留哨兵路由。
