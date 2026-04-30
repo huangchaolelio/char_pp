@@ -160,7 +160,7 @@ class TaskChannelService:
     ) -> list[ChannelLiveSnapshot]:
         """Snapshot for every known channel.
 
-        Order: classification → kb → diagnosis → preprocessing (Feature-016).
+        Order: classification → kb → diagnosis → preprocessing → athlete_classification → athlete_preprocessing.
         """
         return [
             await self.get_snapshot(session, tt)
@@ -169,6 +169,8 @@ class TaskChannelService:
                 TaskType.kb_extraction,
                 TaskType.athlete_diagnosis,
                 TaskType.video_preprocessing,
+                TaskType.athlete_video_classification,
+                TaskType.athlete_video_preprocessing,
             )
         ]
 

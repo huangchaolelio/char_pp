@@ -80,7 +80,7 @@ async def list_channels(
 async def get_channel(
     task_type: str = Path(
         ...,
-        description="video_classification | kb_extraction | athlete_diagnosis",
+        description="video_classification | kb_extraction | athlete_diagnosis | video_preprocessing | athlete_video_classification | athlete_video_preprocessing",
     ),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[ChannelSnapshot]:
