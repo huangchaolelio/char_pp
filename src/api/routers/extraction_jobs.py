@@ -31,6 +31,7 @@ from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.extraction_job import (
     ExtractionJobDetail,
     ExtractionJobSummary,
+    OutputKbRef,
     PipelineStepResponse,
     ProgressResponse,
     RerunRequest,
@@ -40,6 +41,7 @@ from src.db.session import get_db
 from src.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from src.models.kb_conflict import KbConflict
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus
+from src.services import knowledge_base_svc
 from src.services.kb_extraction_pipeline.pipeline_definition import DEPENDENCIES
 
 logger = logging.getLogger(__name__)
@@ -133,6 +135,18 @@ async def get_extraction_job(
     progress = _progress_from_steps(list(steps))
     conflict_count = await _conflict_count(db, job_id)
 
+    # Feature-019 US5 — 本作业产出的 KB 回溯（复合主键）
+    output_kbs_orm = await knowledge_base_svc.list_kbs_for_extraction_job(db, job_id)
+    output_kbs = [
+        OutputKbRef(
+            tech_category=kb.tech_category,
+            version=kb.version,
+            status=kb.status.value,
+            created_at=kb.created_at,
+        )
+        for kb in output_kbs_orm
+    ]
+
     return ok(ExtractionJobDetail(
         job_id=job.id,
         analysis_task_id=job.analysis_task_id,
@@ -152,6 +166,7 @@ async def get_extraction_job(
         steps=[_step_to_response(s) for s in steps],
         progress=progress,
         conflict_count=conflict_count,
+        output_kbs=output_kbs,
     ))
 
 

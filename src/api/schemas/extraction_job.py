@@ -34,6 +34,22 @@ class PipelineStepResponse(BaseModel):
     )
 
 
+# ── Feature-019 US5：按作业反查产出的 KB 列表 ────────────────────────────
+
+class OutputKbRef(BaseModel):
+    """Feature-019 US5 — extraction-job 详情响应中引用其产出的 KB。
+
+    对齐 contracts/extraction-job-detail.yaml::OutputKbRef.
+    """
+
+    model_config = ConfigDict(from_attributes=True)
+
+    tech_category: str = Field(..., description="Feature-019 复合主键的类别维度")
+    version: int = Field(..., ge=1, description="Feature-019 复合主键的 per-category 版本号")
+    status: str = Field(..., description="draft | active | archived")
+    created_at: datetime
+
+
 # ── Job progress ────────────────────────────────────────────────────────────
 
 class ProgressResponse(BaseModel):
@@ -87,6 +103,11 @@ class ExtractionJobDetail(BaseModel):
     steps: list[PipelineStepResponse]
     progress: ProgressResponse
     conflict_count: int = 0
+    # Feature-019 US5：本作业产出的全部 KB（按复合主键回溯）
+    output_kbs: list[OutputKbRef] = Field(
+        default_factory=list,
+        description="Feature-019 US5: extraction_job 产出的 KB 列表（per-(tech_category,version)）",
+    )
 
 
 # ── Rerun ───────────────────────────────────────────────────────────────────
