@@ -36,6 +36,7 @@
 - ✅ 涉及 AI 模型的功能满足原则 VI(AI 模型治理)
 - ✅ 涉及用户数据的功能满足原则 VII(隐私与安全)
 - ✅ API 接口设计符合原则 IX(接口规范统一)
+- ✅ 功能与业务流程对齐符合原则 X(spec.md 含「业务阶段映射」；队列/状态机/错误码等章程级约束变化已双向同步 `docs/business-workflow.md`；优化活动命中 § 9 三种杠杆之一；高风险操作引用 § 10 回滚剧本)
 
 **API 接口规范验证要点（原则 IX，v1.4.0 统一信封）**:
 - 版本前缀统一使用 `/api/v1/`
@@ -50,6 +51,19 @@
 - **错误码集中化**：`ErrorCode` 枚举 + `ERROR_STATUS_MAP` + `ERROR_DEFAULT_MESSAGE` 单一事实来源于 `src/api/errors.py`，新增必须同步 3 张表 + `contracts/error-codes.md`
 - **已下线接口**：保留哨兵路由返回 404 + `ENDPOINT_RETIRED`（`details.successor` + `migration_note`），禁止物理删除；台账登记于 `_retired.py::RETIREMENT_LEDGER` + `contracts/retirement-ledger.md`
 - 新增/变更接口在 `contracts/` 下提供契约，并先于实现创建 `tests/contract/` 合约测试
+
+**业务流程对齐验证要点（原则 X，v1.5.0）**:
+- **权威参考**: `docs/business-workflow.md` 为业务执行流程唯一权威参考，三阶段 TRAINING / STANDARDIZATION / INFERENCE 八步骤为硬约束
+- **spec.md 必须声明**: 「业务阶段映射」小段——所属阶段、所属步骤（八步骤之一或新扩展的步骤）、DoD 引用（§ 2 阶段判据表对应行）、可观测锚点（§ 7 对应子节）
+- **章程级约束双向同步**: 以下变更 MUST 同步更新 `docs/business-workflow.md` 对应章节，否则 PR 视为违规
+  - Celery 队列拓扑（新增/删除队列、worker 并发默认值）→ § 3.1 / § 5.1 / § 7 表格
+  - 状态机枚举（`analysis_tasks.status` / `tech_knowledge_bases.status` / `pipeline_steps.status`）→ § 2 DoD / § 4.3 状态机
+  - 结构化错误码前缀（`src/services/**/error_codes.py`）→ § 7.4 错误码表
+  - 诊断评分公式（`diagnosis_scorer` 阈值/分段）→ § 5.3
+  - 章程级约束（单 active、冲突门控）→ § 4.2
+- **优化活动必须命中三种杠杆**: 性能优化（时效性 / 准确性 / 成本）MUST 显式选择 § 9 定义的三种杠杆之一——运行时参数（如 `task_channel_configs` 热配置）/ 算法与模型 / 规则与 Prompt；跨杠杆组合或新增第四类杠杆 MUST 先扩展 § 9 并获批
+- **高风险操作引用回滚剧本**: 涉及 KB 版本激活、状态机切换、通道熔断等不可逆操作的 Feature MUST 在 `plan.md` 引用 § 10 回滚剧本或新增剧本；无回滚路径不得进入实现
+- **spec.md 缺失「业务阶段映射」视为不完整**: MUST NOT 进入 `/speckit.plan` 阶段
 
 任何违规 MUST 在继续之前记录并获批。
 

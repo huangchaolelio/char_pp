@@ -100,6 +100,20 @@
 - **[实体 1]**: [它代表什么, 关键属性(不含实现细节)]
 - **[实体 2]**: [它代表什么, 与其他实体的关系]
 
+### 业务阶段映射 *(必填 - 原则 X / 章程 v1.5.0)*
+
+<!--
+  需要操作: 本节为章程原则 X 强制产物, 缺失视为规范不完整, 不得进入 /speckit.plan 阶段.
+  权威参考: docs/business-workflow.md（三阶段 TRAINING / STANDARDIZATION / INFERENCE 八步骤）
+-->
+
+- **所属阶段**: [`TRAINING` / `STANDARDIZATION` / `INFERENCE` 三选一；跨阶段功能 MUST 拆成多个独立用户故事分别声明]
+- **所属步骤**: [business-workflow.md § 3–§ 5 八步骤之一，如 `extract_kb` / `diagnose_athlete`；新增步骤 MUST 先扩展 business-workflow.md 后再声明]
+- **DoD 引用**: [business-workflow.md § 2 阶段判据表对应行，作为本功能的完成判定条件]
+- **可观测锚点**: [business-workflow.md § 7 对应子节（§ 7.1 任务级 / § 7.2 步骤级 / § 7.3 诊断级），声明本功能需要落地的日志、指标、状态表]
+- **章程级约束影响**: [若涉及队列拓扑 / 状态机枚举 / 错误码前缀 / 评分公式 / 单 active 或冲突门控 变化，列出需要同步修改 business-workflow.md 的具体章节；无影响则填「无」]
+- **回滚剧本**: [high-risk 功能（KB 版本激活、状态机切换、通道熔断等）MUST 引用 business-workflow.md § 10 现有剧本或提出新剧本；low-risk 功能可填「无需回滚」并说明理由]
+
 ## 成功标准 *(必填)*
 
 <!--
