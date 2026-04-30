@@ -1,0 +1,242 @@
+openapi: 3.1.0
+info:
+  title: Feature-018 — Business Workflow Overview
+  version: 1.0.0
+  description: |
+    按三阶段八步骤聚合的业务总览只读接口。响应体按 `analysis_tasks` 行数分两档：
+    - ≤ 100 万行：完整响应（含 p50_seconds / p95_seconds）
+    - (100 万, 1000 万] 行：自动降级响应（省略耗时百分位，meta.degraded=true）
+    - > 1000 万行：超出本 Feature 范围（由后续物化视图 Feature 承担）
+
+paths:
+  /api/v1/business-workflow/overview:
+    get:
+      summary: 三阶段八步骤业务总览
+      tags: [business-workflow]
+      security: []  # 无鉴权（与 /api/v1/task-channels 一致）
+      parameters:
+        - name: window_hours
+          in: query
+          required: false
+          description: 聚合窗口（小时），默认 24，允许 1–168；越界 400
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 168
+            default: 24
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope_WorkflowOverviewSnapshot"
+              examples:
+                full:
+                  summary: 完整档（≤ 100 万行）
+                  value:
+                    success: true
+                    data:
+                      TRAINING:
+                        phase: TRAINING
+                        steps:
+                          scan_cos_videos:
+                            step: scan_cos_videos
+                            pending: 0
+                            processing: 1
+                            success: 12
+                            failed: 0
+                            recent_24h_completed: 12
+                            p50_seconds: 3.2
+                            p95_seconds: 9.8
+                          preprocess_video:
+                            step: preprocess_video
+                            pending: 0
+                            processing: 3
+                            success: 28
+                            failed: 1
+                            recent_24h_completed: 28
+                            p50_seconds: 45.1
+                            p95_seconds: 182.6
+                          classify_video:
+                            step: classify_video
+                            pending: 0
+                            processing: 0
+                            success: 21
+                            failed: 0
+                            recent_24h_completed: 21
+                            p50_seconds: 1.8
+                            p95_seconds: 3.1
+                          extract_kb:
+                            step: extract_kb
+                            pending: 0
+                            processing: 2
+                            success: 15
+                            failed: 2
+                            recent_24h_completed: 15
+                            p50_seconds: 320.5
+                            p95_seconds: 890.2
+                      STANDARDIZATION:
+                        phase: STANDARDIZATION
+                        steps:
+                          review_conflicts:
+                            step: review_conflicts
+                            pending: 0
+                            processing: 0
+                            success: 2
+                            failed: 0
+                            recent_24h_completed: 2
+                            p50_seconds: 120.0
+                            p95_seconds: 240.0
+                          kb_version_activate:
+                            step: kb_version_activate
+                            pending: 0
+                            processing: 0
+                            success: 1
+                            failed: 0
+                            recent_24h_completed: 1
+                            p50_seconds: 0.3
+                            p95_seconds: 0.5
+                          build_standards:
+                            step: build_standards
+                            pending: 0
+                            processing: 0
+                            success: 0
+                            failed: 0
+                            recent_24h_completed: 0
+                            p50_seconds: null
+                            p95_seconds: null
+                      INFERENCE:
+                        phase: INFERENCE
+                        steps:
+                          diagnose_athlete:
+                            step: diagnose_athlete
+                            pending: 1
+                            processing: 2
+                            success: 8
+                            failed: 0
+                            recent_24h_completed: 8
+                            p50_seconds: 45.2
+                            p95_seconds: 92.1
+                    meta:
+                      generated_at: "2026-04-30T12:51:20+08:00"
+                      window_hours: 24
+                      degraded: false
+                degraded:
+                  summary: 降级档（(100 万, 1000 万]）
+                  value:
+                    success: true
+                    data:
+                      TRAINING:
+                        phase: TRAINING
+                        steps:
+                          extract_kb:
+                            step: extract_kb
+                            pending: 12
+                            processing: 5
+                            success: 2480
+                            failed: 18
+                            recent_24h_completed: 2480
+                            # p50_seconds / p95_seconds 省略（降级档）
+                      # STANDARDIZATION / INFERENCE 省略省略示例...
+                    meta:
+                      generated_at: "2026-04-30T12:51:20+08:00"
+                      window_hours: 24
+                      degraded: true
+                      degraded_reason: "row_count_exceeds_latency_budget"
+        "400":
+          description: window_hours 越界
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: INVALID_ENUM_VALUE
+                  message: "window_hours 超出 [1, 168] 范围"
+                  details:
+                    field: window_hours
+                    value: 200
+                    allowed: ["1..168"]
+
+components:
+  schemas:
+    SuccessEnvelope_WorkflowOverviewSnapshot:
+      type: object
+      required: [success, data, meta]
+      additionalProperties: false
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          $ref: "#/components/schemas/WorkflowOverviewSnapshot"
+        meta:
+          $ref: "#/components/schemas/WorkflowOverviewMeta"
+    WorkflowOverviewMeta:
+      type: object
+      required: [generated_at, window_hours, degraded]
+      additionalProperties: false
+      properties:
+        generated_at: { type: string, format: date-time }
+        window_hours: { type: integer, minimum: 1, maximum: 168 }
+        degraded: { type: boolean }
+        degraded_reason:
+          type: string
+          enum: [row_count_exceeds_latency_budget]
+          nullable: true
+    WorkflowOverviewSnapshot:
+      type: object
+      required: [TRAINING, STANDARDIZATION, INFERENCE]
+      additionalProperties: false
+      properties:
+        TRAINING: { $ref: "#/components/schemas/PhaseSnapshot" }
+        STANDARDIZATION: { $ref: "#/components/schemas/PhaseSnapshot" }
+        INFERENCE: { $ref: "#/components/schemas/PhaseSnapshot" }
+    PhaseSnapshot:
+      type: object
+      required: [phase, steps]
+      additionalProperties: false
+      properties:
+        phase:
+          type: string
+          enum: [TRAINING, STANDARDIZATION, INFERENCE]
+        steps:
+          type: object
+          additionalProperties: { $ref: "#/components/schemas/StepSnapshot" }
+    StepSnapshot:
+      type: object
+      required: [step, pending, processing, success, failed, recent_24h_completed]
+      additionalProperties: false
+      properties:
+        step:
+          type: string
+          enum:
+            - scan_cos_videos
+            - preprocess_video
+            - classify_video
+            - extract_kb
+            - review_conflicts
+            - kb_version_activate
+            - build_standards
+            - diagnose_athlete
+        pending: { type: integer, minimum: 0 }
+        processing: { type: integer, minimum: 0 }
+        success: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        recent_24h_completed: { type: integer, minimum: 0 }
+        p50_seconds: { type: number, nullable: true }
+        p95_seconds: { type: number, nullable: true }
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      additionalProperties: false
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          additionalProperties: false
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, nullable: true }
