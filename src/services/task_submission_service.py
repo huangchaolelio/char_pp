@@ -56,6 +56,29 @@ class ChannelDisabledError(ValueError):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Feature-019 兼容层：对外仍用 "tech_category/version" 字符串，内部落库拆新列
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _split_kb_version(value: str | None) -> tuple[str | None, int | None]:
+    """Parse legacy ``"tech_category/version"`` into ``(kb_tech_category, kb_version)``.
+
+    对齐 ``AnalysisTask.knowledge_base_version`` property getter 的拼接格式
+    （``f"{kb_tech_category}/{kb_version}"``）。无法解析时返回 ``(None, None)``，
+    由上层决定是否拒绝（当前 diagnosis 通道允许不 pin 版本）。
+    """
+    if not value:
+        return None, None
+    head, _, tail = value.partition("/")
+    if not head or not tail:
+        return None, None
+    try:
+        return head, int(tail)
+    except ValueError:
+        return None, None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # DTOs
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -229,6 +252,7 @@ class TaskSubmissionService:
 
             # Insert the row; partial unique index catches a race.
             new_id = uuid4()
+            kb_tc, kb_ver = _split_kb_version(item.knowledge_base_version)
             row = AnalysisTask(
                 id=new_id,
                 task_type=task_type,
@@ -241,7 +265,9 @@ class TaskSubmissionService:
                 cos_object_key=item.cos_object_key,
                 submitted_via=submitted_via,
                 coach_id=item.coach_id,
-                knowledge_base_version=item.knowledge_base_version,
+                # Feature-019: 直接写新复合列，``knowledge_base_version`` 已是只读 property
+                kb_tech_category=kb_tc,
+                kb_version=kb_ver,
                 created_at=now,
             )
             session.add(row)
