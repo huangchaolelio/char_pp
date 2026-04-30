@@ -11,7 +11,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Enum, ForeignKey, String, Text, TIMESTAMP
+from sqlalchemy import Enum, ForeignKey, ForeignKeyConstraint, Integer, String, Text, TIMESTAMP
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
@@ -47,12 +47,9 @@ class SkillExecution(Base):
     )
     # Snapshot of skill config at execution time — used for reproducibility
     skill_config_snapshot: Mapped[dict] = mapped_column(JSONB(), nullable=False)
-    # FK to the KB version used during this execution
-    kb_version: Mapped[Optional[str]] = mapped_column(
-        String(20),
-        ForeignKey("tech_knowledge_bases.version", ondelete="SET NULL"),
-        nullable=True,
-    )
+    # Feature-019: 复合 FK → (tech_knowledge_bases.tech_category, version)
+    kb_tech_category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    kb_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     approved_by: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
@@ -79,4 +76,13 @@ class SkillExecution(Base):
         back_populates="execution",
         uselist=False,
         cascade="all, delete-orphan",
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_tech_category", "kb_version"],
+            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ondelete="SET NULL",
+            name="fk_skill_executions_kb",
+        ),
     )

@@ -1,198 +1,210 @@
-"""Knowledge base router — US1 implementations (T028–T029).
+"""Knowledge base router — Feature-019 per-category lifecycle.
 
-Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException``
-改为 ``AppException``（章程 v1.4.0 原则 IX）。原 ``KnowledgeBaseVersionsResponse``
-（``{versions: [...]}`` 包装）由 ``SuccessEnvelope[list[KnowledgeBaseVersionItem]]`` 替代。
+Breaking changes vs Feature-014/017:
+  - GET  /knowledge-base/versions                              — list + filter + paginate
+  - GET  /knowledge-base/versions/{tech_category}/{version}    — detail (composite key)
+  - POST /knowledge-base/versions/{tech_category}/{version}/approve — approve
+
+老路径（单列 version 主键）均保留 **ENDPOINT_RETIRED 哨兵**（章程原则 IX）:
+  - POST /knowledge-base/{version}/approve        → ENDPOINT_RETIRED
+  - GET  /knowledge-base/{version}                → ENDPOINT_RETIRED
+
+Feature-019 不再通过 ``?business_phase=`` 过滤（已不适用，KB 恒为 STANDARDIZATION）。
 """
 
 from __future__ import annotations
 
+import uuid
+
 from fastapi import APIRouter, Depends, Query
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
 from src.api.schemas.envelope import SuccessEnvelope, ok, page as page_envelope
 from src.api.schemas.knowledge_base import (
-    ApproveRequest,
-    ApproveResponse,
-    KnowledgeBaseDetailResponse,
-    KnowledgeBaseVersionItem,
-    TechPointDetail,
+    ApproveKbRequest,
+    ApproveKbResponse,
+    DimensionsSummary,
+    KbVersionDetail,
+    KbVersionItem,
+    TipsUpdatedStats,
 )
 from src.db.session import get_db
-from src.models.extraction_job import ExtractionJob
+from src.models.tech_knowledge_base import KBStatus
 from src.services import knowledge_base_svc
-from src.services.knowledge_base_svc import (
-    ConflictUnresolvedError,
-    VersionNotDraftError,
-    VersionNotFoundError,
-)
 
-router = APIRouter(tags=["knowledge-base"])
+router = APIRouter(prefix="/knowledge-base", tags=["knowledge-base"])
 
 
-# ── GET /knowledge-base/versions ─────────────────────────────────────────────
+# ── Helpers ────────────────────────────────────────────────────────────────
 
-@router.get(
-    "/knowledge-base/versions",
-    response_model=SuccessEnvelope[list[KnowledgeBaseVersionItem]],
-)
-async def list_kb_versions(
-    page_num: int = Query(1, ge=1, alias="page"),
-    page_size: int = Query(20, ge=1, le=100),
-    business_phase: str | None = Query(
-        None,
-        description="Feature-018: 按业务阶段过滤（knowledge_base 恒为 STANDARDIZATION）",
-    ),
-    db: AsyncSession = Depends(get_db),
-) -> SuccessEnvelope[list[KnowledgeBaseVersionItem]]:
-    """List all knowledge base versions, newest first.
-
-    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）。
-    知识库版本数量通常较少，服务层 ``list_versions`` 返回全量后路由层切片。
-    """
-    # Feature-018: knowledge_base 恒为 STANDARDIZATION 阶段；仅做参数一致性校验
-    from src.api.phase_params import parse_business_phase
-    from src.models.analysis_task import BusinessPhase
-    phase_enum = parse_business_phase(business_phase, field="business_phase")
-    if phase_enum is not None and phase_enum != BusinessPhase.STANDARDIZATION:
-        raise AppException(
-            ErrorCode.INVALID_PHASE_STEP_COMBO,
-            message="knowledge_base 仅存在于 STANDARDIZATION 阶段",
-            details={"conflict": "phase_resource_mismatch", "phase": phase_enum.value, "resource": "knowledge_base"},
-        )
-
-    versions = await knowledge_base_svc.list_versions(db)
-    total = len(versions)
-    offset = (page_num - 1) * page_size
-    sliced = versions[offset : offset + page_size]
-
-    # 批量查询切片内所有 extraction_job，一次性获得每个 KB 版本对应的原始视频动作类型
-    job_ids = [kb.extraction_job_id for kb in sliced if kb.extraction_job_id is not None]
-    job_tech_map: dict[str, str] = {}
-    if job_ids:
-        rows = await db.execute(
-            select(ExtractionJob.id, ExtractionJob.tech_category).where(
-                ExtractionJob.id.in_(job_ids)
-            )
-        )
-        for job_id, tech_category in rows.all():
-            job_tech_map[str(job_id)] = tech_category
-
-    items = [
-        KnowledgeBaseVersionItem(
-            version=kb.version,
-            status=kb.status.value,
-            action_types_covered=kb.action_types_covered,
-            point_count=kb.point_count,
-            approved_at=kb.approved_at,
-            job_id=str(kb.extraction_job_id) if kb.extraction_job_id else None,
-            tech_category=job_tech_map.get(str(kb.extraction_job_id)) if kb.extraction_job_id else None,
-        )
-        for kb in sliced
-    ]
-    return page_envelope(items, page=page_num, page_size=page_size, total=total)
-
-
-# ── GET /knowledge-base/{version} ────────────────────────────────────────────
-
-@router.get(
-    "/knowledge-base/{version}",
-    response_model=SuccessEnvelope[KnowledgeBaseDetailResponse],
-)
-async def get_kb_version(
-    version: str,
-    db: AsyncSession = Depends(get_db),
-) -> SuccessEnvelope[KnowledgeBaseDetailResponse]:
-    """Return full detail for a specific knowledge base version, including all tech points."""
-    try:
-        kb = await knowledge_base_svc.get_version(db, version)
-    except VersionNotFoundError:
-        raise AppException(
-            ErrorCode.KB_VERSION_NOT_FOUND,
-            message=f"知识库版本 {version} 不存在",
-            details={"version": version},
-        )
-
-    points = await knowledge_base_svc.get_tech_points(db, version)
-
-    # 回溯关联的 extraction_job，取出原始视频动作类型 tech_category
-    tech_category: str | None = None
-    if kb.extraction_job_id is not None:
-        job = await db.get(ExtractionJob, kb.extraction_job_id)
-        if job is not None:
-            tech_category = job.tech_category
-
-    return ok(KnowledgeBaseDetailResponse(
+def _to_item(kb) -> KbVersionItem:
+    """TechKnowledgeBase ORM → KbVersionItem DTO."""
+    return KbVersionItem(
+        tech_category=kb.tech_category,
         version=kb.version,
         status=kb.status.value,
-        action_types_covered=kb.action_types_covered,
         point_count=kb.point_count,
-        tech_points=[
-            TechPointDetail(
-                action_type=p.action_type.value,
-                dimension=p.dimension,
-                param_min=p.param_min,
-                param_max=p.param_max,
-                param_ideal=p.param_ideal,
-                unit=p.unit,
-                extraction_confidence=p.extraction_confidence,
-            )
-            for p in points
-        ],
+        extraction_job_id=str(kb.extraction_job_id),
         approved_by=kb.approved_by,
         approved_at=kb.approved_at,
         created_at=kb.created_at,
         notes=kb.notes,
-        job_id=str(kb.extraction_job_id) if kb.extraction_job_id else None,
-        tech_category=tech_category,
-    ))
+    )
 
 
-# ── POST /knowledge-base/{version}/approve ───────────────────────────────────
+# ── GET /knowledge-base/versions ───────────────────────────────────────────
 
-@router.post(
-    "/knowledge-base/{version}/approve",
-    response_model=SuccessEnvelope[ApproveResponse],
+@router.get(
+    "/versions",
+    response_model=SuccessEnvelope[list[KbVersionItem]],
 )
-async def approve_kb_version(
-    version: str,
-    body: ApproveRequest,
+async def list_kb_versions(
+    tech_category: str | None = Query(None, description="按技术类别过滤（21 类之一）"),
+    status: str | None = Query(None, description="按状态过滤（draft/active/archived）"),
+    extraction_job_id: uuid.UUID | None = Query(
+        None, description="按 extraction_job_id 精确匹配（定位单作业产出的全部 KB）"
+    ),
+    page_num: int = Query(1, ge=1, alias="page"),
+    page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
-) -> SuccessEnvelope[ApproveResponse]:
-    """Approve a draft KB version: activates it and archives the current active version."""
-    try:
-        async with db.begin():
-            kb, previous = await knowledge_base_svc.approve_version(
-                db, version, body.approved_by, body.notes
+) -> SuccessEnvelope[list[KbVersionItem]]:
+    """Feature-019 US2 — 列表 + 按 tech_category/status/extraction_job_id 过滤 + 分页."""
+    # status 枚举校验（服务端小写归一化）
+    status_norm: str | None = None
+    if status is not None:
+        s = status.strip().lower()
+        allowed = {e.value for e in KBStatus}
+        if s not in allowed:
+            raise AppException(
+                ErrorCode.INVALID_ENUM_VALUE,
+                message=f"status 非法值：{status!r}",
+                details={
+                    "field": "status",
+                    "allowed": sorted(allowed),
+                    "got": status,
+                },
             )
-    except VersionNotFoundError:
+        status_norm = s
+
+    # tech_category 归一化（小写下划线），非法值不阻断（允许查到空集）
+    tc_norm: str | None = None
+    if tech_category is not None:
+        tc_norm = tech_category.strip().lower()
+
+    items, total = await knowledge_base_svc.list_versions(
+        db,
+        tech_category=tc_norm,
+        status=status_norm,
+        extraction_job_id=extraction_job_id,
+        page=page_num,
+        page_size=page_size,
+    )
+
+    return page_envelope(
+        [_to_item(kb) for kb in items],
+        page=page_num,
+        page_size=page_size,
+        total=total,
+    )
+
+
+# ── GET /knowledge-base/versions/{tech_category}/{version} ────────────────
+
+@router.get(
+    "/versions/{tech_category}/{version}",
+    response_model=SuccessEnvelope[KbVersionDetail],
+)
+async def get_kb_version_detail(
+    tech_category: str,
+    version: int,
+    db: AsyncSession = Depends(get_db),
+) -> SuccessEnvelope[KbVersionDetail]:
+    """Feature-019 US2 — 详情 + expert_tech_points 聚合摘要."""
+    tc = tech_category.strip().lower()
+    result = await knowledge_base_svc.get_version_detail(db, tc, version)
+    if result is None:
         raise AppException(
             ErrorCode.KB_VERSION_NOT_FOUND,
-            message=f"知识库版本 {version} 不存在",
-            details={"version": version},
+            details={"tech_category": tc, "version": version},
         )
-    except VersionNotDraftError as exc:
-        raise AppException(
-            ErrorCode.KB_VERSION_NOT_DRAFT,
-            message=f"版本 {version} 当前状态为 {exc.args[0]}，只有 draft 版本可审核通过",
-            details={"version": version, "current_status": str(exc.args[0])},
-        )
-    except ConflictUnresolvedError as exc:
-        raise AppException(
-            ErrorCode.CONFLICT_UNRESOLVED,
-            message=(
-                f"版本 {version} 存在 {exc.conflict_count} 个未解决的视觉/音频参数冲突，"
-                "请先解决冲突或覆盖后再审核通过"
-            ),
-            details={"version": version, "conflict_count": exc.conflict_count},
-        )
-
-    return ok(ApproveResponse(
+    kb, summary = result
+    detail = KbVersionDetail(
+        tech_category=kb.tech_category,
         version=kb.version,
         status=kb.status.value,
+        point_count=kb.point_count,
+        extraction_job_id=str(kb.extraction_job_id),
         approved_by=kb.approved_by,
         approved_at=kb.approved_at,
-        previous_active_version=previous,
-    ))
+        created_at=kb.created_at,
+        notes=kb.notes,
+        dimensions_summary=DimensionsSummary(**summary),
+    )
+    return ok(detail)
+
+
+# ── POST /knowledge-base/versions/{tech_category}/{version}/approve ───────
+
+@router.post(
+    "/versions/{tech_category}/{version}/approve",
+    response_model=SuccessEnvelope[ApproveKbResponse],
+)
+async def approve_kb_version(
+    tech_category: str,
+    version: int,
+    body: ApproveKbRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SuccessEnvelope[ApproveKbResponse]:
+    """Feature-019 US1 — 按单一 tech_category 独立审批 KB 草稿."""
+    tc = tech_category.strip().lower()
+
+    # service 层直接抛 AppException（包含 KB_VERSION_NOT_FOUND / KB_VERSION_NOT_DRAFT
+    # / KB_EMPTY_POINTS / KB_CONFLICT_UNRESOLVED），路由层无需二次转换
+    async with db.begin():
+        result = await knowledge_base_svc.approve_version(
+            db,
+            tech_category=tc,
+            version=version,
+            approved_by=body.approved_by,
+            notes=body.notes,
+        )
+
+    return ok(
+        ApproveKbResponse(
+            new_active=_to_item(result["new_active"]),
+            previous_active_version=result["previous_active_version"],
+            tips_updated=TipsUpdatedStats(**result["tips_updated"]),
+        )
+    )
+
+
+# ── T020 / T027：老路径 ENDPOINT_RETIRED 哨兵（章程原则 IX 强制）──────────
+
+@router.post("/{version}/approve", include_in_schema=False)
+async def _retired_approve_single_key(version: str) -> None:
+    """老的单列 version 主键 approve 路径 → 返回 ENDPOINT_RETIRED."""
+    raise AppException(
+        ErrorCode.ENDPOINT_RETIRED,
+        details={
+            "successor": "/api/v1/knowledge-base/versions/{tech_category}/{version}/approve",
+            "migration_note": (
+                "Feature-019 将 KB 主键提升为 (tech_category, version) 复合键；"
+                "请使用新路径。"
+            ),
+        },
+    )
+
+
+@router.get("/{version}", include_in_schema=False)
+async def _retired_detail_single_key(version: str) -> None:
+    """老的单列 version 详情路径 → 返回 ENDPOINT_RETIRED."""
+    raise AppException(
+        ErrorCode.ENDPOINT_RETIRED,
+        details={
+            "successor": "/api/v1/knowledge-base/versions/{tech_category}/{version}",
+            "migration_note": (
+                "Feature-019 详情路径需同时指定 tech_category 与 version。"
+            ),
+        },
+    )

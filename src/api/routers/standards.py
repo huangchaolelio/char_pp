@@ -43,14 +43,19 @@ _VALID_ACTION_TYPES: set[str] = {at.value for at in EtpActionType}
 # ---------------------------------------------------------------------------
 
 class BuildRequest(BaseModel):
-    tech_category: Optional[str] = None
+    """Feature-019: tech_category 必填，不再支持全量 build。"""
+
+    tech_category: str
 
     @field_validator("tech_category")
     @classmethod
-    def validate_tech_category(cls, v: Optional[str]) -> Optional[str]:
-        if v is not None and v not in _VALID_ACTION_TYPES:
+    def validate_tech_category(cls, v: str) -> str:
+        if not v or not v.strip():
+            raise ValueError("tech_category 必填")
+        normalized = v.strip().lower()
+        if normalized not in _VALID_ACTION_TYPES:
             raise ValueError(f"{v!r} is not a valid tech category")
-        return v
+        return normalized
 
 
 class DimensionResponse(BaseModel):
@@ -134,65 +139,33 @@ async def build_standard(
     request: BuildRequest,
     session: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[dict[str, Any]]:
-    """Trigger single or batch tech standard build.
+    """Feature-019 US3 — 按单一技术类别构建技术标准。
 
-    - With tech_category: build single category
-    - Without tech_category: build all ActionType categories
-
-    响应 ``data`` 结构由 ``mode`` 字段判别：
-    - ``mode="single"``: ``SingleBuildResponse`` 展开字段
-    - ``mode="batch"``: ``BatchBuildResponse`` 展开字段
+    - `tech_category` 必填（缺失 → 422 VALIDATION_FAILED）
+    - 数据源限定为该类别当前 active KB
+    - 无 active KB → 409 `NO_ACTIVE_KB_FOR_CATEGORY`
+    - 指纹与现 active 标准一致 → 409 `STANDARD_ALREADY_UP_TO_DATE`
     """
     builder = TechStandardBuilder(session)
     task_id = str(uuid.uuid4())
 
-    if request.tech_category:
-        # Single build
+    async with session.begin():
         result = await builder.build_standard(request.tech_category)
-        await session.commit()
 
-        single = SingleBuildResponse(
-            task_id=task_id,
-            mode="single",
-            tech_category=request.tech_category,
-            result=BuildResultResponse(
-                result=result.result,
-                reason=result.reason,
-                standard_id=result.standard_id,
-                version=result.version,
-                dimension_count=result.dimension_count,
-                coach_count=result.coach_count,
-            ),
-        )
-        return ok(single.model_dump())
-
-    # Batch build
-    batch = await builder.build_all()
-    await session.commit()
-
-    results_data = [
-        {
-            "tech_category": r.tech_category,
-            "result": r.result,
-            "reason": r.reason,
-            "standard_id": r.standard_id,
-            "version": r.version,
-            "dimension_count": r.dimension_count,
-            "coach_count": r.coach_count,
-        }
-        for r in batch.results
-    ]
-    batch_resp = BatchBuildResponse(
+    single = SingleBuildResponse(
         task_id=task_id,
-        mode="batch",
-        results=results_data,
-        summary=BatchSummary(
-            success_count=batch.success_count,
-            skipped_count=batch.skipped_count,
-            failed_count=batch.failed_count,
+        mode="single",
+        tech_category=request.tech_category,
+        result=BuildResultResponse(
+            result=result.result,
+            reason=result.reason,
+            standard_id=result.standard_id,
+            version=result.version,
+            dimension_count=result.dimension_count,
+            coach_count=result.coach_count,
         ),
     )
-    return ok(batch_resp.model_dump())
+    return ok(single.model_dump())
 
 
 @router.get(

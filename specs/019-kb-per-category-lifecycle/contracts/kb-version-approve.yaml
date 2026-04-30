@@ -1,0 +1,147 @@
+openapi: 3.0.3
+info:
+  title: Feature-019 · KB Version Approve
+  version: "1.0.0"
+  description: |
+    批准单条 `(tech_category, version)` KB 草稿 → active；
+    同类别既有 active → archived；其它类别不动。
+    事务内联动同类别 teaching_tips 状态迁移（auto 源）。
+
+paths:
+  /api/v1/knowledge-base/versions/{tech_category}/{version}/approve:
+    post:
+      summary: 批准 KB 草稿
+      operationId: approve_kb_version
+      parameters:
+        - in: path
+          name: tech_category
+          required: true
+          schema: { type: string }
+        - in: path
+          name: version
+          required: true
+          schema: { type: integer, minimum: 1 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [approved_by]
+              properties:
+                approved_by: { type: string, minLength: 1, maxLength: 200 }
+                notes: { type: string, nullable: true, maxLength: 2000 }
+      responses:
+        '200':
+          description: 批准成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [new_active, previous_active_version]
+                    properties:
+                      new_active:
+                        $ref: './kb-versions-list.yaml#/components/schemas/KbVersionItem'
+                      previous_active_version:
+                        type: integer
+                        nullable: true
+                        description: "该类别旧 active 的 version（若本次是该类别首个 active，则 null）"
+                      tips_updated:
+                        type: object
+                        description: "联动 teaching_tips 的统计（便于观测）"
+                        properties:
+                          archived_count: { type: integer, minimum: 0 }
+                          activated_count: { type: integer, minimum: 0 }
+              example:
+                success: true
+                data:
+                  new_active:
+                    tech_category: forehand_attack
+                    version: 3
+                    status: active
+                    point_count: 12
+                    extraction_job_id: 8f4c8a3b-9a0e-4aef-9a3b-1a2d6c9e7f00
+                    approved_by: coach_zhang
+                    approved_at: "2026-04-30T15:13:34+08:00"
+                    created_at: "2026-04-30T14:59:01+08:00"
+                    notes: "正手攻球首版审核通过"
+                  previous_active_version: 2
+                  tips_updated:
+                    archived_count: 9
+                    activated_count: 12
+        '404':
+          description: KB 记录不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                error:
+                  code: KB_VERSION_NOT_FOUND
+                  message: "KB 版本不存在"
+                  details:
+                    tech_category: forehand_attack
+                    version: 999
+        '409':
+          description: 业务状态冲突
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              examples:
+                not_draft:
+                  value:
+                    success: false
+                    error:
+                      code: KB_VERSION_NOT_DRAFT
+                      message: "KB 版本不是 draft 状态"
+                      details: { current_status: archived }
+                empty_points:
+                  value:
+                    success: false
+                    error:
+                      code: KB_EMPTY_POINTS
+                      message: "知识库为空，无法批准"
+                      details: { point_count: 0 }
+                conflict_unresolved:
+                  value:
+                    success: false
+                    error:
+                      code: KB_CONFLICT_UNRESOLVED
+                      message: "知识库存在未解决的冲突点"
+                      details: { conflict_count: 3 }
+        '422':
+          description: 请求体校验失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: "请求体校验失败"
+                  details: { field: approved_by, issue: "missing" }
+        '500':
+          description: 未预期异常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, additionalProperties: true, nullable: true }

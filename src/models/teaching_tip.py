@@ -1,34 +1,44 @@
-"""TeachingTip ORM model — a single teaching advice entry extracted from expert video audio.
+"""TeachingTip ORM model — per-category versioned teaching tip entry (Feature-019).
 
-Each record represents one coaching tip extracted by LLM from audio transcript,
-grouped by tech_phase (preparation/contact/follow_through/footwork/general).
-
-source_type lifecycle:
-  - 'auto': LLM-generated, can be replaced on re-trigger
-  - 'human': manually reviewed/edited, preserved on re-trigger (irreversible)
+Feature-019 重构：
+  - 新增列 ``tech_category`` / ``kb_tech_category`` + ``kb_version`` / ``status``
+  - 删除列 ``action_type``（被 tech_category 取代，语义重复）
+  - 复合 FK 绑 ``(tech_knowledge_bases.tech_category, version)``，生命周期与 KB 绑同
+  - ``task_id`` 放宽为 nullable（tips 生命周期与 task 解耦）
+  - 归档联动：KB approve 时同类别 auto tips 批量激活 / 旧 auto tips 批量归档
+    （human tips 不参与批量，保留 Feature-005 的"人工标注不可被自动流覆盖"）
 """
 
 from __future__ import annotations
 
+import enum
 import uuid
 from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import (
     CheckConstraint,
+    Enum,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
+    Integer,
     String,
     Text,
     TIMESTAMP,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-from sqlalchemy.sql import func
 from sqlalchemy import text
 
 from src.db.session import Base
+
+
+class TipStatus(str, enum.Enum):
+    draft = "draft"
+    active = "active"
+    archived = "archived"
 
 
 class TeachingTip(Base):
@@ -37,28 +47,35 @@ class TeachingTip(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    task_id: Mapped[uuid.UUID] = mapped_column(
+    task_id: Mapped[Optional[uuid.UUID]] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("analysis_tasks.id", ondelete="CASCADE"),
-        nullable=False,
+        ForeignKey("analysis_tasks.id", ondelete="SET NULL"),
+        nullable=True,
     )
-    # Matches ActionType enum values (stored as string for flexibility)
-    action_type: Mapped[str] = mapped_column(String(50), nullable=False)
+
+    # Feature-019 新列
+    tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    status: Mapped[TipStatus] = mapped_column(
+        Enum(TipStatus, name="tip_status_enum", create_type=False),
+        nullable=False,
+        default=TipStatus.draft,
+    )
+
     # preparation | contact | follow_through | footwork | general
     tech_phase: Mapped[str] = mapped_column(String(30), nullable=False)
-    # The teaching tip text content (Chinese)
     tip_text: Mapped[str] = mapped_column(Text, nullable=False)
-    # LLM extraction confidence [0.0, 1.0]
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
-    # 'auto' (LLM-generated) or 'human' (manually reviewed/edited)
     source_type: Mapped[str] = mapped_column(
         String(10), nullable=False, default="auto"
     )
-    # Preserved original AI text when source_type changed to 'human'
     original_text: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
+        TIMESTAMP(timezone=False),
+        nullable=False,
+        server_default=text("timezone('Asia/Shanghai', now())"),
     )
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False),
@@ -68,13 +85,19 @@ class TeachingTip(Base):
     )
 
     # Relationship
-    task: Mapped["AnalysisTask"] = relationship(  # noqa: F821
+    task: Mapped[Optional["AnalysisTask"]] = relationship(  # noqa: F821
         "AnalysisTask",
         foreign_keys=[task_id],
         back_populates="teaching_tips",
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_tech_category", "kb_version"],
+            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ondelete="CASCADE",
+            name="fk_teaching_tips_kb",
+        ),
         CheckConstraint(
             "confidence >= 0.0 AND confidence <= 1.0",
             name="ck_teaching_tip_confidence_range",
@@ -84,6 +107,8 @@ class TeachingTip(Base):
             name="ck_teaching_tip_source_type",
         ),
         Index("ix_teaching_tips_task_id", "task_id"),
-        Index("ix_teaching_tips_action_type", "action_type"),
+        Index("ix_teaching_tips_tech_category", "tech_category"),
+        Index("ix_teaching_tips_status", "status"),
+        Index("ix_teaching_tips_kb", "kb_tech_category", "kb_version"),
         Index("ix_teaching_tips_source_type", "source_type"),
     )

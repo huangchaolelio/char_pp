@@ -20,6 +20,8 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
+    Integer,
     String,
     Text,
     TIMESTAMP,
@@ -83,11 +85,9 @@ class ExpertTechPoint(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    knowledge_base_version: Mapped[str] = mapped_column(
-        String(20),
-        ForeignKey("tech_knowledge_bases.version", ondelete="CASCADE"),
-        nullable=False,
-    )
+    # Feature-019: 原 `knowledge_base_version` 单列 FK → `(kb_tech_category, kb_version)` 复合 FK
+    kb_tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_version: Mapped[int] = mapped_column(Integer, nullable=False)
     action_type: Mapped[ActionType] = mapped_column(
         Enum(ActionType, name="action_type_enum"), nullable=False
     )
@@ -148,11 +148,18 @@ class ExpertTechPoint(Base):
     )
 
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["kb_tech_category", "kb_version"],
+            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ondelete="CASCADE",
+            name="fk_expert_tech_points_kb",
+        ),
         UniqueConstraint(
-            "knowledge_base_version",
+            "kb_tech_category",
+            "kb_version",
             "action_type",
             "dimension",
-            name="uq_expert_point_version_action_dim",
+            name="uq_expert_point_kb_action_dim",
         ),
         CheckConstraint(
             "param_min <= param_ideal AND param_ideal <= param_max",

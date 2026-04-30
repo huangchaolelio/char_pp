@@ -1,0 +1,119 @@
+openapi: 3.0.3
+info:
+  title: Feature-019 · Extraction Job Detail (+ output_kbs)
+  version: "1.0.0"
+  description: |
+    已有接口 `GET /api/v1/extraction-jobs/{id}` 增加 `output_kbs` 字段，
+    返回该作业产出的所有 `(tech_category, version)` KB 记录（反向关联）。
+    仅在作业 `status=succeeded` 时非空数组；其它状态下为空数组。
+
+paths:
+  /api/v1/extraction-jobs/{job_id}:
+    get:
+      summary: 提取作业详情（含反查 KB 记录）
+      operationId: get_extraction_job_detail
+      parameters:
+        - in: path
+          name: job_id
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SuccessEnvelopeExtractionJob' }
+              example:
+                success: true
+                data:
+                  id: 8f4c8a3b-9a0e-4aef-9a3b-1a2d6c9e7f00
+                  analysis_task_id: 7867978d-9584-4a42-b1c1-ccc30b89e6f1
+                  status: succeeded
+                  tech_category: forehand_attack
+                  cos_object_key: "charhuang/tt_video/.../第07节正手攻球.mp4"
+                  started_at: "2026-04-30T14:30:00+08:00"
+                  completed_at: "2026-04-30T14:58:12+08:00"
+                  output_kbs:
+                    - tech_category: forehand_attack
+                      version: 3
+                      created_at: "2026-04-30T14:58:10+08:00"
+                  pipeline_steps_summary:
+                    total: 6
+                    succeeded: 6
+                    failed: 0
+                meta: null
+        '404':
+          description: 作业不存在
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                error:
+                  code: EXTRACTION_JOB_NOT_FOUND
+                  message: "提取作业不存在"
+                  details: { job_id: "non-existent-uuid" }
+        '500':
+          description: 未预期异常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+components:
+  schemas:
+    OutputKbRef:
+      type: object
+      required: [tech_category, version, created_at]
+      properties:
+        tech_category: { type: string }
+        version: { type: integer, minimum: 1 }
+        created_at: { type: string, format: date-time }
+
+    PipelineStepsSummary:
+      type: object
+      properties:
+        total: { type: integer, minimum: 0 }
+        succeeded: { type: integer, minimum: 0 }
+        failed: { type: integer, minimum: 0 }
+        skipped: { type: integer, minimum: 0 }
+
+    ExtractionJobDetail:
+      type: object
+      required: [id, analysis_task_id, status, output_kbs]
+      properties:
+        id: { type: string, format: uuid }
+        analysis_task_id: { type: string, format: uuid }
+        status:
+          type: string
+          enum: [pending, running, succeeded, failed, skipped]
+        tech_category: { type: string, nullable: true }
+        cos_object_key: { type: string, nullable: true }
+        started_at: { type: string, format: date-time, nullable: true }
+        completed_at: { type: string, format: date-time, nullable: true }
+        output_kbs:
+          type: array
+          items: { $ref: '#/components/schemas/OutputKbRef' }
+          description: "仅 status=succeeded 时非空"
+        pipeline_steps_summary:
+          $ref: '#/components/schemas/PipelineStepsSummary'
+
+    SuccessEnvelopeExtractionJob:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: { $ref: '#/components/schemas/ExtractionJobDetail' }
+        meta: { type: object, nullable: true }
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, additionalProperties: true, nullable: true }

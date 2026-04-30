@@ -1,0 +1,107 @@
+openapi: 3.0.3
+info:
+  title: Feature-019 · Standards Build (Per-Category)
+  version: "1.0.0"
+  description: |
+    按单一技术类别构建 tech_standard。本 Feature 起 `tech_category` 为必填，
+    不再支持"一次性构建全部"的旧路径（保留同一 URL 但拒绝无 tech_category 请求）。
+
+paths:
+  /api/v1/standards/build:
+    post:
+      summary: 构建技术标准（按类别）
+      operationId: build_tech_standard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tech_category]
+              properties:
+                tech_category:
+                  type: string
+                  description: "21 类之一，必填"
+      responses:
+        '200':
+          description: 构建成功
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [success, data]
+                properties:
+                  success: { type: boolean, enum: [true] }
+                  data:
+                    type: object
+                    required: [tech_category, new_version, previous_version, point_count, dimensions]
+                    properties:
+                      tech_category: { type: string }
+                      new_version: { type: integer, minimum: 1 }
+                      previous_version: { type: integer, nullable: true }
+                      point_count: { type: integer, minimum: 0 }
+                      dimensions: { type: array, items: { type: string } }
+                      source_kb_version: { type: integer }
+              example:
+                success: true
+                data:
+                  tech_category: forehand_attack
+                  new_version: 4
+                  previous_version: 3
+                  point_count: 12
+                  dimensions: [elbow_angle_at_contact, swing_trajectory, contact_timing, weight_transfer]
+                  source_kb_version: 3
+        '409':
+          description: 业务状态冲突
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              examples:
+                no_active_kb:
+                  value:
+                    success: false
+                    error:
+                      code: NO_ACTIVE_KB_FOR_CATEGORY
+                      message: "该技术类别无已激活的知识库"
+                      details: { tech_category: forehand_attack }
+                already_up_to_date:
+                  value:
+                    success: false
+                    error:
+                      code: STANDARD_ALREADY_UP_TO_DATE
+                      message: "标准已是最新，无需重建"
+                      details:
+                        tech_category: forehand_attack
+                        current_version: 4
+                        source_kb_version: 3
+        '422':
+          description: 请求体校验失败
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+              example:
+                success: false
+                error:
+                  code: VALIDATION_FAILED
+                  message: "tech_category 必填"
+                  details: { field: tech_category, issue: "missing" }
+        '500':
+          description: 未预期异常
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ErrorEnvelope' }
+
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, additionalProperties: true, nullable: true }

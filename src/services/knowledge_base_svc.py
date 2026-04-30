@@ -1,285 +1,208 @@
-"""Knowledge base version management service.
+"""Knowledge base version management service — Feature-019 per-category lifecycle.
+
+**Breaking change vs Feature-018**:
+  - 主键从单列 ``version VARCHAR`` 改为复合主键 ``(tech_category, version INTEGER)``
+  - ``approve_version`` 签名从 ``(version: str)`` 改为 ``(tech_category: str, version: int)``
+  - ``create_draft_version`` 签名从 ``(action_types: list[str])`` 改为
+    ``(tech_category: str, extraction_job_id: UUID, point_count: int)``
+  - ``action_types_covered`` 字段已删除（被主键 ``tech_category`` 替代）
+  - approve 事务内自动联动 ``teaching_tips`` 批量归档/激活（通过 ``teaching_tip_svc``）
 
 Responsibilities:
-  - Create a new draft version (auto-increments minor version)
-  - Add ExpertTechPoints to a draft version
-  - Approve a version: set it to active, archive the previous active version
-  - Enforce single-active-version constraint
-  - Query versions and active version
+  - 按 tech_category 独立生命周期管理 KB 版本（draft → active → archived）
+  - 每类别 ``MAX(version) + 1`` 自增
+  - approve：单类别原子事务，partial unique index + advisory lock 双保险
+  - 列表 / 详情 / 按 extraction_job_id 反查
 """
 
 from __future__ import annotations
 
 import logging
 import uuid
-from src.utils.time_utils import now_cst
 from typing import Optional
 
-from sqlalchemy import select, update
-from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.api.errors import AppException, ErrorCode
 from src.models.expert_tech_point import ActionType, ExpertTechPoint
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
-from src.services.tech_extractor import ExtractionResult
-from src.services.kb_merger import MergedTechPoint
+from src.utils.time_utils import now_cst
 
 logger = logging.getLogger(__name__)
 
 
-class KnowledgeBaseError(Exception):
-    pass
-
-
-class NoActiveVersionError(KnowledgeBaseError):
-    """Raised when an operation requires an active KB but none exists."""
-
-
-class VersionNotFoundError(KnowledgeBaseError):
-    def __init__(self, version: str) -> None:
-        super().__init__(f"Knowledge base version not found: {version}")
+# ── 内部异常（仅本模块使用；路由层应直接抛 AppException） ───────────────────
+class VersionNotFoundError(Exception):
+    def __init__(self, tech_category: str, version: int) -> None:
+        super().__init__(f"KB version not found: ({tech_category}, {version})")
+        self.tech_category = tech_category
         self.version = version
 
 
-class VersionNotDraftError(KnowledgeBaseError):
-    def __init__(self, version: str, status: str) -> None:
-        super().__init__(f"Version {version} is {status}, expected draft")
-        self.version = version
-
-
-class ConflictUnresolvedError(KnowledgeBaseError):
-    """Raised when a KB version has unresolved visual/audio parameter conflicts."""
-
-    def __init__(self, version: str, conflict_count: int) -> None:
+class VersionNotDraftError(Exception):
+    def __init__(self, tech_category: str, version: int, status: str) -> None:
         super().__init__(
-            f"KB version {version} has {conflict_count} unresolved conflict(s) — "
-            "resolve or override before approving"
+            f"KB version ({tech_category}, {version}) is {status}, expected draft"
         )
+        self.tech_category = tech_category
         self.version = version
-        self.conflict_count = conflict_count
-
-
-# ── Version helpers ───────────────────────────────────────────────────────────
-
-def _is_valid_semver(version: str) -> bool:
-    """Return True if version matches X.Y.Z with all-numeric components."""
-    parts = version.split(".")
-    if len(parts) != 3:
-        return False
-    try:
-        int(parts[0]); int(parts[1]); int(parts[2])
-        return True
-    except ValueError:
-        return False
-
-
-def _next_minor_version(current: str) -> str:
-    """Increment the minor component of a semver string, e.g. '1.0.0' → '1.1.0'."""
-    parts = current.split(".")
-    if len(parts) != 3:
-        raise ValueError(f"Invalid semver: {current}")
-    major, minor, patch = int(parts[0]), int(parts[1]), int(parts[2])
-    return f"{major}.{minor + 1}.0"
-
-
-async def _latest_version(session: AsyncSession) -> Optional[TechKnowledgeBase]:
-    """Return the most recently created knowledge base version with a valid semver string.
-
-    Skips rows whose version field does not match X.Y.Z (e.g. legacy 'it3a-...' identifiers)
-    so that _next_minor_version never receives an unparseable string.
-    """
-    result = await session.execute(
-        select(TechKnowledgeBase)
-        .where(TechKnowledgeBase.version.regexp_match(r"^\d+\.\d+\.\d+$"))
-        .order_by(TechKnowledgeBase.created_at.desc())
-        .limit(1)
-    )
-    return result.scalar_one_or_none()
+        self.status = status
 
 
 # ── Public API ────────────────────────────────────────────────────────────────
 
+
 async def create_draft_version(
     session: AsyncSession,
-    action_types: list[str],
-    notes: Optional[str] = None,
+    *,
+    tech_category: str,
+    extraction_job_id: uuid.UUID,
+    point_count: int = 0,
+    notes: str | None = None,
 ) -> TechKnowledgeBase:
-    """Create a new draft knowledge base version.
+    """Create a new draft KB record for a given tech_category.
 
-    Auto-generates the version string by incrementing the minor version of the
-    latest existing version. If no version exists, starts at '1.0.0'.
-
-    Returns:
-        The newly created TechKnowledgeBase record (status=draft).
+    Implements research.md R2: ``MAX(version) + 1`` per-category auto-increment
+    with optimistic-concurrency retry once on IntegrityError.
     """
-    latest = await _latest_version(session)
-    new_version = _next_minor_version(latest.version) if latest else "1.0.0"
+    for attempt in (1, 2):
+        next_v = (
+            await session.execute(
+                select(
+                    func.coalesce(func.max(TechKnowledgeBase.version), 0) + 1
+                ).where(TechKnowledgeBase.tech_category == tech_category)
+            )
+        ).scalar_one()
 
-    kb = TechKnowledgeBase(
-        version=new_version,
-        action_types_covered=action_types,
-        point_count=0,
-        status=KBStatus.draft,
-        notes=notes,
-    )
-    session.add(kb)
-    await session.flush()  # get PK without committing
-    logger.info("Created draft KB version %s", new_version)
-    return kb
-
-
-async def add_tech_points(
-    session: AsyncSession,
-    kb_version: str,
-    source_task_id: uuid.UUID,
-    extraction_results: list[MergedTechPoint],
-) -> int:
-    """Add merged tech points to a draft KB version (incremental upsert).
-
-    Supports being called multiple times for the same kb_version (incremental
-    writes from per-segment processing). Uses INSERT ... ON CONFLICT DO UPDATE
-    so that a higher-confidence point from a later segment replaces a lower-
-    confidence one already written.
-
-    Args:
-        kb_version: The draft version string to add points to.
-        source_task_id: The AnalysisTask.id of the expert video that produced these points.
-        extraction_results: List of MergedTechPoint from KbMerger (Feature-002 path).
-
-    Returns:
-        Number of rows upserted (inserted or updated).
-
-    Raises:
-        VersionNotFoundError: if the version doesn't exist.
-        VersionNotDraftError: if the version is not in draft status.
-    """
-    kb = await session.get(TechKnowledgeBase, kb_version)
-    if kb is None:
-        raise VersionNotFoundError(kb_version)
-    if kb.status != KBStatus.draft:
-        raise VersionNotDraftError(kb_version, kb.status.value)
-
-    # De-duplicate input: keep highest extraction_confidence per (action_type, dimension).
-    best: dict[tuple[str, str], MergedTechPoint] = {}
-    for point in extraction_results:
-        action_type_str = point.action_type or ""
-        if action_type_str not in {m.value for m in ActionType}:
-            logger.debug("Skipping unknown action type: %s", action_type_str)
-            continue
-        key = (action_type_str, point.dimension)
-        existing = best.get(key)
-        if existing is None or point.extraction_confidence > existing.extraction_confidence:
-            best[key] = point
-
-    if not best:
-        return 0
-
-    # Build rows for upsert
-    rows = []
-    for (action_type_str, _), point in best.items():
-        rows.append({
-            "id": uuid.uuid4(),
-            "knowledge_base_version": kb_version,
-            "action_type": action_type_str,
-            "dimension": point.dimension,
-            "param_min": point.param_min,
-            "param_max": point.param_max,
-            "param_ideal": point.param_ideal,
-            "unit": point.unit,
-            "extraction_confidence": point.extraction_confidence,
-            "source_video_id": source_task_id,
-            "source_type": point.source_type,
-            "conflict_flag": point.conflict_flag,
-            "conflict_detail": point.conflict_detail,
-            "transcript_segment_id": point.transcript_segment_id,
-        })
-
-    # INSERT ON CONFLICT (knowledge_base_version, action_type, dimension) DO UPDATE
-    # Update only when the incoming confidence is higher than the stored value.
-    stmt = (
-        pg_insert(ExpertTechPoint)
-        .values(rows)
-        .on_conflict_do_update(
-            constraint="uq_expert_point_version_action_dim",
-            set_={
-                "param_min": pg_insert(ExpertTechPoint).excluded.param_min,
-                "param_max": pg_insert(ExpertTechPoint).excluded.param_max,
-                "param_ideal": pg_insert(ExpertTechPoint).excluded.param_ideal,
-                "unit": pg_insert(ExpertTechPoint).excluded.unit,
-                "extraction_confidence": pg_insert(ExpertTechPoint).excluded.extraction_confidence,
-                "source_video_id": pg_insert(ExpertTechPoint).excluded.source_video_id,
-                "source_type": pg_insert(ExpertTechPoint).excluded.source_type,
-                "conflict_flag": pg_insert(ExpertTechPoint).excluded.conflict_flag,
-                "conflict_detail": pg_insert(ExpertTechPoint).excluded.conflict_detail,
-                "transcript_segment_id": pg_insert(ExpertTechPoint).excluded.transcript_segment_id,
-            },
-            # Only update when new confidence is higher
-            where=(
-                pg_insert(ExpertTechPoint).excluded.extraction_confidence
-                > ExpertTechPoint.extraction_confidence
-            ),
+        kb = TechKnowledgeBase(
+            tech_category=tech_category,
+            version=int(next_v),
+            status=KBStatus.draft,
+            point_count=point_count,
+            extraction_job_id=extraction_job_id,
+            notes=notes,
+            business_phase="STANDARDIZATION",     # type: ignore[arg-type]
+            business_step="kb_version_activate",
         )
-    )
-    result = await session.execute(stmt)
-    upserted = result.rowcount
-
-    # Refresh point_count from DB (upsert may insert fewer rows than len(rows))
-    count_result = await session.execute(
-        select(ExpertTechPoint).where(ExpertTechPoint.knowledge_base_version == kb_version)
-    )
-    kb.point_count = len(count_result.scalars().all())
-    await session.flush()
-    logger.info("Upserted %d tech points to KB version %s (total now %d)",
-                upserted, kb_version, kb.point_count)
-    return upserted
+        session.add(kb)
+        try:
+            await session.flush()
+            logger.info(
+                "Created draft KB (tech_category=%s, version=%d)",
+                tech_category,
+                next_v,
+            )
+            return kb
+        except IntegrityError:
+            await session.rollback()
+            if attempt == 2:
+                raise
+            logger.warning(
+                "create_draft_version race on (%s, %d), retrying once",
+                tech_category,
+                next_v,
+            )
 
 
 async def approve_version(
     session: AsyncSession,
-    version: str,
+    tech_category: str,
+    version: int,
     approved_by: str,
-    notes: Optional[str] = None,
-) -> tuple[TechKnowledgeBase, Optional[str]]:
-    """Approve a draft version: set it active and archive the current active version.
+    notes: str | None = None,
+) -> dict:
+    """Approve a draft KB record → active; archive same-category previous active.
 
-    Enforces the single-active-version constraint atomically.
+    事务流程（research.md R3）:
+      1. pg_advisory_xact_lock(hashtext(tech_category)) 锁该类别命名空间
+      2. 校验目标记录：存在 + status='draft' + point_count>0 + 无未解决冲突
+      3. 归档同类别旧 active（UPDATE ... SET status='archived'）
+      4. 激活目标记录（UPDATE ... SET status='active', approved_by, approved_at）
+      5. 同事务内联动 teaching_tips（通过 teaching_tip_svc.relink_on_kb_approve）
 
-    Returns:
-        (newly_active_kb, previous_active_version_str | Optional[str])
+    Returns: dict {
+        "new_active": TechKnowledgeBase,
+        "previous_active_version": int | None,
+        "tips_updated": {"archived_count": N, "activated_count": M}
+    }
 
-    Raises:
-        VersionNotFoundError / VersionNotDraftError as appropriate.
+    Raises AppException 直接（路由层可直通）:
+      - KB_VERSION_NOT_FOUND / KB_VERSION_NOT_DRAFT / KB_EMPTY_POINTS / KB_CONFLICT_UNRESOLVED
     """
-    kb = await session.get(TechKnowledgeBase, version)
+    # 延迟 import 避免循环依赖
+    from src.services import teaching_tip_svc
+
+    # ── Step 1: advisory lock on tech_category namespace ────────────────────
+    await session.execute(
+        func.pg_advisory_xact_lock(func.hashtext(tech_category))
+    )
+
+    # ── Step 2: 校验目标记录 ────────────────────────────────────────────
+    kb = await session.get(TechKnowledgeBase, (tech_category, version))
     if kb is None:
-        raise VersionNotFoundError(version)
-    if kb.status != KBStatus.draft:
-        raise VersionNotDraftError(version, kb.status.value)
-
-    # Feature 002: block approval if any tech points have unresolved conflicts
-    conflict_result = await session.execute(
-        select(ExpertTechPoint).where(
-            ExpertTechPoint.knowledge_base_version == version,
-            ExpertTechPoint.conflict_flag.is_(True),
+        raise AppException(
+            ErrorCode.KB_VERSION_NOT_FOUND,
+            message=f"知识库版本不存在：({tech_category}, {version})",
+            details={"tech_category": tech_category, "version": version},
         )
-    )
-    conflict_points = conflict_result.scalars().all()
-    if conflict_points:
-        raise ConflictUnresolvedError(version, len(conflict_points))
+    if kb.status != KBStatus.draft:
+        raise AppException(
+            ErrorCode.KB_VERSION_NOT_DRAFT,
+            message=f"版本 ({tech_category}, {version}) 非草稿状态（当前 {kb.status.value}）",
+            details={
+                "tech_category": tech_category,
+                "version": version,
+                "current_status": kb.status.value,
+            },
+        )
+    if kb.point_count <= 0:
+        raise AppException(
+            ErrorCode.KB_EMPTY_POINTS,
+            details={
+                "tech_category": tech_category,
+                "version": version,
+                "point_count": kb.point_count,
+            },
+        )
 
-    # Archive any currently active version
-    result = await session.execute(
-        select(TechKnowledgeBase).where(TechKnowledgeBase.status == KBStatus.active)
-    )
-    previous_active: Optional[TechKnowledgeBase] = result.scalar_one_or_none()
-    previous_version_str: Optional[str] = None
+    # 冲突检查：该 KB 下存在 conflict_flag=true 的 expert_tech_points → 拒绝
+    conflict_count = (
+        await session.execute(
+            select(func.count(ExpertTechPoint.id)).where(
+                ExpertTechPoint.kb_tech_category == tech_category,
+                ExpertTechPoint.kb_version == version,
+                ExpertTechPoint.conflict_flag.is_(True),
+            )
+        )
+    ).scalar_one()
+    if conflict_count > 0:
+        raise AppException(
+            ErrorCode.KB_CONFLICT_UNRESOLVED,
+            details={
+                "tech_category": tech_category,
+                "version": version,
+                "conflict_count": int(conflict_count),
+            },
+        )
 
+    # ── Step 3: 查同类别旧 active 并归档 ──────────────────────────────────
+    previous_active = (
+        await session.execute(
+            select(TechKnowledgeBase).where(
+                TechKnowledgeBase.tech_category == tech_category,
+                TechKnowledgeBase.status == KBStatus.active,
+            )
+        )
+    ).scalar_one_or_none()
+
+    previous_version: int | None = None
     if previous_active is not None:
-        previous_version_str = previous_active.version
+        previous_version = previous_active.version
         previous_active.status = KBStatus.archived
-        logger.info("Archived KB version %s", previous_version_str)
 
-    # Activate the new version
+    # ── Step 4: 激活目标 ─────────────────────────────────────────────────
     kb.status = KBStatus.active
     kb.approved_by = approved_by
     kb.approved_at = now_cst()
@@ -287,48 +210,161 @@ async def approve_version(
         kb.notes = notes
 
     await session.flush()
-    logger.info("Activated KB version %s (approved by %s)", version, approved_by)
-    return kb, previous_version_str
+
+    # ── Step 5: 联动 teaching_tips（同事务）───────────────────────────────
+    tips_stats = await teaching_tip_svc.relink_on_kb_approve(
+        session,
+        tech_category=tech_category,
+        old_version=previous_version,
+        new_version=version,
+    )
+
+    logger.info(
+        "Approved KB (tech_category=%s, version=%d) by %s; previous=%s; tips %s",
+        tech_category,
+        version,
+        approved_by,
+        previous_version,
+        tips_stats,
+    )
+    return {
+        "new_active": kb,
+        "previous_active_version": previous_version,
+        "tips_updated": tips_stats,
+    }
 
 
-async def get_active_version(session: AsyncSession) -> Optional[TechKnowledgeBase]:
-    """Return the currently active knowledge base version, or None if none exists."""
+async def get_active_version(
+    session: AsyncSession, tech_category: str
+) -> TechKnowledgeBase | None:
+    """Return the currently active KB for the given tech_category, or None."""
     result = await session.execute(
-        select(TechKnowledgeBase).where(TechKnowledgeBase.status == KBStatus.active)
+        select(TechKnowledgeBase).where(
+            TechKnowledgeBase.tech_category == tech_category,
+            TechKnowledgeBase.status == KBStatus.active,
+        )
     )
     return result.scalar_one_or_none()
 
 
-async def get_version(session: AsyncSession, version: str) -> TechKnowledgeBase:
-    """Fetch a specific version by string.
+async def get_version(
+    session: AsyncSession, tech_category: str, version: int
+) -> TechKnowledgeBase | None:
+    """Fetch a specific KB record by composite key. Returns None if not found."""
+    return await session.get(TechKnowledgeBase, (tech_category, version))
 
-    Raises:
-        VersionNotFoundError if not found.
+
+async def list_versions(
+    session: AsyncSession,
+    *,
+    tech_category: str | None = None,
+    status: str | None = None,
+    extraction_job_id: uuid.UUID | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[TechKnowledgeBase], int]:
+    """List KB records with filters + pagination.
+
+    Returns: (items, total) — 路由层用 page() 构造器封装 PaginationMeta。
+    Order: tech_category ASC, version DESC（同类别最新版在前）
     """
-    kb = await session.get(TechKnowledgeBase, version)
-    if kb is None:
-        raise VersionNotFoundError(version)
-    return kb
+    base_where = []
+    if tech_category is not None:
+        base_where.append(TechKnowledgeBase.tech_category == tech_category)
+    if status is not None:
+        base_where.append(TechKnowledgeBase.status == KBStatus(status))
+    if extraction_job_id is not None:
+        base_where.append(TechKnowledgeBase.extraction_job_id == extraction_job_id)
 
+    # Count query
+    count_stmt = select(func.count()).select_from(TechKnowledgeBase)
+    if base_where:
+        count_stmt = count_stmt.where(*base_where)
+    total = (await session.execute(count_stmt)).scalar_one()
 
-async def list_versions(session: AsyncSession) -> list[TechKnowledgeBase]:
-    """Return all knowledge base versions ordered by creation time descending."""
-    result = await session.execute(
-        select(TechKnowledgeBase).order_by(TechKnowledgeBase.created_at.desc())
+    # Data query
+    offset = (page - 1) * page_size
+    data_stmt = (
+        select(TechKnowledgeBase)
+        .order_by(
+            TechKnowledgeBase.tech_category.asc(),
+            TechKnowledgeBase.version.desc(),
+        )
+        .offset(offset)
+        .limit(page_size)
     )
-    return list(result.scalars().all())
+    if base_where:
+        data_stmt = data_stmt.where(*base_where)
+    items = list((await session.execute(data_stmt)).scalars().all())
+    return items, int(total)
+
+
+async def get_version_detail(
+    session: AsyncSession, tech_category: str, version: int
+) -> tuple[TechKnowledgeBase, dict] | None:
+    """Fetch KB + aggregated ExpertTechPoint dimensions_summary.
+
+    Returns: (kb, {"total_points": N, "dimensions": [...], "conflict_count": M})
+    Returns None if KB not found.
+    """
+    kb = await get_version(session, tech_category, version)
+    if kb is None:
+        return None
+
+    # 聚合 dimensions_summary
+    result = await session.execute(
+        select(
+            func.count(ExpertTechPoint.id),
+            func.count(ExpertTechPoint.id).filter(
+                ExpertTechPoint.conflict_flag.is_(True)
+            ),
+        ).where(
+            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_version == version,
+        )
+    )
+    total_points, conflict_count = result.one()
+
+    dims_result = await session.execute(
+        select(ExpertTechPoint.dimension)
+        .where(
+            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_version == version,
+        )
+        .distinct()
+    )
+    dimensions = sorted(row[0] for row in dims_result.all())
+
+    summary = {
+        "total_points": int(total_points),
+        "dimensions": dimensions,
+        "conflict_count": int(conflict_count),
+    }
+    return kb, summary
 
 
 async def get_tech_points(
     session: AsyncSession,
-    version: str,
-    action_type: Optional[str] = None,
+    tech_category: str,
+    version: int,
 ) -> list[ExpertTechPoint]:
-    """Return all ExpertTechPoints for a given KB version, optionally filtered by action_type."""
-    stmt = select(ExpertTechPoint).where(
-        ExpertTechPoint.knowledge_base_version == version
+    """Return all ExpertTechPoints for a given (tech_category, version) KB record."""
+    result = await session.execute(
+        select(ExpertTechPoint).where(
+            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_version == version,
+        )
     )
-    if action_type:
-        stmt = stmt.where(ExpertTechPoint.action_type == ActionType(action_type))
-    result = await session.execute(stmt)
+    return list(result.scalars().all())
+
+
+async def list_kbs_for_extraction_job(
+    session: AsyncSession, extraction_job_id: uuid.UUID
+) -> list[TechKnowledgeBase]:
+    """Feature-019 US5 — 反向查询：某 extraction_job 产出的所有 KB 记录。"""
+    result = await session.execute(
+        select(TechKnowledgeBase)
+        .where(TechKnowledgeBase.extraction_job_id == extraction_job_id)
+        .order_by(TechKnowledgeBase.tech_category.asc())
+    )
     return list(result.scalars().all())
