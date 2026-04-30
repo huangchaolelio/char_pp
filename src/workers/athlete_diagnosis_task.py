@@ -40,6 +40,7 @@ async def _run_diagnose(
     task_id: str,
     video_storage_uri: str,
     knowledge_base_version: str | None,
+    classification_id: str | None = None,
 ) -> dict:
     from src.models.analysis_task import AnalysisTask, TaskStatus
 
@@ -53,25 +54,32 @@ async def _run_diagnose(
         await session.commit()
 
         try:
-            try:
-                from src.services.diagnosis_service import DiagnosisService
+            from src.services.diagnosis_service import DiagnosisService
 
-                svc = DiagnosisService(session)
-                summary = await svc.diagnose_athlete_video(
+            svc = DiagnosisService(session)
+
+            if classification_id:
+                # Feature-020 分支：以 classification_id 入参的运动员诊断
+                summary = await svc.diagnose_athlete_by_classification_id(
                     session=session,
                     task_id=UUID(task_id),
-                    video_storage_uri=video_storage_uri,
-                    knowledge_base_version=knowledge_base_version,
+                    classification_id=UUID(classification_id),
                 )
-            except AttributeError:
-                # Defensive: if the service module shape drifts and the
-                # ``diagnose_athlete_video`` entry disappears, log once and
-                # fail the task so ops notices rather than silently "skeleton".
-                logger.exception(
-                    "DiagnosisService.diagnose_athlete_video missing for task %s",
-                    task_id,
-                )
-                raise
+            else:
+                # 旧 F-013 分支：以 video_storage_uri 入参
+                try:
+                    summary = await svc.diagnose_athlete_video(
+                        session=session,
+                        task_id=UUID(task_id),
+                        video_storage_uri=video_storage_uri,
+                        knowledge_base_version=knowledge_base_version,
+                    )
+                except AttributeError:
+                    logger.exception(
+                        "DiagnosisService.diagnose_athlete_video missing for task %s",
+                        task_id,
+                    )
+                    raise
 
             await session.execute(
                 update(AnalysisTask)
@@ -107,15 +115,20 @@ def diagnose_athlete(
     task_id: str,
     video_storage_uri: str,
     knowledge_base_version: str | None = None,
+    classification_id: str | None = None,
 ) -> dict:
-    """Diagnose an athlete video against the tech standard knowledge base."""
+    """Diagnose an athlete video against the tech standard knowledge base.
+
+    Feature-020: 传 ``classification_id`` 时走"以 classification 入参"新分支；
+    否则走 F-013 旧分支（以 video_storage_uri 入参）。
+    """
     logger.info(
-        "diagnose_athlete started: task_id=%s uri=%s kb_ver=%s celery_task=%s",
-        task_id, video_storage_uri, knowledge_base_version, self.request.id,
+        "diagnose_athlete started: task_id=%s uri=%s kb_ver=%s clf_id=%s celery_task=%s",
+        task_id, video_storage_uri, knowledge_base_version, classification_id, self.request.id,
     )
     try:
         return asyncio.run(
-            _run_diagnose(task_id, video_storage_uri, knowledge_base_version)
+            _run_diagnose(task_id, video_storage_uri, knowledge_base_version, classification_id)
         )
     except Exception as exc:
         logger.exception("diagnose_athlete failed: task_id=%s error=%s", task_id, exc)

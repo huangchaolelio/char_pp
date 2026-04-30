@@ -55,6 +55,8 @@ _PHASE_STEPS: dict[str, tuple[str, ...]] = {
         "build_standards",
     ),
     "INFERENCE": (
+        "scan_athlete_videos",
+        "preprocess_athlete_video",
         "diagnose_athlete",
     ),
 }
@@ -73,6 +75,8 @@ _PHASE_STEP_TASK_TYPE_MATRIX: dict[tuple[str, str], set[str]] = {
     ("STANDARDIZATION", "review_conflicts"): set(),  # 非 analysis_tasks 业务；显式 task_type 一律冲突
     ("STANDARDIZATION", "kb_version_activate"): set(),
     ("STANDARDIZATION", "build_standards"): set(),
+    ("INFERENCE", "scan_athlete_videos"): {"athlete_video_classification"},
+    ("INFERENCE", "preprocess_athlete_video"): {"athlete_video_preprocessing"},
     ("INFERENCE", "diagnose_athlete"): {"athlete_diagnosis"},
 }
 
@@ -80,7 +84,11 @@ _PHASE_STEP_TASK_TYPE_MATRIX: dict[tuple[str, str], set[str]] = {
 _PHASE_TASK_TYPES: dict[str, set[str]] = {
     "TRAINING": {"video_classification", "video_preprocessing", "kb_extraction"},
     "STANDARDIZATION": set(),
-    "INFERENCE": {"athlete_diagnosis"},
+    "INFERENCE": {
+        "athlete_diagnosis",
+        "athlete_video_classification",
+        "athlete_video_preprocessing",
+    },
 }
 
 

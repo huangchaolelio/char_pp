@@ -10,6 +10,9 @@ from src.api.errors import register_exception_handlers
 from src.api.routers import knowledge_base, tasks
 from src.api.routers.calibration import router as calibration_router
 from src.api.routers.classifications import router as classifications_router
+from src.api.routers.athlete_classifications import router as athlete_classifications_router
+from src.api.routers.athlete_tasks import router as athlete_tasks_router
+from src.api.routers.diagnosis_reports import router as diagnosis_reports_router
 from src.api.routers.coaches import router as coaches_router
 # Feature-017: videos.py 已下线 —— /videos/classifications* 端点并入 classifications.py
 from src.api.routers.teaching_tips import router as teaching_tips_router
@@ -83,6 +86,12 @@ def create_app() -> FastAPI:
     app.include_router(coaches_router, prefix="/api/v1")
     app.include_router(calibration_router, prefix="/api/v1")
     app.include_router(classifications_router, prefix="/api/v1")
+    # Feature-020 — 运动员视频素材归集与分类
+    app.include_router(athlete_classifications_router, prefix="/api/v1")
+    # Feature-020 — 运动员预处理 / 诊断 4 个端点
+    app.include_router(athlete_tasks_router, prefix="/api/v1")
+    # Feature-020 US5 — 运动员诊断报告聚合查询
+    app.include_router(diagnosis_reports_router, prefix="/api/v1")
     app.include_router(standards_router, prefix="/api/v1")
     # Feature-017: diagnosis_router 已删除，同步 POST /diagnosis 端点下线
     app.include_router(admin_router, prefix="/api/v1")

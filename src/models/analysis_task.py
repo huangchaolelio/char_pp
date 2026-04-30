@@ -27,12 +27,17 @@ class TaskType(str, enum.Enum):
     Alembic 0012; no in-place mapping exists.
 
     Feature-016 adds ``video_preprocessing`` as a fourth channel.
+    Feature-020 adds ``athlete_video_classification`` / ``athlete_video_preprocessing``
+    for the athlete inference pipeline (migration 0018).
     """
 
     video_classification = "video_classification"
     kb_extraction = "kb_extraction"
     athlete_diagnosis = "athlete_diagnosis"
     video_preprocessing = "video_preprocessing"
+    # Feature-020
+    athlete_video_classification = "athlete_video_classification"
+    athlete_video_preprocessing = "athlete_video_preprocessing"
 
 
 class TaskStatus(str, enum.Enum):

@@ -72,6 +72,8 @@ flowchart LR
 | 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `tech_category` 字段落定（21 类之一） | `analysis_tasks(task_type=video_classification)` |
 | 4 | **extract_kb**（6 步 DAG） | `POST /api/v1/tasks type=kb_extraction` | `kb_extraction` | 2 | `tech_category` 非空、预处理完成 | `expert_tech_points` + `kb_conflicts` + `kb_extracted=true` | `extraction_jobs` + `pipeline_steps`(×6) |
 
+> **队列复用说明（Feature-020）**：`default` / `preprocessing` / `diagnosis` 三个队列**同时被 INFERENCE 阶段的运动员侧三步骤复用**（§ 5.1 步骤 8a/8b/8 共用队列）；不新增 Celery 队列、不新增 worker。两侧通过 `analysis_tasks.business_phase` 与独立的 `task_type` 枚举值区分任务来源，`task_channel_configs` 容量/并发配置对两侧统一生效。
+
 ### 3.2 KB 抽取 DAG 的 6 个子步骤
 
 ```
@@ -138,27 +140,50 @@ wave4:  merge_kb
 
 ### 5.1 步骤总览
 
-| # | 步骤 | 入口 | 队列 | 并发 | 读取 |
-|---|------|-----|------|------|------|
-| 8 | **diagnose_athlete** | `POST /api/v1/tasks type=athlete_diagnosis` | `diagnosis` | 2 | **active** KB / standard（不可选 draft） |
-| 9 | **生成报告** | 同任务内 | — | — | 写 `diagnosis_reports` + `diagnosis_dimension_results` + `coaching_advice` |
+> **Feature-020 扩展**：将运动员素材扫描与预处理纳入 INFERENCE 前置，与教练侧训练链路（TRAINING.scan_cos_videos / preprocess_video）**代码隔离**（独立表 / 独立服务实体），但共用视频预处理管道骨架；队列拓扑不变（复用 `default` / `preprocessing` / `diagnosis`）。
 
-### 5.2 诊断服务内部 11 步（`diagnosis_service.diagnose()`）
+| # | 步骤 | 入口 | 队列 | 并发 | 读 / 写 |
+|---|------|-----|------|------|------|
+| 8a | **scan_athlete_videos**（Feature-020） | `POST /api/v1/athlete-classifications/scan` | `default` | 1 | 读运动员根路径 `COS_VIDEO_ALL_ATHLETE`；写 `athletes` + `athlete_video_classifications` |
+| 8b | **preprocess_athlete_video**（Feature-020） | `POST /api/v1/tasks type=athlete_video_preprocessing` | `preprocessing` | 3 | 读上软 `video_preprocessing_jobs`（按 `cos_object_key` 关联，复用 F-016 管道）；写回 `athlete_video_classifications.preprocessed=true` + `preprocessing_job_id` |
+| 8 | **diagnose_athlete** | `POST /api/v1/tasks type=athlete_diagnosis` | `diagnosis` | 2 | **active** `tech_standards`（单 tech_category 状态机，不可选 draft）；写 `diagnosis_reports` |
+| 9 | **生成报告** | 同任务内 | — | — | 写 `diagnosis_reports` + `diagnosis_dimension_results` + `coaching_advice`，同时持久化三要素反查锚点 `cos_object_key / preprocessing_job_id / standard_version`（Feature-020 FR-009） |
+
+**两侧素材清单严格分表**：`coach_video_classifications` （TRAINING 来源，供 KB 抽取消费）vs `athlete_video_classifications`（INFERENCE 来源，供诊断消费）完全隔离，禁止合表。
+
+### 5.2 运动员素材扫描（`scan_athlete_videos` · Feature-020）
+
+1. 验证运动员根路径可读（`COS_VIDEO_ALL_ATHLETE`；不可读 ⇒ `ATHLETE_ROOT_UNREADABLE`，任务立即 `failed`）
+2. 枚举根路径下所有 `.mp4`，跳过零字节 COS 目录占位符
+3. 按一级目录名跟 `config/athlete_directory_map.json` 映射 ⇒ `athlete_name`；无命中 → `name_source=fallback`，目录名原义入库
+4. 同名冲突政策与教练侧同構：第 1 个保原名，后续添 `_2 / _3` 数字后缀
+5. 根据文件名 × 目录名执行 `TechClassifier`（规则优先 → LLM 兜底；置信度 < 0.5 落 `unclassified`）
+6. 按 `cos_object_key` upsert 到 `athlete_video_classifications`（UNIQUE），不侵入 `coach_video_classifications`
+7. 一并 upsert `athletes` 表（与 `coaches` 完全对称、分表）
+
+### 5.3 运动员预处理（`preprocess_athlete_video` · Feature-020）
+
+- **管道复用**：复用 `video_preprocessing_jobs / _segments` + `preprocessing` 队列 + F-016 `run_preprocessing(job_id)` 整体编排，不新增队列 / worker
+- **输入**：`athlete_video_classifications.cos_object_key`。主键隔离然入口格式一致
+- **产物路径**：统一落 `preprocessed/athletes/{cos_object_key}/jobs/{job_id}/seg_NNNN.mp4`，与教练侧路径分桶
+- **回写**：成功后 `athlete_video_classifications.preprocessed=true` + `preprocessing_job_id`
+- **幂等**：已有 `status='success'` 的 job 不重跑；`force=true` 的进阶语义归给未来扩展（本版本提交重复 ⇒ 幂等短路或拒绝）
+
+### 5.4 诊断服务内部 11 步（`diagnosis_service.diagnose()`）
 
 1. 校验 `tech_category` ∈ `TECH_CATEGORIES`
-2. 查询 active `TechStandard`（无 → `StandardNotFoundError`）
-3. 本地化视频（COS 下载或本地路径）
+2. 查询 active `TechStandard`（无 → **`STANDARD_NOT_AVAILABLE`**；禁止降级读 draft、禁止挂起，Feature-020 对齐 Q4 决议）
+3. 本地化视频（运动员侧从 `preprocessing_job.segments` 读取分段 COS key；**禁止回退到原视频 cos_object_key**，Feature-020 FR-007）
 4. 姿态估计 `pose_estimator.estimate_pose()`
-5. 维度测量 `tech_extractor`（4 维：肘角 / 挥拍轨迹 / 击球时机 / 重心转移）
+5. 维度测量 `tech_extractor`（4 维：肘角 / 挚拍轨迹 / 击球时机 / 重心转移）
 6. 与标准点比对 `diagnosis_scorer.compute_dimension_score`
 7. 偏差分析（`deviation_analyzer` 生成 `above / below / none`）
 8. LLM 生成改进建议（Venus 优先 → OpenAI fallback，失败走模板兜底）
 9. `advice_generator` 注入 `teaching_tips`（人类编辑 > auto）
 10. 计算 `overall_score = mean(dim_scores)`
-11. 持久化 `DiagnosisReport` + `DiagnosisDimensionResult`
+11. 持久化 `DiagnosisReport` + `DiagnosisDimensionResult`；**额外营建三要素反查锚点**：`diagnosis_reports.cos_object_key` / `preprocessing_job_id` / `standard_version`
 
-### 5.3 评分公式（`diagnosis_scorer`）
-
+### 5.5 评分公式（`diagnosis_scorer`）
 ```
 half_width = (max - min) / 2
 center     = (min + max) / 2
@@ -255,6 +280,11 @@ diagnosis_reports
 | `KB_EMPTY_POINTS:` | Feature-019 — `point_count=0` 的 KB 不可 approve | 否 |
 | `NO_ACTIVE_KB_FOR_CATEGORY:` | Feature-019 — 该 `tech_category` 尚无 active KB（诊断读 / standards build 依赖）| 否（先审批该类别的 draft）|
 | `STANDARD_ALREADY_UP_TO_DATE:` | Feature-019 — 构建指纹与同类别 active standard 一致，幂等拒绝 | 否 |
+| `ATHLETE_ROOT_UNREADABLE:` | Feature-020 — 运动员根路径不可读 / 凭证错误 | I/O 重试 |
+| `ATHLETE_VIDEO_NOT_PREPROCESSED:` | Feature-020 — 以运动员素材提交诊断但未完成预处理（禁止静默回退到原视频） | 否（先提交预处理）|
+| `STANDARD_NOT_AVAILABLE:` | Feature-020 — 该 `tech_category` 无 active `tech_standards`，诊断立即 `failed`，`details.tech_category` 必填 | 否（运营到 KB 管理页发布标准） |
+| `ATHLETE_VIDEO_POSE_UNUSABLE:` | Feature-020 — 运动员视频姿态估计全程无可用关键点，任务失败而非产出 0 分报告 | 否 |
+| `ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND:` | Feature-020 — 预处理 / 诊断提交时 `athlete_video_classification_id` 不存在 | 否 |
 ### 7.5 建议补强的三类指标
 
 | 类别 | 指标 | 建议落点 | 用途 |

@@ -1,7 +1,7 @@
 """Feature-017 — API 统一错误处理基础设施（章程 v1.4.0 原则 IX）.
 
 包含：
-- :class:`ErrorCode`: 集中错误码枚举（39 个，禁止在业务代码中使用裸字符串）
+- :class:`ErrorCode`: 集中错误码枚举（45 个，禁止在业务代码中使用裸字符串）
 - :data:`ERROR_STATUS_MAP`: 错误码 → HTTP 状态单一事实来源
 - :data:`ERROR_DEFAULT_MESSAGE`: 错误码 → 默认面向开发者消息
 - :class:`AppException`: 路由/服务层统一业务异常基类
@@ -9,7 +9,7 @@
 - 三个全局异常处理器工厂 :func:`register_exception_handlers`，由 ``src/api/main.py`` 调用一次完成注册
 
 严格参照 ``specs/017-api-standardization/data-model.md`` §2–§3 与
-``specs/017-api-standardization/contracts/error-codes.md``。
+``specs/017-api-standardization/contracts/error-codes.md``；Feature-020 新增 6 个 `ATHLETE_*` / `STANDARD_NOT_AVAILABLE` 错误码。
 """
 
 from __future__ import annotations
@@ -86,11 +86,19 @@ class ErrorCode(str, Enum):
     PHASE_STEP_UNMAPPED = "PHASE_STEP_UNMAPPED"
     OPTIMIZATION_LEVERS_YAML_INVALID = "OPTIMIZATION_LEVERS_YAML_INVALID"
 
-    # ── Feature-019 KB per-category 生命周期（4） ────────────────
+    # ── Feature-019 KB per-category 生命周期（4） ────────────
     KB_CONFLICT_UNRESOLVED = "KB_CONFLICT_UNRESOLVED"
     KB_EMPTY_POINTS = "KB_EMPTY_POINTS"
     NO_ACTIVE_KB_FOR_CATEGORY = "NO_ACTIVE_KB_FOR_CATEGORY"
     STANDARD_ALREADY_UP_TO_DATE = "STANDARD_ALREADY_UP_TO_DATE"
+
+    # ── Feature-020 运动员推理流水线（6） ─────────────
+    ATHLETE_ROOT_UNREADABLE = "ATHLETE_ROOT_UNREADABLE"
+    ATHLETE_DIRECTORY_MAP_MISSING = "ATHLETE_DIRECTORY_MAP_MISSING"
+    ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND = "ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND"
+    ATHLETE_VIDEO_NOT_PREPROCESSED = "ATHLETE_VIDEO_NOT_PREPROCESSED"
+    STANDARD_NOT_AVAILABLE = "STANDARD_NOT_AVAILABLE"
+    ATHLETE_VIDEO_POSE_UNUSABLE = "ATHLETE_VIDEO_POSE_UNUSABLE"
 
 # ── 错误码 → HTTP 状态（单一事实来源） ────────────────────────────────────
 ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
@@ -154,6 +162,14 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.KB_EMPTY_POINTS: HTTPStatus.CONFLICT,                      # 409
     ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY: HTTPStatus.CONFLICT,            # 409
     ErrorCode.STANDARD_ALREADY_UP_TO_DATE: HTTPStatus.CONFLICT,          # 409
+
+    # Feature-020（运动员推理流水线）
+    ErrorCode.ATHLETE_ROOT_UNREADABLE: HTTPStatus.BAD_GATEWAY,                       # 502
+    ErrorCode.ATHLETE_DIRECTORY_MAP_MISSING: HTTPStatus.INTERNAL_SERVER_ERROR,       # 500
+    ErrorCode.ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND: HTTPStatus.NOT_FOUND,          # 404
+    ErrorCode.ATHLETE_VIDEO_NOT_PREPROCESSED: HTTPStatus.CONFLICT,                   # 409
+    ErrorCode.STANDARD_NOT_AVAILABLE: HTTPStatus.CONFLICT,                           # 409
+    ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE: HTTPStatus.UNPROCESSABLE_ENTITY,          # 422
 }
 
 
@@ -219,6 +235,14 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.KB_EMPTY_POINTS: "知识库为空，无法批准",
     ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY: "该技术类别无已激活的知识库",
     ErrorCode.STANDARD_ALREADY_UP_TO_DATE: "标准已是最新，无需重建",
+
+    # Feature-020（运动员推理流水线）
+    ErrorCode.ATHLETE_ROOT_UNREADABLE: "运动员视频根路径不可读或凭证无效",
+    ErrorCode.ATHLETE_DIRECTORY_MAP_MISSING: "运动员目录映射配置文件缺失",
+    ErrorCode.ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND: "运动员素材记录不存在",
+    ErrorCode.ATHLETE_VIDEO_NOT_PREPROCESSED: "运动员视频尚未完成预处理，不能直接诊断",
+    ErrorCode.STANDARD_NOT_AVAILABLE: "该技术类别暂无可用的激活版标准",
+    ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE: "运动员视频姿态提取全程无可用关键点",
 }
 
 

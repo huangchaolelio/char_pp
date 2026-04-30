@@ -227,7 +227,10 @@ def _make_executor_mock(return_value: str) -> tuple[MagicMock, dict]:
 
 @pytest.mark.asyncio
 async def test_cos_key_parsing_full_path():
-    """cos://bucket-name/path/to/video.mp4 → key = path/to/video.mp4"""
+    """Feature-020 起 bucket 来自 ``.env::COS_BUCKET``（单租户），
+    输入字符串的首段（如 ``charhuang``）属于 object key 的一部分，不被剥离。
+    cos://bucket-name/path/to/video.mp4 → key = bucket-name/path/to/video.mp4
+    """
     session = AsyncMock()
     service = DiagnosisService(session)
     mock_loop, captured = _make_executor_mock("/tmp/downloaded.mp4")
@@ -239,13 +242,13 @@ async def test_cos_key_parsing_full_path():
         mock_asyncio.get_event_loop.return_value = mock_loop
         result = await service._download_from_cos("cos://bucket-name/path/to/video.mp4")
 
-    assert captured["args"] == ("path/to/video.mp4",)
+    assert captured["args"] == ("bucket-name/path/to/video.mp4",)
     assert result == "/tmp/downloaded.mp4"
 
 
 @pytest.mark.asyncio
 async def test_cos_key_parsing_simple():
-    """cos://bucket/key.mp4 → key = key.mp4"""
+    """Feature-020 起：cos://bucket/key.mp4 → key = bucket/key.mp4（只剥 scheme）."""
     session = AsyncMock()
     service = DiagnosisService(session)
     mock_loop, captured = _make_executor_mock("/tmp/downloaded2.mp4")
@@ -257,5 +260,5 @@ async def test_cos_key_parsing_simple():
         mock_asyncio.get_event_loop.return_value = mock_loop
         result = await service._download_from_cos("cos://bucket/key.mp4")
 
-    assert captured["args"] == ("key.mp4",)
+    assert captured["args"] == ("bucket/key.mp4",)
     assert result == "/tmp/downloaded2.mp4"

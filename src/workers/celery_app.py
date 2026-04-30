@@ -27,6 +27,9 @@ def create_celery_app() -> Celery:
             "src.workers.athlete_diagnosis_task",
             "src.workers.housekeeping_task",
             "src.workers.preprocessing_task",
+            "src.workers.athlete_scan_task",
+            "src.workers.athlete_preprocessing_callback",
+            # Feature-020
         ],
     )
 
@@ -77,6 +80,8 @@ def create_celery_app() -> Celery:
             "src.workers.housekeeping_task.cleanup_intermediate_artifacts": {"queue": "default"},
             "src.workers.housekeeping_task.sweep_orphan_jobs": {"queue": "default"},
             "src.workers.preprocessing_task.preprocess_video": {"queue": "preprocessing"},
+            "src.workers.athlete_scan_task.scan_athlete_videos": {"queue": "default"},
+            "src.workers.athlete_preprocessing_callback.mark_athlete_preprocessed_cb": {"queue": "default"},
         },
         # Beat schedule for data retention cleanup
         beat_schedule={
