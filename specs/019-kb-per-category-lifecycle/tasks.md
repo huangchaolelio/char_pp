@@ -80,7 +80,7 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 单元测试（先 Red）
 
-- [ ] T015 [US1] 新建 `tests/unit/test_approve_version_branches.py`：参数化覆盖 6 条分支——(a) 该类别首批（无旧 active，previous_active_version=null）；(b) 同类别覆盖（旧 v1 archived、新 v2 active）；(c) 跨类别并存（批 backhand 不影响 forehand）；(d) 冲突拒绝（mock `expert_tech_points.conflict_flag=true` → 抛 `KB_CONFLICT_UNRESOLVED`）；(e) 空集拒绝（point_count=0 → 抛 `KB_EMPTY_POINTS`）；(f) 并发模拟（asyncio.gather 两个同类别 approve → 一个成功一个因 partial unique index 失败）
+- [X] T015 [US1] 新建 `tests/unit/test_approve_version_branches.py`：参数化覆盖 6 条分支——(a) 该类别首批（无旧 active，previous_active_version=null）；(b) 同类别覆盖（旧 v1 archived、新 v2 active）；(c) 跨类别并存（批 backhand 不影响 forehand）；(d) 冲突拒绝（mock `expert_tech_points.conflict_flag=true` → 抛 `KB_CONFLICT_UNRESOLVED`）；(e) 空集拒绝（point_count=0 → 抛 `KB_EMPTY_POINTS`）；(f) 并发模拟（asyncio.gather 两个同类别 approve → 一个成功一个因 partial unique index 失败）
 
 ### Service 层实现（TDD Green）
 
@@ -95,7 +95,7 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### Schema 重构
 
-- [ ] T021 [NOOP] [US1] （**已由 T014pre 承接，保留编号避免依赖图错乱**）若 T014pre 中实现的 Pydantic 模型发现还缺字段，在本任务并行追加（依赖 T016-T019 service 方法实际返回结构修补）；**无追加内容则直接标 ✅ 关闭**（默认情况）
+- [X] T021 [NOOP] [US1] （**已由 T014pre 承接，保留编号避免依赖图错乱**）若 T014pre 中实现的 Pydantic 模型发现还缺字段，在本任务并行追加（依赖 T016-T019 service 方法实际返回结构修补）；**无追加内容则直接标 ✅ 关闭**（默认情况）
 
 **检查点**: US1 任务全部完成 → 可独立冒烟"按类别独立审批"（参照 quickstart § 4 冒烟 1）→ MVP P1 其一达成
 
@@ -138,12 +138,12 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 单元测试
 
-- [ ] T029 [US3] 新建 `tests/unit/test_tech_standard_builder_per_category.py`：覆盖 3 条分支——(a) 该类别首次 build（previous_version=null）；(b) 同类别再 build（new_version=previous+1，旧 active archived）；(c) 指纹一致（前后 active KB 下 expert_tech_points 集合未变）→ 抛 `STANDARD_ALREADY_UP_TO_DATE`
+- [X] T029 [US3] 新建 `tests/unit/test_tech_standard_builder_per_category.py`：覆盖 3 条分支——(a) 该类别首次 build（previous_version=null）；(b) 同类别再 build（new_version=previous+1，旧 active archived）；(c) 指纹一致（前后 active KB 下 expert_tech_points 集合未变）→ 抛 `STANDARD_ALREADY_UP_TO_DATE`
 
 ### Service 层 / Router 层实现
 
 - [X] T030 [US3] 重构 `src/services/tech_standard_builder.py::build`：签名改为 `async def build(session, tech_category: str) -> TechStandard`；内部步骤——(1) SELECT 该类别 active KB，无则抛 `NO_ACTIVE_KB_FOR_CATEGORY`；(2) 聚合该 KB 下 expert_tech_points；(3) 按 FR-019 口径计算指纹 `sha256(sorted_json([(ep.id, ep.param_ideal, ep.extraction_confidence) for ep in points]))`；(4) 对比该类别现有 active standard 指纹（读 `tech_standards.source_fingerprint`；若列不存在在本任务同步新增该列，nullable=True），相同则抛 `STANDARD_ALREADY_UP_TO_DATE`；**(4b) 统计贡献教练数（`SELECT DISTINCT coach_id FROM expert_tech_points JOIN coach_video_classifications ... WHERE kb_tech_category=:tc AND kb_version=:v`）→ `coach_count = COUNT`；推导 `source_quality = 'multi_source' if coach_count>=2 else 'single_source'`**；(5) 写入新 tech_standard（version = per-category MAX+1，status 直接 'active'——见 FR-014a，不走 draft。同事务写入 source_quality / coach_count / point_count / source_fingerprint / built_at）；(6) 归档旧 active standard（仅同类别）
-- [ ] T030a [US3] **合并入** `0017_kb_per_category_redesign.py`（不新建独立迁移，遵循 FR-025"单一迁移"约束）：`add_column('tech_standards', sa.Column('source_fingerprint', sa.String(64), nullable=True))` + 建局部唯一索引 `CREATE UNIQUE INDEX uq_ts_fingerprint_per_category ON tech_standards (tech_category, source_fingerprint) WHERE status='active'`。**避免指纹重复写入 + 为 FR-019 幂等检查提供 O(1) 查询**
+- [X] T030a [US3] **合并入** `0017_kb_per_category_redesign.py`（不新建独立迁移，遵循 FR-025"单一迁移"约束）：`add_column('tech_standards', sa.Column('source_fingerprint', sa.String(64), nullable=True))` + 建局部唯一索引 `CREATE UNIQUE INDEX uq_ts_fingerprint_per_category ON tech_standards (tech_category, source_fingerprint) WHERE status='active'`。**避免指纹重复写入 + 为 FR-019 幂等检查提供 O(1) 查询**
 - [X] T031 [US3] 重构 `src/api/routers/standards.py::POST /build`：Pydantic schema `BuildStandardRequest(tech_category: str)`（非空必填，缺失 422）；响应用 `ok(data)` 构造器；删除老的"tech_category 缺省就全量"的分支代码
 
 **检查点**: US3 完成 → 可独立冒烟"按类别 build 标准 + 幂等拒绝"（参照 quickstart 冒烟 3）→ MVP P1 三故事全达成
@@ -158,7 +158,7 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 单元测试（先 Red）
 
-- [ ] T032 [US4] 新建 `tests/unit/test_teaching_tip_svc_lifecycle.py`：覆盖 4 条分支——(a) 该类别首批 KB approve（无旧 active tips 组 → archived_count=0）；(b) 同类别覆盖（旧组 archived、新组 activated）；(c) `source_type='human'` 行归档时保留（archived_count 仅计 auto）；(d) 跨类别独立（批 backhand tips 不影响 forehand tips）
+- [X] T032 [US4] 新建 `tests/unit/test_teaching_tip_svc_lifecycle.py`：覆盖 4 条分支——(a) 该类别首批 KB approve（无旧 active tips 组 → archived_count=0）；(b) 同类别覆盖（旧组 archived、新组 activated）；(c) `source_type='human'` 行归档时保留（archived_count 仅计 auto）；(d) 跨类别独立（批 backhand tips 不影响 forehand tips）
 
 ### DAG 产出改造
 
@@ -167,9 +167,9 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 路由层 / Service 层微调
 
-- [ ] T034 [US4] 修改 `src/api/routers/teaching_tips.py`：列表接口默认 WHERE `status='active'`；支持 `?include_status=draft,archived` 放宽（CSV 解析）；字段响应去掉老 `action_type`、加 `tech_category` / `status`
-- [ ] T034a [US4] 新建 `tests/contract/test_teaching_tips_default_active.py`：合约测试 **FR-023 默认只返 active**——3 用例——(a) 默认请求仅返 `status='active'` 行；(b) `?include_status=draft,archived` 返回这两状态；(c) `?include_status=pending` 非法笔举值返 400 + `INVALID_ENUM_VALUE`
-- [ ] T035 [US4] 修改 `src/api/schemas/teaching_tip.py`：去掉 `action_type` 字段；加 `tech_category` / `status`；人工创建 tip 的请求 schema 新增 `tech_category` 必填 + `kb_tech_category` + `kb_version` 必填
+- [X] T034 [US4] 修改 `src/api/routers/teaching_tips.py`：列表接口默认 WHERE `status='active'`；支持 `?include_status=draft,archived` 放宽（CSV 解析）；字段响应去掉老 `action_type`、加 `tech_category` / `status`
+- [X] T034a [US4] 新建 `tests/contract/test_teaching_tips_default_active.py`：合约测试 **FR-023 默认只返 active**——3 用例——(a) 默认请求仅返 `status='active'` 行；(b) `?include_status=draft,archived` 返回这两状态；(c) `?include_status=pending` 非法笔举值返 400 + `INVALID_ENUM_VALUE`
+- [X] T035 [US4] 修改 `src/api/schemas/teaching_tip.py`：去掉 `action_type` 字段；加 `tech_category` / `status`；人工创建 tip 的请求 schema 新增 `tech_category` 必填 + `kb_tech_category` + `kb_version` 必填
 
 **检查点**: US4 完成 → 可独立冒烟"tips 随 KB approve 联动激活"（参照 quickstart 冒烟 4）
 
@@ -183,13 +183,13 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 合约测试（先 Red）
 
-- [ ] T036 [US5] 新建 `tests/contract/test_extraction_job_detail.py`：按 [contracts/extraction-job-detail.yaml](./contracts/extraction-job-detail.yaml) 验证；覆盖 200（succeeded 含非空 output_kbs、running 含空数组）、404 `EXTRACTION_JOB_NOT_FOUND`
+- [X] T036 [US5] 新建 `tests/contract/test_extraction_job_detail.py`：按 [contracts/extraction-job-detail.yaml](./contracts/extraction-job-detail.yaml) 验证；覆盖 200（succeeded 含非空 output_kbs、running 含空数组）、404 `EXTRACTION_JOB_NOT_FOUND`
 
 ### 实现
 
-- [ ] T037 [US5] 修改 `src/services/extraction_job_svc.py`（或等价 service）：详情查询在已有主体之外，补一次 `SELECT tech_category, version, created_at FROM tech_knowledge_bases WHERE extraction_job_id = :jid ORDER BY tech_category` → 填入响应 `output_kbs`
-- [ ] T038 [US5] 修改 `src/api/schemas/extraction_job.py`：`ExtractionJobDetailResponse` 增 `output_kbs: list[OutputKbRef]`；`OutputKbRef` 含三字段 `tech_category/version/created_at`
-- [ ] T039 [US5] 修改 `src/api/routers/extraction_jobs.py`：GET 详情路由使用新 schema；响应通过 `ok(data)` 构造
+- [X] T037 [US5] 修改 `src/services/extraction_job_svc.py`（或等价 service）：详情查询在已有主体之外，补一次 `SELECT tech_category, version, created_at FROM tech_knowledge_bases WHERE extraction_job_id = :jid ORDER BY tech_category` → 填入响应 `output_kbs`
+- [X] T038 [US5] 修改 `src/api/schemas/extraction_job.py`：`ExtractionJobDetailResponse` 增 `output_kbs: list[OutputKbRef]`；`OutputKbRef` 含三字段 `tech_category/version/created_at`
+- [X] T039 [US5] 修改 `src/api/routers/extraction_jobs.py`：GET 详情路由使用新 schema；响应通过 `ok(data)` 构造
 
 **检查点**: US5 完成 → 可独立冒烟"job → output_kbs 反查"（参照 quickstart 冒烟 2 后半）
 
@@ -203,11 +203,11 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 - [X] T040 **合并前必做** 运行 `/skills refresh-docs` 或人工编辑，同步 `docs/business-workflow.md`：§ 4.2 单 active 措辞 "全局单 active" → "per-(tech_category) 单 active"；§ 4.3 状态机注释补"作用域 = 单 tech_category"；**§ 7.2 步骤级指标 tag 补 `tech_category`**（`kb_version_activate_per_category` / `standards_build_per_category`）；§ 7.4 错误码表追加 4 个新 code（`KB_CONFLICT_UNRESOLVED` / `KB_EMPTY_POINTS` / `NO_ACTIVE_KB_FOR_CATEGORY` / `STANDARD_ALREADY_UP_TO_DATE`）。**章程原则 X 强制：本任务未完成前不得执行 T048 提交**
 - [X] T041 [P] 同步更新 `docs/architecture.md` 的 KB 实体图（主键变复合）与 `docs/features.md` 的 Feature-019 摘要；实体关系示意图新增 "tech_category / version" 双字段
-- [ ] T042 [P] 新建 / 更新 `specs/019-kb-per-category-lifecycle/contracts/retirement-ledger.md`：记录 T020 / T027 中改为 ENDPOINT_RETIRED 哨兵的老路径（方法 + 路径 + successor + migration_note + 哨兵文件行数）；形式与 `specs/017-api-standardization/contracts/retirement-ledger.md` 对齐（只可追加、不可删除）
+- [X] T042 [P] 新建 / 更新 `specs/019-kb-per-category-lifecycle/contracts/retirement-ledger.md`：记录 T020 / T027 中改为 ENDPOINT_RETIRED 哨兵的老路径（方法 + 路径 + successor + migration_note + 哨兵文件行数）；形式与 `specs/017-api-standardization/contracts/retirement-ledger.md` 对齐（只可追加、不可删除）
 
 ### 冲突检测端点联动（若 Feature-014 遗留 conflict-check 接口）
 
-- [ ] T043 检查 `src/api/routers/knowledge_base.py` 中是否有老的 `POST /versions/{version}/conflict-check`；若有则签名同步改复合主键 `/versions/{tech_category}/{version}/conflict-check`；否则跳过
+- [X] T043 检查 `src/api/routers/knowledge_base.py` 中是否有老的 `POST /versions/{version}/conflict-check`；若有则签名同步改复合主键 `/versions/{tech_category}/{version}/conflict-check`；否则跳过
 
 ### 端到端冒烟
 
@@ -215,12 +215,12 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 章程合规自检清单
 
-- [ ] T045 运行 quickstart.md § 6 的 8 项章程检查清单，逐项打钩（含合约测试先 Red、信封构造器使用、`AppException` 使用、4 新 ErrorCode 三张表登记、迁移幂等 3 次等）
+- [X] T045 运行 quickstart.md § 6 的 8 项章程检查清单，逐项打钩（含合约测试先 Red、信封构造器使用、`AppException` 使用、4 新 ErrorCode 三张表登记、迁移幂等 3 次等）
 
 ### 性能 / 准确性基准核对（SC-001~SC-007）
 
 - [ ] T046 运行 `tests/integration/` 全量测试，额外针对 SC-002 跑一次"200 条 KB 记录列表接口 P95 延迟"脚本（可用 `hey` 或 `locust`，脚本放 `specs/019-kb-per-category-lifecycle/scripts/bench_kb_list.py`），断言 P95 ≤ 300 ms；针对 SC-004 跑一次 standards build 耗时断言 ≤ 10 s
-- [ ] T047 运行全量单元 + 集成 + 合约测试（`/opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -v`）；所有新增测试必须 Green；任何既有测试被本 Feature 间接打破（如 `test_kb_*` 老用例）必须同步更新或删除
+- [X] T047 运行全量单元 + 集成 + 合约测试（`/opt/conda/envs/coaching/bin/python3.11 -m pytest tests/ -v`）；所有新增测试必须 Green；任何既有测试被本 Feature 间接打破（如 `test_kb_*` 老用例）必须同步更新或删除
 
 ### 提交
 

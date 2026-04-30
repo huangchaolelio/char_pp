@@ -1,16 +1,16 @@
-"""Teaching Tips router — CRUD management and re-trigger extraction (Feature 005).
+"""Teaching Tips router — CRUD management and re-trigger extraction (Feature 005 / Feature-019 adapted).
 
 Endpoints:
-  GET  /teaching-tips                        → list with filters
+  GET  /teaching-tips                        → list with filters (Feature-019: 默认仅 active)
   PATCH /teaching-tips/{tip_id}              → human edit
   DELETE /teaching-tips/{tip_id}             → physical delete
   POST /tasks/{task_id}/extract-tips         → re-trigger extraction (202)
 
-Feature-017: 响应体统一迁移至 ``SuccessEnvelope``；``HTTPException`` 改为 ``AppException``
-（章程 v1.4.0 原则 IX）。``POST /tasks/{task_id}/extract-tips`` 暂留此处，
-阶段 5 T050 可考虑搬迁到 tasks.py；``TIP_NOT_FOUND`` / ``TASK_NOT_FOUND`` /
-``WRONG_TASK_TYPE`` / ``TASK_NOT_READY`` / ``NO_AUDIO_TRANSCRIPT`` 均映射到
-对应 ErrorCode 枚举。
+Feature-019 变更（FR-023 / FR-024）:
+  - GET 过滤：`action_type` 参数 → `tech_category`；新增 `status` / `kb_tech_category` / `kb_version`
+  - GET **默认仅返 `status='active'`**；`?include_status=draft,archived` 放宽
+  - task_id 现为 nullable（tips 生命周期与 task 解耦），需改 JOIN 为 LEFT OUTER
+  - action_type 字段从响应中移除，改为 tech_category / status
 """
 
 from __future__ import annotations
@@ -33,48 +33,92 @@ from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.audio_transcript import AudioTranscript
 from src.models.coach import Coach
-from src.models.teaching_tip import TeachingTip
+from src.models.teaching_tip import TeachingTip, TipStatus
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["teaching-tips"])
 
 
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+
+def _parse_status_csv(raw: str | None) -> list[TipStatus]:
+    """解析 ?include_status=draft,archived CSV，返回 TipStatus 枚举列表（默认 [active]）.
+
+    非法值：返回 400 INVALID_ENUM_VALUE，details 含 allowed + got。
+    """
+    default = [TipStatus.active]
+    if raw is None or not raw.strip():
+        return default
+    parts = [p.strip().lower() for p in raw.split(",") if p.strip()]
+    if not parts:
+        return default
+    allowed = {e.value for e in TipStatus}
+    invalid = [p for p in parts if p not in allowed]
+    if invalid:
+        raise AppException(
+            ErrorCode.INVALID_ENUM_VALUE,
+            message=f"include_status 含非法值：{invalid!r}",
+            details={
+                "field": "include_status",
+                "allowed": sorted(allowed),
+                "got": parts,
+            },
+        )
+    return [TipStatus(p) for p in parts]
+
+
 # ── GET /teaching-tips ────────────────────────────────────────────────────────
+
 
 @router.get(
     "/teaching-tips",
     response_model=SuccessEnvelope[list[TeachingTipResponse]],
 )
 async def list_teaching_tips(
-    action_type: str | None = None,
+    tech_category: str | None = Query(None, description="按技术类别过滤（21 类之一）"),
     tech_phase: str | None = None,
     source_type: str | None = None,
     task_id: uuid.UUID | None = None,
     coach_id: uuid.UUID | None = None,  # Feature 006: filter by coach
+    kb_tech_category: str | None = Query(None, description="按 KB 复合键过滤（需配合 kb_version）"),
+    kb_version: int | None = Query(None, ge=1),
+    include_status: str | None = Query(
+        None,
+        description="Feature-019: CSV 形式放宽 status 过滤（默认仅返 active）。例: 'draft,archived'",
+    ),
     page_num: int = Query(1, ge=1, alias="page"),
     page_size: int = Query(20, ge=1, le=100),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[TeachingTipResponse]]:
     """List teaching tips with optional filters.
 
-    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）；
-    越界由 FastAPI 422 + VALIDATION_FAILED 自动拦截。
+    Feature-019 FR-023：默认仅返 `status='active'`；显式传 `?include_status=draft,archived`
+    放宽过滤范围。``task_id`` 现为 nullable（tips 生命周期与 task 解耦），JOIN 改 LEFT OUTER。
     """
-    # Feature 006: JOIN with analysis_tasks and coaches to support coach_id filter
+    # Feature-019: 默认 status=active；include_status 放宽
+    statuses = _parse_status_csv(include_status)
+
+    # task_id nullable → LEFT OUTER JOIN
     stmt = (
         select(TeachingTip, AnalysisTask.coach_id, Coach.name)
-        .join(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
+        .outerjoin(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
         .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
     )
     count_stmt = (
         select(func.count())
         .select_from(TeachingTip)
-        .join(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
+        .outerjoin(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
     )
 
-    if action_type is not None:
-        stmt = stmt.where(TeachingTip.action_type == action_type)
-        count_stmt = count_stmt.where(TeachingTip.action_type == action_type)
+    # Feature-019 生命周期过滤
+    stmt = stmt.where(TeachingTip.status.in_(statuses))
+    count_stmt = count_stmt.where(TeachingTip.status.in_(statuses))
+
+    if tech_category is not None:
+        tc_norm = tech_category.strip().lower()
+        stmt = stmt.where(TeachingTip.tech_category == tc_norm)
+        count_stmt = count_stmt.where(TeachingTip.tech_category == tc_norm)
     if tech_phase is not None:
         stmt = stmt.where(TeachingTip.tech_phase == tech_phase)
         count_stmt = count_stmt.where(TeachingTip.tech_phase == tech_phase)
@@ -87,6 +131,16 @@ async def list_teaching_tips(
     if coach_id is not None:
         stmt = stmt.where(AnalysisTask.coach_id == coach_id)
         count_stmt = count_stmt.where(AnalysisTask.coach_id == coach_id)
+    if kb_tech_category is not None and kb_version is not None:
+        ktc = kb_tech_category.strip().lower()
+        stmt = stmt.where(
+            TeachingTip.kb_tech_category == ktc,
+            TeachingTip.kb_version == kb_version,
+        )
+        count_stmt = count_stmt.where(
+            TeachingTip.kb_tech_category == ktc,
+            TeachingTip.kb_version == kb_version,
+        )
 
     total_result = await db.execute(count_stmt)
     total = int(total_result.scalar() or 0)
@@ -111,6 +165,7 @@ async def list_teaching_tips(
 
 
 # ── PATCH /teaching-tips/{tip_id} ─────────────────────────────────────────────
+
 
 @router.patch(
     "/teaching-tips/{tip_id}",
@@ -151,6 +206,7 @@ async def update_teaching_tip(
 
 # ── DELETE /teaching-tips/{tip_id} ────────────────────────────────────────────
 
+
 @router.delete("/teaching-tips/{tip_id}", status_code=204, response_model=None)
 async def delete_teaching_tip(
     tip_id: uuid.UUID,
@@ -173,6 +229,7 @@ async def delete_teaching_tip(
 
 
 # ── POST /tasks/{task_id}/extract-tips ───────────────────────────────────────
+
 
 @router.post(
     "/tasks/{task_id}/extract-tips",
@@ -260,18 +317,18 @@ async def extract_tips(
     )
     await db.commit()
 
-    # Resolve action_type from video_classification or task hint
-    action_type = _resolve_action_type(task)
+    # Resolve tech_category from task hint (Feature-019: AnalysisTask.kb_tech_category 优先)
+    tech_category = _resolve_tech_category(task)
 
     # Run extraction in a background thread to avoid blocking the event loop
     import asyncio
     asyncio.create_task(
-        _run_extraction_async(task_id, transcript.sentences or [], action_type)
+        _run_extraction_async(task_id, transcript.sentences or [], tech_category)
     )
 
     logger.info(
-        "extract_tips triggered task_id=%s action_type=%s preserved_human=%d",
-        task_id, action_type, preserved_human_count,
+        "extract_tips triggered task_id=%s tech_category=%s preserved_human=%d",
+        task_id, tech_category, preserved_human_count,
     )
 
     return ok(ExtractTipsResponse(
@@ -282,8 +339,10 @@ async def extract_tips(
     ))
 
 
-def _resolve_action_type(task: AnalysisTask) -> str:
-    """Resolve action_type from task video_filename heuristic (fallback: forehand_topspin)."""
+def _resolve_tech_category(task: AnalysisTask) -> str:
+    """Feature-019: 优先用 task.kb_tech_category；回退到 filename 启发式."""
+    if task.kb_tech_category:
+        return task.kb_tech_category
     filename = task.video_filename or ""
     if "反手" in filename:
         return "backhand_push"
@@ -293,13 +352,17 @@ def _resolve_action_type(task: AnalysisTask) -> str:
 async def _run_extraction_async(
     task_id: uuid.UUID,
     sentences: list[dict],
-    action_type: str,
+    tech_category: str,
 ) -> None:
-    """Background extraction: call LLM and persist results."""
+    """Background extraction: call LLM and persist results.
+
+    Feature-019: 写入 TeachingTip 时需带 tech_category / kb_tech_category / kb_version / status；
+    此处的背景提取仅用于审计/诊断辅助，默认写入 status='draft'，kb_* 置为该 task 绑定值。
+    """
     try:
         from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
         from src.config import get_settings
-        from src.models.teaching_tip import TeachingTip
+        from src.models.teaching_tip import TeachingTip, TipStatus
         from src.services.teaching_tip_extractor import TeachingTipExtractor
 
         settings = get_settings()
@@ -309,9 +372,10 @@ async def _run_extraction_async(
             timeout_s=settings.openai_timeout_s,
         )
 
+        # 传统 extractor 仍按 action_type 形参接收字符串，语义与 tech_category 对齐
         tips_data = extractor.extract(
             sentences=sentences,
-            action_type=action_type,
+            action_type=tech_category,
             task_id=task_id,
         )
 
@@ -319,15 +383,29 @@ async def _run_extraction_async(
             logger.info("extract_tips: no tips extracted for task_id=%s", task_id)
             return
 
-        # Persist new tips
         engine = create_async_engine(settings.database_url, pool_size=2, max_overflow=2)
         session_factory = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
         async with session_factory() as session:
+            # 回查 task 以取得 kb 复合键
+            task_row = (
+                await session.execute(
+                    select(AnalysisTask).where(AnalysisTask.id == task_id)
+                )
+            ).scalar_one_or_none()
+            if task_row is None or task_row.kb_tech_category is None or task_row.kb_version is None:
+                logger.warning(
+                    "extract_tips: task %s has no kb complex key; skipping persistence",
+                    task_id,
+                )
+                return
             async with session.begin():
                 for tip in tips_data:
                     session.add(TeachingTip(
                         task_id=tip.task_id,
-                        action_type=tip.action_type,
+                        tech_category=tech_category,
+                        kb_tech_category=task_row.kb_tech_category,
+                        kb_version=task_row.kb_version,
+                        status=TipStatus.draft,
                         tech_phase=tip.tech_phase,
                         tip_text=tip.tip_text,
                         confidence=tip.confidence,
