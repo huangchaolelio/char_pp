@@ -162,8 +162,8 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### DAG 产出改造
 
-- [ ] T033pre [US4] **探查**：在 `src/workers/kb_extraction_pipeline/` 下 `grep_search` 定位 persist_kb 实际 executor 文件名（plan.md 假定为 `step_executors/persist_kb.py`，实际路径以项目代码为准）；将真实路径记录到 T033 的文件路径位。若未找到独立 executor，则改修 `kb_extraction_task.py` 或等价主流程入口
-- [ ] T033 [US4] 微调上一步探得的 KB 提取持久化等价入口文件：将现有"单次调用 create_draft_version 产出一条 KB"改为"按 `expert_tech_points.action_type` 分组 → 每类别一条 draft KB"；同事务内为每组 points 写入对应 `teaching_tips`（status=draft、kb_tech_category / kb_version 填当前 draft KB 的复合键、tech_category 填该组的 action_type）
+- [X] T033pre [US4] **探查**：在 `src/workers/kb_extraction_pipeline/` 下 `grep_search` 定位 persist_kb 实际 executor 文件名（plan.md 假定为 `step_executors/persist_kb.py`，实际路径以项目代码为准）；将真实路径记录到 T033 的文件路径位。若未找到独立 executor，则改修 `kb_extraction_task.py` 或等价主流程入口
+- [X] T033 [US4] 微调上一步探得的 KB 提取持久化等价入口文件（实际路径：`src/services/kb_extraction_pipeline/step_executors/merge_kb.py`）：将现有"单次调用 create_draft_version 产出一条 KB"改为"按 `expert_tech_points.action_type` 分组 → 每类别一条 draft KB"；同事务内为每组 points 写入对应 `teaching_tips`（status=draft、kb_tech_category / kb_version 填当前 draft KB 的复合键、tech_category 填该组的 action_type）
 
 ### 路由层 / Service 层微调
 
@@ -201,8 +201,8 @@ description: "Feature-019 任务清单 · KB Per-Category Lifecycle"
 
 ### 章程合规：业务流程文档双向同步（原则 X 强制）
 
-- [ ] T040 **合并前必做** 运行 `/skills refresh-docs` 或人工编辑，同步 `docs/business-workflow.md`：§ 4.2 单 active 措辞 "全局单 active" → "per-(tech_category) 单 active"；§ 4.3 状态机注释补"作用域 = 单 tech_category"；**§ 7.2 步骤级指标 tag 补 `tech_category`**（`kb_version_activate_per_category` / `standards_build_per_category`）；§ 7.4 错误码表追加 4 个新 code（`KB_CONFLICT_UNRESOLVED` / `KB_EMPTY_POINTS` / `NO_ACTIVE_KB_FOR_CATEGORY` / `STANDARD_ALREADY_UP_TO_DATE`）。**章程原则 X 强制：本任务未完成前不得执行 T048 提交**
-- [ ] T041 [P] 同步更新 `docs/architecture.md` 的 KB 实体图（主键变复合）与 `docs/features.md` 的 Feature-019 摘要；实体关系示意图新增 "tech_category / version" 双字段
+- [X] T040 **合并前必做** 运行 `/skills refresh-docs` 或人工编辑，同步 `docs/business-workflow.md`：§ 4.2 单 active 措辞 "全局单 active" → "per-(tech_category) 单 active"；§ 4.3 状态机注释补"作用域 = 单 tech_category"；**§ 7.2 步骤级指标 tag 补 `tech_category`**（`kb_version_activate_per_category` / `standards_build_per_category`）；§ 7.4 错误码表追加 4 个新 code（`KB_CONFLICT_UNRESOLVED` / `KB_EMPTY_POINTS` / `NO_ACTIVE_KB_FOR_CATEGORY` / `STANDARD_ALREADY_UP_TO_DATE`）。**章程原则 X 强制：本任务未完成前不得执行 T048 提交**
+- [X] T041 [P] 同步更新 `docs/architecture.md` 的 KB 实体图（主键变复合）与 `docs/features.md` 的 Feature-019 摘要；实体关系示意图新增 "tech_category / version" 双字段
 - [ ] T042 [P] 新建 / 更新 `specs/019-kb-per-category-lifecycle/contracts/retirement-ledger.md`：记录 T020 / T027 中改为 ENDPOINT_RETIRED 哨兵的老路径（方法 + 路径 + successor + migration_note + 哨兵文件行数）；形式与 `specs/017-api-standardization/contracts/retirement-ledger.md` 对齐（只可追加、不可删除）
 
 ### 冲突检测端点联动（若 Feature-014 遗留 conflict-check 接口）

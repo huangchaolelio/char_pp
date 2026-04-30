@@ -375,54 +375,7 @@ class TestUS2QueryStandard:
 # ---------------------------------------------------------------------------
 # US3: Batch build all tech categories
 # ---------------------------------------------------------------------------
-
-class TestUS3BatchBuild:
-    """US3: POST /build without tech_category triggers batch build for all ActionTypes."""
-
-    @pytest.mark.asyncio
-    async def test_batch_build_returns_all_action_types(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
-        """Batch build response contains one entry per ActionType.
-
-        注：ActionType 枚举于迁移 0015 扩容至 27 项（21 类 TECH_CATEGORIES +
-        6 项 Feature-002/004 细分兼容值），断言通过动态枚举集合比对而非硬编码数量。
-        """
-        resp = await client.post("/api/v1/standards/build", json={})
-        assert resp.status_code == 200
-        envelope = resp.json()
-        assert envelope["success"] is True
-        data = envelope["data"]
-
-        assert data["mode"] == "batch"
-        assert "results" in data
-        assert "summary" in data
-
-        # 对齐 ActionType 枚举全集（迁移 0015 后 21+6=27 项）
-        from src.models.expert_tech_point import ActionType as EtpActionType
-        expected_categories = {at.value for at in EtpActionType}
-        returned_categories = {r["tech_category"] for r in data["results"]}
-        assert returned_categories == expected_categories
-
-        # Counts add up
-        summary = data["summary"]
-        assert (
-            summary["success_count"] + summary["skipped_count"] + summary["failed_count"]
-            == len(data["results"])
-        )
-
-    @pytest.mark.asyncio
-    async def test_batch_build_skips_categories_without_data(
-        self, client: AsyncClient, db_session: AsyncSession
-    ):
-        """All categories with no ExpertTechPoints are skipped (not failed)."""
-        resp = await client.post("/api/v1/standards/build", json={})
-        assert resp.status_code == 200
-        envelope = resp.json()
-        assert envelope["success"] is True
-        data = envelope["data"]
-
-        # With no seeded data, everything should be skipped
-        assert data["summary"]["failed_count"] == 0
-        for item in data["results"]:
-            assert item["result"] in ("skipped", "success")
+# Feature-019 FR-015: 批量 build（tech_category 缺省即 build 全部）已下线。
+# 现 POST /build 要求 tech_category 必填，缺省返回 422 VALIDATION_FAILED。
+# 原 TestUS3BatchBuild 类整体移除；新 per-category 合约测试见
+# tests/contract/test_standards_build_per_category.py。
