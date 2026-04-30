@@ -351,8 +351,8 @@ async def get_task_result(
 ) -> SuccessEnvelope[Union[TaskResultExpertResponse, TaskResultAthleteResponse]]:
     """Return the full analysis result for a completed task.
 
-    - expert_video: returns KB draft version + extracted tech points list.
-    - athlete_video: returns motion analyses with deviation reports and coaching advice.
+    - kb_extraction: returns KB draft version + extracted tech points list.
+    - athlete_diagnosis: returns motion analyses with deviation reports and coaching advice.
 
     Returns 404 if the task does not exist or has been soft-deleted.
     Returns 400 ``TASK_NOT_READY`` if the task has not yet reached status=success
@@ -387,8 +387,8 @@ async def get_task_result(
             details={"task_id": task_id, "status": task.status.value},
         )
 
-    # ── expert_video branch ───────────────────────────────────────────────────
-    if task.task_type == TaskType.expert_video:
+    # ── kb_extraction branch ─────────────────────────────────────────────────
+    if task.task_type == TaskType.kb_extraction:
         # Load all tech points with their source segment timestamps (FR-008)
         points_result = await db.execute(
             select(ExpertTechPoint, TechSemanticSegment)
@@ -473,7 +473,7 @@ async def get_task_result(
             conflicts=conflicts,
         ))
 
-    # ── athlete_video branch ──────────────────────────────────────────────────
+    # ── athlete_diagnosis branch ──────────────────────────────────────────────
     analyses_result = await db.execute(
         select(AthleteMotionAnalysis).where(
             AthleteMotionAnalysis.task_id == task_uuid

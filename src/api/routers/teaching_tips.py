@@ -183,10 +183,13 @@ async def extract_tips(
     task_id: uuid.UUID,
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[ExtractTipsResponse]:
-    """Re-trigger (or first-time trigger) teaching tip extraction for a completed expert video task.
+    """Re-trigger (or first-time trigger) teaching tip extraction for a completed KB-extraction task.
 
-    - Validates task exists, is expert_video type, has status=success, and has an AudioTranscript.
+    - Validates task exists, is kb_extraction type, has status=success, and has an AudioTranscript.
     - Deletes old auto-status tips for this task.
+
+    Note (Feature-013 rename): the legacy ``expert_video`` task type was renamed
+    to ``kb_extraction`` in Alembic 0012; this endpoint has been updated accordingly.
     - Preserves human-status tips.
     - Dispatches extraction synchronously in a background thread (keeps response <1s).
 
@@ -207,14 +210,14 @@ async def extract_tips(
             details={"task_id": str(task_id)},
         )
 
-    if task.task_type != TaskType.expert_video:
+    if task.task_type != TaskType.kb_extraction:
         raise AppException(
             ErrorCode.WRONG_TASK_TYPE,
-            message="仅支持 expert_video 类型任务",
+            message="仅支持 kb_extraction 类型任务",
             details={
                 "task_id": str(task_id),
                 "task_type": task.task_type.value,
-                "expected": "expert_video",
+                "expected": "kb_extraction",
             },
         )
 
