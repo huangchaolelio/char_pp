@@ -21,19 +21,21 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.config import get_settings
-from src.models.audio_transcript import AudioQualityFlag
+from src.models.audio_transcript import AudioQualityFlag, AudioTranscript
 from src.models.extraction_job import ExtractionJob
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
 from src.services import speech_recognizer as _speech_mod
 from src.services.audio_extractor import AudioExtractor
 from src.services.kb_extraction_pipeline.artifact_io import write_transcript_artifact
+from src.services.speech_recognizer import TranscriptResult
 from src.services.kb_extraction_pipeline.error_codes import (
     WHISPER_LOAD_FAILED,
     WHISPER_NO_AUDIO,
@@ -93,6 +95,46 @@ def _estimate_snr_if_possible(audio_path: Path) -> float | None:
     except Exception as exc:  # pragma: no cover — defensive only
         logger.warning("audio_transcription: SNR estimate failed: %s", exc)
         return None
+
+
+async def _upsert_audio_transcript(
+    session: AsyncSession,
+    *,
+    task_id: uuid.UUID,
+    transcript: TranscriptResult,
+) -> None:
+    """Persist the transcription result into ``audio_transcripts``.
+
+    Feature-014/016 的 DAG 把转写工件落到 ``transcript.json``，但 Feature-005 的
+    ``/api/v1/teaching-tips/tasks/{id}/extract-tips`` 依赖 ``audio_transcripts``
+    表读取 sentences。若不回写 DB，老接口在 KB 提取完成后仍会报
+    ``NO_AUDIO_TRANSCRIPT``。此函数在 success / silent 分支都会被调用，保持表与
+    文件工件同步。
+
+    ``audio_transcripts.task_id`` 当前没有 UNIQUE 约束，但业务上要求单行
+    （teaching_tips 用 ``scalar_one_or_none`` 查询）。因此这里采用
+    "DELETE existing → INSERT fresh" 的写法实现幂等替换，兼容 DAG 重跑。
+    """
+    quality_flag = transcript.quality_flag
+    if not isinstance(quality_flag, AudioQualityFlag):
+        quality_flag = AudioQualityFlag(str(quality_flag))
+
+    await session.execute(
+        delete(AudioTranscript).where(AudioTranscript.task_id == task_id)
+    )
+
+    row = AudioTranscript(
+        task_id=task_id,
+        language=transcript.language or "zh",
+        model_version=transcript.model_version or "unknown",
+        total_duration_s=transcript.total_duration_s,
+        snr_db=transcript.snr_db,
+        quality_flag=quality_flag,
+        fallback_reason=transcript.fallback_reason,
+        sentences=list(transcript.sentences or []),
+    )
+    session.add(row)
+    await session.flush()
 
 
 # ── Executor ────────────────────────────────────────────────────────────────
@@ -164,6 +206,11 @@ async def execute(
         logger.info(
             "audio_transcription: silent audio in %s → skipping", audio_path
         )
+        # Persist the silent transcript so downstream teaching_tips can tell
+        # "pipeline ran & found silence" apart from "pipeline never ran".
+        await _upsert_audio_transcript(
+            session, task_id=job.analysis_task_id, transcript=transcript
+        )
         return {
             "status": PipelineStepStatus.skipped,
             "output_summary": {
@@ -185,6 +232,13 @@ async def execute(
         video_path=str(download_dir),  # directory — no single source file
         audio_path=str(audio_path),
         transcript_result=transcript,
+    )
+
+    # ── Step 5b: Persist into audio_transcripts (feature-005 consumer) ───
+    # The legacy teaching_tips endpoint reads from this table; DAG must
+    # keep it in sync with the transcript.json artifact.
+    await _upsert_audio_transcript(
+        session, task_id=job.analysis_task_id, transcript=transcript
     )
 
     # ── Step 6: Rich summary ─────────────────────────────────────────────
