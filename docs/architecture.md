@@ -1,7 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-04-28
-
+> 最后更新：2026-04-30
 ## 目录
 
 - [系统概述](#系统概述)
@@ -57,13 +56,12 @@
 │                                                   │
 │  中间件：Request-ID、性能计时、全局异常处理         │
 │                                                   │
-│  路由：/api/v1/（Feature-017 规范化后）              │
+  路由：/api/v1/（Feature-017 规范化后 + Feature-018 扩展）│
 │    tasks  knowledge-base  classifications  coaches│
 │    standards  teaching-tips  calibration          │
 │    extraction-jobs  task-channels  admin          │
-│    video-preprocessing                            │
-│    _retired（哨兵：7 条已下线接口 → 404 ENDPOINT_RETIRED）│
-└────────────┬──────────────────┬───────────────────┘
+│    video-preprocessing  business-workflow         │
+│    _retired（哨兵：7 条已下线接口 → 404 ENDPOINT_RETIRED）│└────────────┬──────────────────┬───────────────────┘
              │ asyncpg           │ Celery send_task
 ┌────────────▼──────┐  ┌────────▼─────────────────┐
 │    PostgreSQL      │  │   Redis (Broker)          │
@@ -157,6 +155,23 @@ teaching_tips                       # LLM 提炼的教学建议
 | `Coach` | `coaches` | 教练信息，与 COS 目录 1:1 对应 |
 | `DiagnosisReport` | `diagnosis_reports` | 运动员诊断报告 |
 
+### 业务阶段双列（Feature-018 迁移 0016）
+
+为支持业务流程总览聚合（`GET /business-workflow/overview`），以下四张业务表统一下沉 `business_phase` + `business_step` 双列：
+
+| 表 | phase 取值 | step 取值 |
+|----|-----------|----------|
+| `analysis_tasks` | `TRAINING` / `INFERENCE`（按 task_type 派生） | `scan_cos_videos` / `preprocess_video` / `classify_video` / `extract_kb` / `diagnose_athlete` |
+| `extraction_jobs` | `TRAINING`（固定） | `extract_kb`（固定） |
+| `video_preprocessing_jobs` | `TRAINING`（固定） | `preprocess_video`（固定） |
+| `tech_knowledge_bases` | `STANDARDIZATION`（固定） | `kb_version_activate`（固定） |
+
+- **派生单一事实来源**：`src/models/_phase_step_hook.py` 注册 SQLAlchemy `before_insert` 事件 → 新行自动派生两列；未知 `task_type` 或只传入单列 ⇒ `ValueError(PHASE_STEP_UNMAPPED)`（fail-fast）
+- **DB 级兜底**：迁移 0016 将两列设为 `NOT NULL`；PostgreSQL enum type `business_phase_enum`（`TRAINING` / `STANDARDIZATION` / `INFERENCE`）限制取值
+- **索引**：`analysis_tasks` 上建 `(business_phase, business_step)` 复合索引，`extraction_jobs` 上建 `(business_phase)` 单列索引，加速总览接口聚合
+- **禁止手填**：业务代码 MUST NOT 手动设置 `business_phase` / `business_step`，统一由 ORM 钩子派生
+
+
 ### TaskStatus 状态机
 
 ```
@@ -198,8 +213,9 @@ pending → processing → success
 | `/api/v1/calibration` | `calibration.py` | 多教练知识库对比（Feature-006） |
 | `/api/v1/extraction-jobs` | `extraction_jobs.py` | KB 提取 DAG 作业查询 / 重跑（Feature-014） |
 | `/api/v1/task-channels` | `task_channels.py` | 通道实时快照（Feature-013） |
-| `/api/v1/admin/...` | `admin.py` | 通道热更新 + 管道重置（Feature-013） |
+| `/api/v1/admin/...` | `admin.py` | 通道热更新 + 管道重置（Feature-013）+ **优化杠杆台账 `GET /admin/levers`（Feature-018 US3）** |
 | `/api/v1/video-preprocessing` | `video_preprocessing.py` | 预处理作业分页列表 + 单条审计详情（Feature-016） |
+| `/api/v1/business-workflow` | `business_workflow.py` | **业务阶段总览 `GET /business-workflow/overview`（Feature-018 US1，三阶段 × 八步骤计数/耗时/吞吐）** |
 | `—（哨兵）` | `_retired.py` | 7 条已下线接口的 `ENDPOINT_RETIRED` 哨兵路由 |
 
 **已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。
@@ -264,6 +280,32 @@ pending → processing → success
 | `scripts/lint_error_codes.py` | 业务代码不得出现裸字符串错误码或 `raise HTTPException` |
 
 两者 0 违规为合入 PR 的硬性前置（见 `docs/api-standardization-guide.md` §8 Pre-merge 自检清单）。
+
+### 工作流漂移与 Spec 合规守卫（Feature-018 US2）
+
+章程原则 X（业务工作流对齐）落地为两套离线扫描器 + 一条 pre-push hook：
+
+| 脚本 | 作用 |
+|------|------|
+| `scripts/audit/workflow_drift.py` | 代码 ↔ `docs/business-workflow.md` 的 **8 类漂移扫描**（错误码前缀 / 状态机枚举 / 评分公式阈值 / 通道种子 / § 9 三类杠杆清单 / spec-template 子标签 / `config/optimization_levers.yml` 一致性 / 阶段步骤总表） |
+| `scripts/audit/spec_compliance.py` | `specs/*/spec.md` 中「业务阶段映射」六项子标签完整性扫描（FR-020） |
+
+**Makefile 目标**（仓库根）：
+
+| 目标 | 命令 | 触发点 |
+|------|------|--------|
+| `make drift-changed` | 仅扫描 `git diff` 变更文件 | pre-push hook 自动执行 |
+| `make drift-full` | 全量漂移扫描 | 手工 / 未来 CI |
+| `make spec-compliance` | spec-template 六项子标签 | 手工 / 未来 CI |
+
+**Git hook 安装**：`scripts/install-git-hooks.sh` 幂等将 `scripts/git-hooks/pre-push` 软链到 `.git/hooks/pre-push`（首次 clone 后执行一次）。pre-push 阻断含漂移的 push，**不支持 waiver**（Clarification Q5）；hotfix 走「代码修改 + 文档同步」原子 PR。
+
+**辅助配置**：
+
+- `config/optimization_levers.yml`：三类杠杆（运行时参数 / 算法模型 / 规则 Prompt）台账，与 `business-workflow.md` § 9 表格双向同步
+- `scripts/audit/.scan-exclude.yml`：历史静态排除清单（`specs/001-*/` ~ `specs/017-*/` 共 17 目录免扫）
+
+未来接入 GitHub Actions / GitLab CI / Jenkins 时，仅需在对应配置中调用 `make drift-full` + `make spec-compliance` 即可对接，无平台强依赖。
 
 ---
 
