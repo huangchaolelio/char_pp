@@ -192,7 +192,7 @@ overall_score = mean(dim_scores)
 ```
 analysis_tasks
   ├─ task_type ∈ {video_classification, kb_extraction, athlete_diagnosis, video_preprocessing}
-  ├─ status ∈ {pending, processing, success, failed, cancelled}
+  ├─ status ∈ {pending, processing, success, partial_success, failed, rejected}
   ├─ submitted_at / started_at / completed_at
   ├─ error_message / error_code
   └─ extraction_job_id (FK → DAG 详情)
@@ -222,17 +222,27 @@ diagnosis_reports
 
 ### 7.4 结构化错误码前缀（grep 可定位 runbook）
 
+> 本表由 `scripts/audit/workflow_drift.py` 守护 (Feature-018)；代码侧新增错误码未同步到本表 ⇒ CI 失败。
+
 | 错误码前缀 | 语义 | 可重试 |
 |-----------|------|-------|
 | `VIDEO_QUALITY_REJECTED:` | fps / 分辨率不过关 | 否 |
+| `VIDEO_DOWNLOAD_FAILED:` | 视频下载失败 | I/O 重试 |
+| `VIDEO_PROBE_FAILED:` | ffprobe 探测失败 | 否 |
+| `VIDEO_CODEC_UNSUPPORTED:` | 编码不受支持 | 否 |
+| `VIDEO_TRANSCODE_FAILED:` / `VIDEO_SPLIT_FAILED:` | ffmpeg 失败 | 视情况 |
+| `VIDEO_UPLOAD_FAILED:` | COS 上传失败 | I/O 重试 |
+| `AUDIO_EXTRACT_FAILED:` | 音频导出失败 | I/O 重试 |
+| `AUDIO_MISSING:` | 预处理产物中无音频 | 否 |
+| `SEGMENT_MISSING:` | 预处理分段缺失 | 否 |
 | `POSE_NO_KEYPOINTS:` | 估计不到骨架 | 否 |
 | `POSE_MODEL_LOAD_FAILED:` | YOLOv8/MediaPipe 加载失败 | I/O 重试 |
 | `WHISPER_LOAD_FAILED:` | Whisper 模型加载失败 | I/O 重试 |
 | `WHISPER_NO_AUDIO:` | 无音轨（在 `skip_reason` 里） | skipped 而非 failed |
-| `LLM_UNCONFIGURED:` | Venus / OpenAI 均未配置 | 否（fail-fast） |
+| `ACTION_CLASSIFY_FAILED:` | 动作分类失败 | 视情况 |
+| `LLM_UNCONFIGURED:` | Venus / OpenAI 均未配置 | 否（fail-fast）|
 | `LLM_JSON_PARSE:` | LLM 返回非 JSON | 否 |
-| `VIDEO_TRANSCODE_FAILED:` / `VIDEO_SPLIT_FAILED:` | ffmpeg 失败 | 视情况 |
-
+| `LLM_CALL_FAILED:` | LLM 上游调用失败 | 指数退避重试 |
 ### 7.5 建议补强的三类指标
 
 | 类别 | 指标 | 建议落点 | 用途 |
@@ -240,6 +250,39 @@ diagnosis_reports
 | **时效性** | 每步 P50/P95 耗时、队列等待时长、端到端 TTR | `pipeline_steps` 物化视图 → Grafana | 定位瓶颈步骤 → 调并发/换 backend |
 | **准确性** | `conflict_items / merged_items` 比、`classifier_disagreements`、LLM fallback 率、`reliability_level=low` 占比 | `output_summary` JSONB 聚合到日报 | 驱动规则/模型迭代 |
 | **成本** | LLM tokens/任务、GPU 占用、COS 流量 | 在 `llm_client` + `cos_client` 加 metric hook | 预算对账 |
+
+### 7.6 业务阶段总览接口（Feature-018 US1）
+
+| 接口 | 路径 | 鉴权 | 说明 |
+|-----|-----|------|------|
+| `GET /api/v1/business-workflow/overview` | `?window_hours=1..168`（默认 24） | 无 | 一次返回三阶段 × 八步骤的计数、耗时 P50/P95、24h 吞吐 |
+
+响应信封 `meta` 字段：
+- `generated_at` — CST 时间戳（ISO 8601 +08:00）
+- `window_hours` — 本次聚合窗口，回填请求参数
+- `degraded` — 是否降级（`analysis_tasks` 行数 > 100 万）
+- `degraded_reason` — 降级时为 `"row_count_exceeds_latency_budget"`；完整档省略
+
+降级档下各 `step` 对象省略 `p50_seconds` / `p95_seconds` 字段，仅保留计数与近 24h 吞吐；> 1000 万行超出本 Feature 范围（留给后续物化视图 Feature）。
+
+四表新增 `business_phase` / `business_step` 两列（migration 0016），由 `src/models/_phase_step_hook.py` ORM `before_insert` 钩子自动派生（规则见 data-model.md § 3.1）；列级 `NOT NULL` 作兜底。
+
+### 7.7 CI 守卫（Feature-018 US2）
+
+章程级约束（错误码前缀 / 状态机枚举 / 评分公式阈值 / 通道种子 / § 9 三类杠杆清单 / spec-template 六项子标签）由两个离线脚本守护：
+
+| 脚本 | 作用 | 本地命令 |
+|------|------|---------|
+| `scripts/audit/workflow_drift.py` | 代码 → `docs/business-workflow.md` 的 8 类漂移扫描 | `make drift-full` 或 `make drift-changed` |
+| `scripts/audit/spec_compliance.py` | `specs/*/spec.md` 是否含「业务阶段映射」六项子标签 | `make spec-compliance` |
+
+守卫落地方式（Clarification Q6 选项 A — 不引入托管 CI 平台配置）：
+1. `Makefile`（仓库根）声明 `drift-changed` / `drift-full` / `spec-compliance` 三目标，`PYBIN ?= /opt/conda/envs/coaching/bin/python3.11`
+2. `scripts/git-hooks/pre-push` 调用 `make drift-changed` 阻断含漂移的 push
+3. `scripts/install-git-hooks.sh` 幂等将 pre-push 软链到 `.git/hooks/pre-push`（首次 clone 后执行一次）
+4. 未来接入 GitHub Actions / GitLab CI / Jenkins 时，仅需在对应配置中调用 `make drift-full` + `make spec-compliance` 两个目标即可对接
+
+**不支持 waiver**：任何漂移 / 合规违规 ⇒ `exit 1` ⇒ CI 阻断。hotfix 统一靠「代码修改 + 文档同步」原子 PR 解决（Clarification Q5）。`scripts/audit/.scan-exclude.yml` 是历史静态排除清单（初始即 `specs/001-*/` ~ `specs/017-*/` 共 17 个目录），非运行期豁免。
 
 ---
 
@@ -271,12 +314,16 @@ flowchart TD
 
 ## 9. 持续优化的三种杠杆
 
-| 杠杆 | 触点 | 无需重启 | 生效时间 | 示例 |
-|-----|------|---------|---------|------|
-| **运行时参数** | `task_channel_configs`（`PATCH /api/v1/admin/channels/{task_type}`） | ✅ | 30s TTL 内 | 压测时 `kb_extraction.concurrency 2→4` |
-| **算法/模型** | `.env` + `POSE_BACKEND=auto/yolov8/mediapipe` / Whisper 模型大小 | 重启 worker | 立即 | Whisper-large → Whisper-medium 换时效 |
-| **规则/Prompt** | `config/tech_classification_rules.json` / `transcript_tech_parser` prompt | 重启 API | 立即 | 新增"冲突回退规则"不改代码 |
+> 本表与 `config/optimization_levers.yml` 双向同步，由 `scripts/audit/workflow_drift.py` 守护（Feature-018 FR-014）。
+> 运维/SRE 还可通过 `GET /api/v1/admin/levers` 一次请求获得所有杠杆的当前值、生效路径与重启范围（敏感键仅返回 `is_configured`）。
 
+| 杠杆 | 触点 | 键示例 | 无需重启 | 生效时间 | 示例 |
+|-----|------|---------|---------|---------|------|
+| **运行时参数** | `task_channel_configs` (`PATCH /api/v1/admin/channels/{task_type}`) | `task_channel_configs.kb_extraction.concurrency` / `task_channel_configs.athlete_diagnosis.concurrency` | ✅ | 30s TTL 内 | 压测时 `kb_extraction.concurrency 2→4` |
+| **运行时参数（敏感）** | `.env` COS / DB 凭证 | `COS_SECRET_KEY` / `POSTGRES_PASSWORD` | 重启 worker/API | 立即 | 轮换 COS 临时密钥 |
+| **算法/模型** | `.env` + `POSE_BACKEND=auto/yolov8/mediapipe` / `WHISPER_MODEL_SIZE` | `POSE_BACKEND` / `WHISPER_MODEL_SIZE` | 重启 worker | 立即 | Whisper-large → Whisper-medium 换时效 |
+| **算法/模型（敏感）** | LLM 上游凭证 | `VENUS_TOKEN` / `OPENAI_API_KEY` | 重启 worker | 立即 | 从 Venus 改走 OpenAI |
+| **规则/Prompt** | `config/tech_classification_rules.json` / `transcript_tech_parser` prompt | `config/tech_classification_rules.json` | 重启 API | 立即 | 新增“冲突回退规则”不改代码 |
 ### 9.1 典型优化剧本
 
 **剧本 A · 时效优化**

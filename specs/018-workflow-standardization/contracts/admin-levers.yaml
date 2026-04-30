@@ -1,0 +1,177 @@
+openapi: 3.1.0
+info:
+  title: Feature-018 — Admin Optimization Levers
+  version: 1.0.0
+  description: |
+    优化杠杆统一台账只读接口，返回业务流程文档 § 9 三类杠杆的元信息与当前值。
+    敏感键（VENUS_TOKEN / OPENAI_API_KEY / COS_SECRET_KEY / POSTGRES_PASSWORD）
+    仅返回 is_configured，不返回 current_value。
+
+paths:
+  /api/v1/admin/levers:
+    get:
+      summary: 优化杠杆统一台账
+      tags: [admin]
+      security:
+        - AdminToken: []
+      parameters:
+        - name: phase
+          in: query
+          required: false
+          description: 按业务阶段过滤（条目 business_phase 含所查询阶段时返回）
+          schema:
+            type: string
+            enum: [TRAINING, STANDARDIZATION, INFERENCE]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SuccessEnvelope_LeverGroups"
+              example:
+                success: true
+                data:
+                  runtime_params:
+                    - key: "task_channel_configs.kb_extraction.concurrency"
+                      type: runtime_params
+                      source: db_table
+                      effective_in_seconds: 30
+                      restart_scope: none
+                      business_phase: [TRAINING]
+                      current_value: 2
+                      last_changed_at: "2026-04-28T10:14:02+08:00"
+                      last_changed_by: "ops-admin"
+                    - key: "COS_SECRET_KEY"
+                      type: runtime_params
+                      source: env
+                      effective_in_seconds: null
+                      restart_scope: worker
+                      business_phase: [TRAINING, STANDARDIZATION]
+                      is_configured: true
+                      # 敏感：不返回 current_value / last_changed_*
+                  algorithm_models:
+                    - key: POSE_BACKEND
+                      type: algorithm_models
+                      source: env
+                      effective_in_seconds: null
+                      restart_scope: worker
+                      business_phase: [TRAINING, INFERENCE]
+                      current_value: "auto"
+                    - key: VENUS_TOKEN
+                      type: algorithm_models
+                      source: env
+                      effective_in_seconds: null
+                      restart_scope: worker
+                      business_phase: [TRAINING, INFERENCE]
+                      is_configured: true
+                  rules_prompts:
+                    - key: "config/tech_classification_rules.json"
+                      type: rules_prompts
+                      source: config_file
+                      effective_in_seconds: null
+                      restart_scope: api
+                      business_phase: [TRAINING]
+                      current_value: "loaded (hash=sha256:7f...)"
+                meta: null
+        "401":
+          description: 鉴权失败
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: ADMIN_TOKEN_INVALID
+                  message: "管理员令牌无效"
+                  details: null
+        "500":
+          description: 服务端 fail-safe（ADMIN_TOKEN 未配置）
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+              example:
+                success: false
+                error:
+                  code: ADMIN_TOKEN_NOT_CONFIGURED
+                  message: "管理员令牌未配置"
+
+components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+  schemas:
+    SuccessEnvelope_LeverGroups:
+      type: object
+      required: [success, data]
+      additionalProperties: false
+      properties:
+        success: { type: boolean, enum: [true] }
+        data:
+          $ref: "#/components/schemas/LeverGroups"
+        meta: { nullable: true }
+    LeverGroups:
+      type: object
+      required: [runtime_params, algorithm_models, rules_prompts]
+      additionalProperties: false
+      properties:
+        runtime_params:
+          type: array
+          items: { $ref: "#/components/schemas/LeverEntry" }
+        algorithm_models:
+          type: array
+          items: { $ref: "#/components/schemas/LeverEntry" }
+        rules_prompts:
+          type: array
+          items: { $ref: "#/components/schemas/LeverEntry" }
+    LeverEntry:
+      type: object
+      required: [key, type, source, restart_scope, business_phase]
+      additionalProperties: false
+      properties:
+        key: { type: string }
+        type:
+          type: string
+          enum: [runtime_params, algorithm_models, rules_prompts]
+        source:
+          type: string
+          enum: [db_table, env, config_file]
+        effective_in_seconds:
+          type: integer
+          nullable: true
+        restart_scope:
+          type: string
+          enum: [none, worker, api]
+        business_phase:
+          type: array
+          items:
+            type: string
+            enum: [TRAINING, STANDARDIZATION, INFERENCE]
+        # 非敏感键：
+        current_value:
+          anyOf:
+            - { type: string }
+            - { type: integer }
+            - { type: boolean }
+            - { type: "null" }
+        last_changed_at: { type: string, format: date-time, nullable: true }
+        last_changed_by: { type: string, nullable: true }
+        # 敏感键：
+        is_configured: { type: boolean, nullable: true }
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      additionalProperties: false
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+            details: { type: object, nullable: true }

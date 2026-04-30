@@ -18,6 +18,7 @@ from sqlalchemy import (
     BigInteger,
     Boolean,
     CheckConstraint,
+    Enum,
     Index,
     Integer,
     String,
@@ -30,6 +31,7 @@ from sqlalchemy.sql import func
 from sqlalchemy import text
 
 from src.db.session import Base
+from src.models.analysis_task import BusinessPhase
 
 if TYPE_CHECKING:
     from src.models.video_preprocessing_segment import VideoPreprocessingSegment
@@ -88,6 +90,14 @@ class VideoPreprocessingJob(Base):
     local_artifact_dir: Mapped[Optional[str]] = mapped_column(
         String(512), nullable=True
     )
+
+    # Feature 018 — Business phase / step mapping (章程原则 X).
+    # Fixed TRAINING / preprocess_video (data-model.md § 3.3). Auto-populated by hook.
+    business_phase: Mapped[BusinessPhase] = mapped_column(
+        Enum(BusinessPhase, name="business_phase_enum", create_type=False),
+        nullable=False,
+    )
+    business_step: Mapped[str] = mapped_column(String(64), nullable=False)
 
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")

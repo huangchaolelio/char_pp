@@ -167,6 +167,14 @@ async def list_extraction_jobs(
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=100),
     status: str | None = Query(None),
+    business_phase: str | None = Query(
+        None,
+        description="Feature-018: 按业务阶段过滤（extraction_jobs 恒为 TRAINING）",
+    ),
+    business_step: str | None = Query(
+        None,
+        description="Feature-018: 按业务步骤过滤（extraction_jobs 恒为 extract_kb）",
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[ExtractionJobSummary]]:
     # Optional status filter.
@@ -174,6 +182,23 @@ async def list_extraction_jobs(
         parse_enum_param(status, field="status", enum_cls=ExtractionJobStatus)
         if status else None
     )
+
+    # Feature-018 参数一致性校验：extraction_jobs 的 phase/step 恒定 TRAINING/extract_kb
+    from src.api.phase_params import parse_business_phase
+    from src.models.analysis_task import BusinessPhase
+    phase_enum = parse_business_phase(business_phase, field="business_phase")
+    if phase_enum is not None and phase_enum != BusinessPhase.TRAINING:
+        raise AppException(
+            ErrorCode.INVALID_PHASE_STEP_COMBO,
+            message="extraction_jobs 仅存在于 TRAINING 阶段",
+            details={"conflict": "phase_resource_mismatch", "phase": phase_enum.value, "resource": "extraction_jobs"},
+        )
+    if business_step is not None and business_step.strip().lower() != "extract_kb":
+        raise AppException(
+            ErrorCode.INVALID_PHASE_STEP_COMBO,
+            message="extraction_jobs 仅对应 extract_kb 步骤",
+            details={"conflict": "step_resource_mismatch", "step": business_step, "resource": "extraction_jobs"},
+        )
 
     base_q = select(ExtractionJob)
     if status_enum:

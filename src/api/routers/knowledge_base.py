@@ -41,6 +41,10 @@ router = APIRouter(tags=["knowledge-base"])
 async def list_kb_versions(
     page_num: int = Query(1, ge=1, alias="page"),
     page_size: int = Query(20, ge=1, le=100),
+    business_phase: str | None = Query(
+        None,
+        description="Feature-018: 按业务阶段过滤（knowledge_base 恒为 STANDARDIZATION）",
+    ),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[KnowledgeBaseVersionItem]]:
     """List all knowledge base versions, newest first.
@@ -48,6 +52,17 @@ async def list_kb_versions(
     Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）。
     知识库版本数量通常较少，服务层 ``list_versions`` 返回全量后路由层切片。
     """
+    # Feature-018: knowledge_base 恒为 STANDARDIZATION 阶段；仅做参数一致性校验
+    from src.api.phase_params import parse_business_phase
+    from src.models.analysis_task import BusinessPhase
+    phase_enum = parse_business_phase(business_phase, field="business_phase")
+    if phase_enum is not None and phase_enum != BusinessPhase.STANDARDIZATION:
+        raise AppException(
+            ErrorCode.INVALID_PHASE_STEP_COMBO,
+            message="knowledge_base 仅存在于 STANDARDIZATION 阶段",
+            details={"conflict": "phase_resource_mismatch", "phase": phase_enum.value, "resource": "knowledge_base"},
+        )
+
     versions = await knowledge_base_svc.list_versions(db)
     total = len(versions)
     offset = (page_num - 1) * page_size

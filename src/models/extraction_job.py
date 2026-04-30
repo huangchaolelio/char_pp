@@ -17,6 +17,7 @@ from sqlalchemy.sql import func
 from sqlalchemy import text
 
 from src.db.session import Base
+from src.models.analysis_task import BusinessPhase
 
 if TYPE_CHECKING:
     from src.models.pipeline_step import PipelineStep
@@ -66,6 +67,14 @@ class ExtractionJob(Base):
     )
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
+    # Feature 018 — Business phase / step mapping (章程原则 X).
+    # Fixed TRAINING / extract_kb (data-model.md § 3.2). Auto-populated by hook.
+    business_phase: Mapped[BusinessPhase] = mapped_column(
+        Enum(BusinessPhase, name="business_phase_enum", create_type=False),
+        nullable=False,
+    )
+    business_step: Mapped[str] = mapped_column(String(64), nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
@@ -93,4 +102,5 @@ class ExtractionJob(Base):
             "status",
             "created_at",
         ),
+        Index("idx_extraction_jobs_phase", "business_phase"),
     )

@@ -28,6 +28,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
 from src.api.enums import parse_enum_param
+from src.api.schemas.admin_levers import LeverGroups
 from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.api.schemas.task_submit import (
     ChannelConfigPatch,
@@ -37,7 +38,8 @@ from src.api.schemas.task_submit import (
 )
 from src.config import get_settings
 from src.db.session import get_db
-from src.models.analysis_task import TaskType
+from src.models.analysis_task import BusinessPhase, TaskType
+from src.services.optimization_levers_service import OptimizationLeversService
 from src.services.task_channel_service import TaskChannelService
 from src.services.task_reset_service import TaskResetService
 
@@ -140,3 +142,43 @@ async def patch_channel_config(
         enabled=snapshot.enabled,
         recent_completion_rate_per_min=snapshot.recent_completion_rate_per_min,
     ))
+
+
+# ── Feature-018 US3: GET /admin/levers ──────────────────────────────────────
+# 单例（模块级 lazy-init）——fail-fast 在第一次被调用时触发（不在 import 时阻塞）。
+_LEVERS_SERVICE: OptimizationLeversService | None = None
+
+
+def _get_levers_service() -> OptimizationLeversService:
+    global _LEVERS_SERVICE
+    if _LEVERS_SERVICE is None:
+        _LEVERS_SERVICE = OptimizationLeversService()
+    return _LEVERS_SERVICE
+
+
+@router.get(
+    "/admin/levers",
+    response_model=SuccessEnvelope[LeverGroups],
+    summary="优化杠杆统一台账（Feature-018 US3）",
+)
+async def list_optimization_levers(
+    request: Request,
+    response: Response,
+    phase: str | None = None,
+    db: AsyncSession = Depends(get_db),
+) -> SuccessEnvelope[LeverGroups]:
+    """返回 § 9 三类优化杠杆的统一台账。
+
+    鉴权：``X-Admin-Token`` 头（与其它 admin 接口一致）
+    过滤：``?phase=TRAINING|STANDARDIZATION|INFERENCE``（可选）
+    敏感键：仅返回 ``is_configured``，``current_value`` 与 ``last_changed_*`` 恒 null
+    """
+    _verify_admin_token(request.headers.get("X-Admin-Token"))
+    response.headers["X-Admin-Operation"] = "true"
+
+    from src.api.phase_params import parse_business_phase
+    phase_enum: BusinessPhase | None = parse_business_phase(phase, field="phase")
+
+    svc = _get_levers_service()
+    groups = await svc.list_levers(db, phase=phase_enum)
+    return ok(groups)

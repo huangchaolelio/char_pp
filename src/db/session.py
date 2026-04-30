@@ -78,3 +78,7 @@ def reset_engine_for_forked_process() -> None:
         expire_on_commit=False,
         autoflush=False,
     )
+
+
+# Feature-018 — ORM before_insert 钩子的注册已挪到 src/models/__init__.py 末尾，
+# 那是所有 ORM 模型都已加载完毕的安全落点；session.py 作为基础设施层不应依赖模型。

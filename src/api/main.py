@@ -22,6 +22,8 @@ from src.api.routers.admin import router as admin_router
 from src.api.routers.task_channels import router as task_channels_router
 from src.api.routers.extraction_jobs import router as extraction_jobs_router
 from src.api.routers.video_preprocessing import router as video_preprocessing_router
+# Feature-018 — 三阶段业务总览
+from src.api.routers.business_workflow import router as business_workflow_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -90,6 +92,8 @@ def create_app() -> FastAPI:
     app.include_router(task_channels_router, prefix="/api/v1")
     app.include_router(extraction_jobs_router, prefix="/api/v1")
     app.include_router(video_preprocessing_router, prefix="/api/v1")
+    # Feature-018 — 三阶段业务总览接口（US1）
+    app.include_router(business_workflow_router, prefix="/api/v1")
 
     # ── Feature-017 哨兵路由（已下线接口）────────────────────────────────
     # 注意：build_retired_router() 返回的 router 其 path 本身已含 /api/v1 前缀，

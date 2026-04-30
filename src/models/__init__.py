@@ -33,6 +33,12 @@ from src.models.video_preprocessing_job import (
 )
 from src.models.video_preprocessing_segment import VideoPreprocessingSegment
 
+# Feature-018 — 所有 ORM 模型加载完毕后注册 before_insert 钩子
+# （自动派生 business_phase / business_step）
+from src.models._phase_step_hook import register_phase_step_hooks as _register_phase_step_hooks
+
+_register_phase_step_hooks()
+
 __all__ = [
     "AnalysisTask",
     "TaskStatus",

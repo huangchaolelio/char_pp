@@ -83,6 +83,11 @@ class ErrorCode(str, Enum):
     DB_UPSTREAM_FAILED = "DB_UPSTREAM_FAILED"
     WHISPER_UPSTREAM_FAILED = "WHISPER_UPSTREAM_FAILED"
 
+    # ── Feature-018 业务阶段/步骤 + 优化杠杆（3） ───────────────────────
+    INVALID_PHASE_STEP_COMBO = "INVALID_PHASE_STEP_COMBO"
+    PHASE_STEP_UNMAPPED = "PHASE_STEP_UNMAPPED"
+    OPTIMIZATION_LEVERS_YAML_INVALID = "OPTIMIZATION_LEVERS_YAML_INVALID"
+
 
 # ── 错误码 → HTTP 状态（单一事实来源） ────────────────────────────────────
 ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
@@ -136,6 +141,11 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.COS_UPSTREAM_FAILED: HTTPStatus.BAD_GATEWAY,
     ErrorCode.DB_UPSTREAM_FAILED: HTTPStatus.BAD_GATEWAY,
     ErrorCode.WHISPER_UPSTREAM_FAILED: HTTPStatus.BAD_GATEWAY,
+
+    # Feature-018（业务阶段/步骤 + 优化杠杆）
+    ErrorCode.INVALID_PHASE_STEP_COMBO: HTTPStatus.BAD_REQUEST,          # 400
+    ErrorCode.PHASE_STEP_UNMAPPED: HTTPStatus.INTERNAL_SERVER_ERROR,     # 500
+    ErrorCode.OPTIMIZATION_LEVERS_YAML_INVALID: HTTPStatus.INTERNAL_SERVER_ERROR,  # 500
 }
 
 
@@ -191,6 +201,11 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.COS_UPSTREAM_FAILED: "COS 存储服务失败",
     ErrorCode.DB_UPSTREAM_FAILED: "数据库操作失败",
     ErrorCode.WHISPER_UPSTREAM_FAILED: "语音转写服务失败",
+
+    # Feature-018（业务阶段/步骤 + 优化杠杆）
+    ErrorCode.INVALID_PHASE_STEP_COMBO: "业务阶段/步骤与任务类型不匹配",
+    ErrorCode.PHASE_STEP_UNMAPPED: "业务阶段/步骤派生失败（内部错误）",
+    ErrorCode.OPTIMIZATION_LEVERS_YAML_INVALID: "优化杠杆台账配置加载失败",
 }
 
 
