@@ -36,6 +36,8 @@ dependencies = [
     "openai>=1.0.0",
     # Retry policy for I/O-heavy pipeline steps (Feature 014)
     "tenacity>=8.2.0",
+    # YAML parsing (Feature 018: optimization_levers.yml / scan-exclude.yml)
+    "pyyaml>=6.0",
 ]
 
 [project.optional-dependencies]
@@ -51,7 +53,7 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["src*"]
+include = ["src*", "scripts*"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
