@@ -44,6 +44,18 @@ class TaskStatus(str, enum.Enum):
     rejected = "rejected"
 
 
+class BusinessPhase(str, enum.Enum):
+    """Feature-018 — 业务阶段三阶段枚举（TRAINING / STANDARDIZATION / INFERENCE）。
+
+    权威参考: docs/business-workflow.md § 2 阶段 DoD。
+    与数据库 enum type ``business_phase_enum`` 一一对应（migration 0016）。
+    """
+
+    TRAINING = "TRAINING"
+    STANDARDIZATION = "STANDARDIZATION"
+    INFERENCE = "INFERENCE"
+
+
 class AnalysisTask(Base):
     __tablename__ = "analysis_tasks"
 
@@ -128,6 +140,16 @@ class AnalysisTask(Base):
         ForeignKey("extraction_jobs.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # Feature 018 — Business phase / step mapping (章程原则 X).
+    # Auto-populated by ``_phase_step_hook._assign_phase_step`` before_insert hook
+    # based on task_type + parent_scan_task_id; see data-model.md § 3.1 derivation table.
+    # NOT NULL enforced at DB level as fail-safe when hook bypasses (direct SQL/migration).
+    business_phase: Mapped["BusinessPhase"] = mapped_column(
+        Enum(BusinessPhase, name="business_phase_enum", create_type=False),
+        nullable=False,
+    )
+    business_step: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Relationships
     coach: Mapped[Optional["Coach"]] = relationship(

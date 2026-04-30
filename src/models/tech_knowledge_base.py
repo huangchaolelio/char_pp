@@ -18,6 +18,7 @@ from sqlalchemy.sql import func
 from sqlalchemy import text
 
 from src.db.session import Base
+from src.models.analysis_task import BusinessPhase
 
 
 class KBStatus(str, enum.Enum):
@@ -57,6 +58,14 @@ class TechKnowledgeBase(Base):
         ForeignKey("extraction_jobs.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+    # Feature 018 — Business phase / step mapping (章程原则 X).
+    # Fixed STANDARDIZATION / kb_version_activate (data-model.md § 3.4).
+    business_phase: Mapped[BusinessPhase] = mapped_column(
+        Enum(BusinessPhase, name="business_phase_enum", create_type=False),
+        nullable=False,
+    )
+    business_step: Mapped[str] = mapped_column(String(64), nullable=False)
 
     # Relationships
     tech_points: Mapped[list["ExpertTechPoint"]] = relationship(  # noqa: F821

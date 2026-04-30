@@ -54,7 +54,7 @@ from src.api.schemas.task import (
 from src.api.schemas.teaching_tip import TeachingTipRef
 from src.config import get_settings
 from src.db.session import get_db
-from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
+from src.models.analysis_task import AnalysisTask, BusinessPhase, TaskStatus, TaskType
 from src.models.athlete_motion_analysis import AthleteMotionAnalysis
 from src.models.audio_transcript import AudioTranscript
 from src.models.coach import Coach
@@ -89,6 +89,8 @@ async def list_tasks(
     status: Optional[str] = Query(None, description="按任务状态筛选"),
     task_type: Optional[str] = Query(None, description="按任务类型筛选: video_classification / kb_extraction / athlete_diagnosis"),
     coach_id: Optional[uuid.UUID] = Query(None, description="按教练 ID 筛选"),
+    business_phase: Optional[str] = Query(None, description="Feature-018: 按业务阶段筛选 TRAINING/STANDARDIZATION/INFERENCE"),
+    business_step: Optional[str] = Query(None, description="Feature-018: 按业务步骤筛选 (8 值枚举)"),
     created_after: Optional[datetime] = Query(None, description="创建时间下界（ISO 8601）"),
     created_before: Optional[datetime] = Query(None, description="创建时间上界（ISO 8601）"),
     db: AsyncSession = Depends(get_db),
@@ -119,9 +121,28 @@ async def list_tasks(
         parse_enum_param(task_type, field="task_type", enum_cls=TaskType)
         if task_type is not None else None
     )
-    # ── Build base query ──────────────────────────────────────────────────────
-    base_stmt = (
-        select(AnalysisTask, Coach.name.label("coach_name"))
+
+    # Feature-018: business_phase / business_step 校验 + 组合矛盾拦截
+    from src.api.phase_params import parse_business_phase
+    phase_enum: Optional[BusinessPhase] = parse_business_phase(business_phase, field="business_phase")
+    _VALID_BUSINESS_STEPS = {
+        "scan_cos_videos", "preprocess_video", "classify_video", "extract_kb",
+        "review_conflicts", "kb_version_activate", "build_standards", "diagnose_athlete",
+    }
+    step_val: Optional[str] = (
+        validate_enum_choice(business_step, field="business_step", allowed=_VALID_BUSINESS_STEPS)
+        if business_step is not None else None
+    )
+    # (phase, step, task_type) 三元组语义矛盾 ⇒ 400 INVALID_PHASE_STEP_COMBO
+    from src.services.business_workflow_service import _validate_phase_step_task_type_combo
+    _validate_phase_step_task_type_combo(
+        phase_enum.value if phase_enum else None,
+        step_val,
+        task_type_enum.value if task_type_enum else None,
+    )
+
+    # ── Build base query ────────────────────────────────────────────────────
+    base_stmt = (        select(AnalysisTask, Coach.name.label("coach_name"))
         .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
         .where(AnalysisTask.deleted_at.is_(None))
     )
@@ -133,6 +154,10 @@ async def list_tasks(
         base_stmt = base_stmt.where(AnalysisTask.task_type == task_type_enum)
     if coach_id is not None:
         base_stmt = base_stmt.where(AnalysisTask.coach_id == coach_id)
+    if phase_enum is not None:
+        base_stmt = base_stmt.where(AnalysisTask.business_phase == phase_enum)
+    if step_val is not None:
+        base_stmt = base_stmt.where(AnalysisTask.business_step == step_val)
     if created_after is not None:
         base_stmt = base_stmt.where(AnalysisTask.created_at >= created_after)
     if created_before is not None:
