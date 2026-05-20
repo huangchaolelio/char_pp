@@ -191,7 +191,7 @@ alembic revision --autogenerate -m "描述"
 | 014 | 知识库提取流水线化（DAG + 并行） | `GET /extraction-jobs`, `GET /extraction-jobs/{id}`, `POST /extraction-jobs/{id}/rerun`（扩展 `POST /tasks/kb-extraction`）|
 | 015 | 真实算法接入（知识库提取流水线） | 无新 API；4 个 executor 接入 Feature-002 算法；`scripts/run_reference_regression.py` 回归工具 |
 | 016 | 视频预处理流水线（标准化 + 分段） | `POST /tasks/preprocessing`, `POST /tasks/preprocessing/batch`, `GET /video-preprocessing/{id}`；KB 提取消费预处理产物（长视频 OOM 防护） |
-| 021 | 视频内容清洗与有效片段筛选 | `POST /tasks/curation`, `POST /tasks/curation/batch`, `GET /curation-jobs/{id}`, `PATCH /curation-jobs/{id}/segments/{segment_index}`；KB 抽取消费 `effective_decision='accepted'` 分段集合 |
+| 021 | 视频内容清洗与有效片段筛选 | `POST /tasks/curation`, `POST /tasks/curation/batch`, `GET /curation-jobs/{id}`, `PATCH /curation-jobs/{id}/segments/{segment_index}`, `GET /curation-stats`；KB 抽取消费 `effective_decision='accepted'` 分段集合 |
 
 📖 产品功能详情：[docs/features.md](docs/features.md)
 📖 技术架构：[docs/architecture.md](docs/architecture.md)

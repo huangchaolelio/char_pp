@@ -1132,6 +1132,7 @@ TRAINING:
 | `POST /api/v1/tasks/curation/batch` | 批量提交（≤ 100 条） |
 | `GET /api/v1/curation-jobs/{job_id}` | 摘要 + 逐分段判定 + override 留痕 |
 | `PATCH /api/v1/curation-jobs/{job_id}/segments/{segment_index}` | 单分段人工覆盖 / 取消覆盖 |
+| `GET /api/v1/curation-stats?group_by=...` | 跨教练 / `tech_category` / `rubric_version` 聚合有效率（US5 P3）|
 
 ### 数据模型新增
 
@@ -1143,8 +1144,8 @@ TRAINING:
 ### 测试覆盖
 
 - 单元（8 文件，56 测试）：rubric_loader / decision_engine（rule + LLM）/ coach_dominance / segment_text_provider / curation_service aggregation / phase_step_hook / errors
-- 合约（4 文件，33 测试）：submit_curation / get_curation_job / kb_extraction_curation_gate / override_curation_segment
+- 合约（5 文件，39 测试）：submit_curation / get_curation_job / kb_extraction_curation_gate / override_curation_segment / **curation_stats（US5 6 测试）**
 - 集成（5 文件，25 测试）：end_to_end / kb_extract_consumes_accepted_only **(SC-008 关键护栏)** / low_quality_skip / override_recompute / rubric_versioning
-- 总计 **143/143** PASSED；与 F-013 / F-019 / F-020 既有测试零回归
+- 总计 **149/149** PASSED；与 F-013 / F-019 / F-020 既有测试零回归
 - 基准回归脚本：`scripts/run_curation_benchmark.py` 对照 SC-001/002/003 三项指标
 

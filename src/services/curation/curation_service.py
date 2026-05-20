@@ -27,7 +27,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any, Sequence
 
-from sqlalchemy import func, select, update
+from sqlalchemy import case, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
@@ -1017,16 +1017,249 @@ async def clear_kb_stale_after_override(
     )
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 聚合统计（US5 — GET /curation-stats）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+_VALID_GROUP_BY = ("coach", "tech_category", "rubric_version")
+_LOW_SAMPLE_THRESHOLD = 5
+
+
+@dataclass
+class CurationStatsItemDTO:
+    """聚合项 DTO（router 转 Pydantic 响应）.
+
+    根据 ``group_by`` 不同，``coach_name`` / ``tech_category`` /
+    ``curation_rubric_version`` 三字段按需置 None。
+    """
+
+    coach_name: str | None
+    tech_category: str | None
+    curation_rubric_version: str | None
+    video_count: int
+    avg_accepted_duration_ratio: float | None
+    avg_validity_score: float | None
+    low_quality_video_count: int
+    with_overrides_video_count: int | None
+    low_sample: bool
+
+
+async def aggregate_curation_stats(
+    db: AsyncSession,
+    *,
+    group_by: str,
+    coach_name: str | None = None,
+    tech_category: str | None = None,
+    rubric_version: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+) -> tuple[list[CurationStatsItemDTO], int]:
+    """跨教练 / 类别 / 规范版本的有效率聚合（spec FR-013，US5）.
+
+    数据源：``video_curation_jobs`` JOIN ``coach_video_classifications`` —— 仅
+    统计 ``video_curation_jobs.status='success'`` 的作业（已完成口径）。
+
+    参数互斥语义（contracts/curation_stats.md § 行为契约 3）：
+        - ``group_by=coach`` 时 ``coach_name`` 仍可作为 WHERE 过滤（语义"按指定教练单条返回"）
+        - ``group_by=tech_category`` / ``rubric_version`` 同理
+        路由层 Pydantic 已拦了 group_by 枚举与分页越界。
+
+    Returns:
+        ``(items, total)``：``items`` 为当前页聚合结果，``total`` 为分组数。
+    """
+    if group_by not in _VALID_GROUP_BY:
+        raise AppException(
+            ErrorCode.VALIDATION_FAILED,
+            message=f"group_by must be one of {_VALID_GROUP_BY}",
+            details={"field": "group_by", "value": group_by},
+        )
+
+    # 三种分组键映射到 SQL 表达式 + Python 字段名
+    if group_by == "coach":
+        group_col = CoachVideoClassification.coach_name
+        group_label = "coach_name"
+    elif group_by == "tech_category":
+        group_col = CoachVideoClassification.tech_category
+        group_label = "tech_category"
+    else:  # rubric_version
+        group_col = VideoCurationJob.curation_rubric_version
+        group_label = "curation_rubric_version"
+
+    # 子查询：每条视频取最近一条 success 作业（按 cos_object_key + classification 唯一）
+    # 简化口径：以 video_curation_jobs.id 为粒度统计；同一视频多次成功重跑会被分别计入。
+    # 与 spec § FR-013 "整体口径"一致——文档未要求"按视频去重"，按 job 行做均值更稳定。
+    join_stmt = select(
+        group_col.label("group_key"),
+        VideoCurationJob.id.label("job_id"),
+        VideoCurationJob.cos_object_key,
+        VideoCurationJob.coach_video_classification_id,
+        VideoCurationJob.accepted_duration_ratio,
+        VideoCurationJob.low_quality,
+    ).join(
+        CoachVideoClassification,
+        CoachVideoClassification.id
+        == VideoCurationJob.coach_video_classification_id,
+    ).where(
+        VideoCurationJob.status == "success",
+    )
+
+    if coach_name:
+        join_stmt = join_stmt.where(CoachVideoClassification.coach_name == coach_name)
+    if tech_category:
+        join_stmt = join_stmt.where(
+            CoachVideoClassification.tech_category == tech_category
+        )
+    if rubric_version:
+        join_stmt = join_stmt.where(
+            VideoCurationJob.curation_rubric_version == rubric_version
+        )
+
+    base_subq = join_stmt.subquery()
+
+    # 分组聚合：每组内 video_count / avg_ratio / low_quality_count
+    agg_stmt = select(
+        base_subq.c.group_key,
+        func.count(base_subq.c.job_id).label("video_count"),
+        func.avg(base_subq.c.accepted_duration_ratio).label("avg_ratio"),
+        func.sum(
+            case(
+                (base_subq.c.low_quality.is_(True), 1),
+                else_=0,
+            )
+        ).label("low_quality_video_count"),
+    ).where(
+        base_subq.c.group_key.isnot(None),
+    ).group_by(base_subq.c.group_key).order_by(base_subq.c.group_key.asc())
+
+    # 总分组数（分页 total）
+    total_stmt = select(func.count()).select_from(agg_stmt.subquery())
+    total = int((await db.execute(total_stmt)).scalar_one())
+
+    # 分页
+    paged_stmt = agg_stmt.offset((page - 1) * page_size).limit(page_size)
+    rows = (await db.execute(paged_stmt)).all()
+
+    if not rows:
+        return [], total
+
+    group_keys = [r.group_key for r in rows]
+
+    # 二阶段：每组的 avg_validity_score（以分段为权）
+    seg_score_stmt = select(
+        group_col.label("group_key"),
+        func.avg(VideoCurationSegmentResult.validity_score).label("avg_score"),
+    ).join(
+        VideoCurationJob,
+        VideoCurationJob.id == VideoCurationSegmentResult.job_id,
+    ).join(
+        CoachVideoClassification,
+        CoachVideoClassification.id
+        == VideoCurationJob.coach_video_classification_id,
+    ).where(
+        VideoCurationJob.status == "success",
+        group_col.in_(group_keys),
+    )
+    if coach_name:
+        seg_score_stmt = seg_score_stmt.where(
+            CoachVideoClassification.coach_name == coach_name
+        )
+    if tech_category:
+        seg_score_stmt = seg_score_stmt.where(
+            CoachVideoClassification.tech_category == tech_category
+        )
+    if rubric_version:
+        seg_score_stmt = seg_score_stmt.where(
+            VideoCurationJob.curation_rubric_version == rubric_version
+        )
+    seg_score_stmt = seg_score_stmt.group_by(group_col)
+    avg_score_by_group: dict[Any, float | None] = {
+        r.group_key: (float(r.avg_score) if r.avg_score is not None else None)
+        for r in (await db.execute(seg_score_stmt)).all()
+    }
+
+    # 三阶段：每组含覆盖记录的 distinct 视频数（仅 coach / tech_category 维度有意义；
+    # rubric_version 维度按 contracts 示例不给该字段）
+    with_overrides_by_group: dict[Any, int] = {}
+    if group_by in ("coach", "tech_category"):
+        ov_stmt = select(
+            group_col.label("group_key"),
+            func.count(func.distinct(VideoCurationJob.id)).label("with_ov"),
+        ).join(
+            VideoCurationJob,
+            VideoCurationJob.id == VideoCurationSegmentResult.job_id,
+        ).join(
+            CoachVideoClassification,
+            CoachVideoClassification.id
+            == VideoCurationJob.coach_video_classification_id,
+        ).where(
+            VideoCurationJob.status == "success",
+            VideoCurationSegmentResult.override_decision.isnot(None),
+            group_col.in_(group_keys),
+        )
+        if coach_name:
+            ov_stmt = ov_stmt.where(CoachVideoClassification.coach_name == coach_name)
+        if tech_category:
+            ov_stmt = ov_stmt.where(
+                CoachVideoClassification.tech_category == tech_category
+            )
+        if rubric_version:
+            ov_stmt = ov_stmt.where(
+                VideoCurationJob.curation_rubric_version == rubric_version
+            )
+        ov_stmt = ov_stmt.group_by(group_col)
+        with_overrides_by_group = {
+            r.group_key: int(r.with_ov)
+            for r in (await db.execute(ov_stmt)).all()
+        }
+
+    # 拼接 DTO + 附 low_sample 标记
+    items: list[CurationStatsItemDTO] = []
+    for r in rows:
+        gkey = r.group_key
+        video_count = int(r.video_count or 0)
+        avg_ratio = float(r.avg_ratio) if r.avg_ratio is not None else None
+        avg_score = avg_score_by_group.get(gkey)
+        low_q_count = int(r.low_quality_video_count or 0)
+
+        item = CurationStatsItemDTO(
+            coach_name=gkey if group_label == "coach_name" else None,
+            tech_category=gkey if group_label == "tech_category" else None,
+            curation_rubric_version=gkey
+            if group_label == "curation_rubric_version"
+            else None,
+            video_count=video_count,
+            avg_accepted_duration_ratio=(
+                round(avg_ratio, 4) if avg_ratio is not None else None
+            ),
+            avg_validity_score=(
+                round(avg_score, 4) if avg_score is not None else None
+            ),
+            low_quality_video_count=low_q_count,
+            with_overrides_video_count=(
+                with_overrides_by_group.get(gkey, 0)
+                if group_by in ("coach", "tech_category")
+                else None
+            ),
+            low_sample=video_count < _LOW_SAMPLE_THRESHOLD,
+        )
+        items.append(item)
+
+    return items, total
+
+
 __all__ = [
     "CurationSubmissionOutcome",
     "CurationBatchSubmittedItem",
     "CurationBatchRejectedItem",
     "CurationBatchOutcome",
     "OverrideOutcome",
+    "CurationStatsItemDTO",
     "submit_curation",
     "submit_curation_batch",
     "run_curation_job",
     "fetch_curation_job_with_segments",
     "override_segment",
     "clear_kb_stale_after_override",
+    "aggregate_curation_stats",
 ]

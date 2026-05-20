@@ -26,6 +26,7 @@ from src.api.routers.video_preprocessing import router as video_preprocessing_ro
 from src.api.routers.business_workflow import router as business_workflow_router
 # Feature-021 — 视频内容清洗
 from src.api.routers.curation_jobs import router as curation_jobs_router
+from src.api.routers.curation_stats import router as curation_stats_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -124,6 +125,8 @@ def create_app() -> FastAPI:
     app.include_router(business_workflow_router, prefix="/api/v1")
     # Feature-021 — 视频内容清洗（POST /tasks/curation + GET /curation-jobs/{job_id}）
     app.include_router(curation_jobs_router, prefix="/api/v1")
+    # Feature-021 US5 — 聚合统计观测（GET /curation-stats）
+    app.include_router(curation_stats_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

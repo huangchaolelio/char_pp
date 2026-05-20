@@ -196,6 +196,45 @@ class CurationOverrideResponse(BaseModel):
     summary_recomputed: CurationOverrideRecomputed
 
 
+# ── GET /curation-stats（US5 P3） ─────────────────────────────────────
+
+
+class CurationStatsItem(BaseModel):
+    """跨教练 / 类别 / 规范版本的清洗有效率聚合项（contracts/curation_stats.md）.
+
+    根据 ``group_by`` 不同，三个分组键字段（``coach_name`` / ``tech_category`` /
+    ``curation_rubric_version``）按需置非空：
+
+    - ``group_by=coach`` ⇒ 仅 ``coach_name`` 非空
+    - ``group_by=tech_category`` ⇒ 仅 ``tech_category`` 非空
+    - ``group_by=rubric_version`` ⇒ 仅 ``curation_rubric_version`` 非空
+
+    汇总指标（视频粒度）：
+
+    - ``video_count``：本组内视频数（distinct cos_object_key）
+    - ``avg_accepted_duration_ratio``：组内 ``accepted_duration_ratio`` 算术均值
+    - ``avg_validity_score``：组内逐分段 ``validity_score`` 均值（以分段为权）
+    - ``low_quality_video_count``：``low_quality=true`` 的视频数
+    - ``with_overrides_video_count``：含至少一条覆盖记录的视频数（仅 group_by=coach
+      / tech_category 时填）
+
+    样本量保护：``video_count < 5`` 时附 ``low_sample=true``，避免聚合可信度被拉偏
+    （contracts/curation_stats.md § 行为契约 4）。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    coach_name: str | None = None
+    tech_category: str | None = None
+    curation_rubric_version: str | None = None
+    video_count: int = Field(..., ge=0)
+    avg_accepted_duration_ratio: float | None = None
+    avg_validity_score: float | None = None
+    low_quality_video_count: int = Field(0, ge=0)
+    with_overrides_video_count: int | None = None
+    low_sample: bool = False
+
+
 __all__ = [
     "CurationSubmitRequest",
     "CurationBatchItem",
@@ -210,4 +249,5 @@ __all__ = [
     "CurationOverrideRequest",
     "CurationOverrideRecomputed",
     "CurationOverrideResponse",
+    "CurationStatsItem",
 ]
