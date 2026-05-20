@@ -425,6 +425,18 @@ async def rerun_extraction_job(
     )
     await db.commit()
 
+    # Feature-021 US4 (T066): rerun is the operator's explicit acknowledgement
+    # of post-override curation results — clear the kb_stale_after_override
+    # flag so monitoring stops surfacing this video. The new KB run will
+    # consume the latest effective_decision='accepted' segments via the
+    # Feature-021 download_video gate.
+    from src.services.curation.curation_service import (
+        clear_kb_stale_after_override,
+    )
+
+    await clear_kb_stale_after_override(db, cos_object_key=job.cos_object_key)
+    await db.commit()
+
     # Kick Celery — rerun uses the same task_id + cos_object_key as the
     # original submission. Import is lazy to avoid pulling Celery at module
     # load.

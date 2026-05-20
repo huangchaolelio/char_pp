@@ -89,6 +89,22 @@ class CurationBatchOutcome:
     rejected: list[CurationBatchRejectedItem]
 
 
+@dataclass
+class OverrideOutcome:
+    """单分段人工覆盖结果，router 转 Pydantic 响应。"""
+
+    job_id: uuid.UUID
+    segment_index: int
+    auto_decision: str
+    override_decision: str | None
+    override_user: str | None
+    override_reason: str | None
+    overridden_at: datetime | None
+    effective_decision: str
+    summary_recomputed: dict[str, Any]
+    kb_stale_after_override: bool
+
+
 # ─────────────────────────────────────────────────────────────────────────
 # 提交入口（router 调用）
 # ─────────────────────────────────────────────────────────────────────────
@@ -693,13 +709,324 @@ async def fetch_curation_job_with_segments(
     }
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 人工覆盖（US4）
+# ─────────────────────────────────────────────────────────────────────────
+
+
+_VALID_OVERRIDE_DECISIONS = ("accepted", "rejected")
+
+
+async def override_segment(
+    db: AsyncSession,
+    *,
+    job_id: uuid.UUID,
+    segment_index: int,
+    override_decision: str | None,
+    override_reason: str | None,
+    override_user: str,
+) -> OverrideOutcome:
+    """对单分段人工覆盖 / 取消覆盖.
+
+    单事务内：
+      1. 校验 override_decision ∈ {accepted, rejected, None}（None 表"取消覆盖"）
+      2. 校验 ``video_curation_jobs.status='success'``（其它状态 ⇒ INVALID_STATE）
+      3. 校验目标分段存在
+      4. UPDATE segment row（覆盖：写 override_*；取消：清空所有 override 字段）
+      5. 重新加载所有分段 → 由清洗规范派生 ``low_quality`` 阈值 → 重算视频级摘要
+      6. UPDATE ``video_curation_jobs`` 摘要字段
+      7. 维护 ``coach_video_classifications.low_quality / kb_stale_after_override``
+         （后者取决于是否存在 ``extraction_jobs`` completed 早于任何 overridden_at）
+
+    Raises:
+        AppException(VALIDATION_FAILED): override_decision / override_user 非法
+        AppException(NOT_FOUND): 作业 / 分段不存在
+        AppException(INVALID_STATE): 作业未完成
+    """
+    # 1) 输入校验（router 已用 Pydantic 拦了大部分；此处兜底"取消覆盖"语义）
+    if override_decision is not None and override_decision not in _VALID_OVERRIDE_DECISIONS:
+        raise AppException(
+            ErrorCode.VALIDATION_FAILED,
+            message=f"override_decision must be one of {_VALID_OVERRIDE_DECISIONS} or null",
+            details={"override_decision": override_decision},
+        )
+    if not override_user or not override_user.strip():
+        raise AppException(
+            ErrorCode.VALIDATION_FAILED,
+            message="override_user must be non-empty",
+            details={"field": "override_user"},
+        )
+    # 覆盖时必须给 reason；取消覆盖时 reason 可为空
+    if override_decision is not None:
+        if not override_reason or not override_reason.strip():
+            raise AppException(
+                ErrorCode.VALIDATION_FAILED,
+                message="override_reason is required when override_decision is set",
+                details={"field": "override_reason"},
+            )
+
+    # 2) 加载作业
+    job = (
+        await db.execute(
+            select(VideoCurationJob).where(VideoCurationJob.id == job_id)
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        raise AppException(
+            ErrorCode.NOT_FOUND,
+            message="curation job not found",
+            details={"resource_id": str(job_id)},
+        )
+    if job.status != "success":
+        raise AppException(
+            ErrorCode.INVALID_STATUS,
+            message=f"cannot override segments on job with status={job.status!r}",
+            details={"job_id": str(job_id), "status": job.status},
+        )
+
+    # 3) 加载目标分段
+    seg_row = (
+        await db.execute(
+            select(VideoCurationSegmentResult).where(
+                VideoCurationSegmentResult.job_id == job_id,
+                VideoCurationSegmentResult.segment_index == segment_index,
+            )
+        )
+    ).scalar_one_or_none()
+    if seg_row is None:
+        raise AppException(
+            ErrorCode.NOT_FOUND,
+            message="segment not found in this curation job",
+            details={"job_id": str(job_id), "segment_index": segment_index},
+        )
+
+    # 4) UPDATE segment row（覆盖 vs 取消覆盖）
+    now = now_cst()
+    if override_decision is None:
+        # 取消覆盖：清空所有 override 字段
+        update_values: dict[str, Any] = {
+            "override_decision": None,
+            "override_user": None,
+            "override_reason": None,
+            "overridden_at": None,
+            "updated_at": now,
+        }
+    else:
+        update_values = {
+            "override_decision": override_decision,
+            "override_user": override_user,
+            "override_reason": override_reason,
+            "overridden_at": now,
+            "updated_at": now,
+        }
+    await db.execute(
+        update(VideoCurationSegmentResult)
+        .where(VideoCurationSegmentResult.id == seg_row.id)
+        .values(**update_values)
+    )
+
+    # 5) 重新加载所有分段以重算摘要（覆盖后 effective_decision 由 STORED 列自动同步）
+    all_segs = (
+        await db.execute(
+            select(VideoCurationSegmentResult)
+            .where(VideoCurationSegmentResult.job_id == job_id)
+            .order_by(VideoCurationSegmentResult.segment_index.asc())
+        )
+    ).scalars().all()
+
+    # 该作业关联的预处理分段（提供 start_ms/end_ms 与 segment_index 对齐）
+    pp_segs = await _load_segments_for_job(db, job.preprocessing_job_id)
+    pp_by_idx = {s.segment_index: s for s in pp_segs}
+
+    rubric = rubric_loader.load(job.curation_rubric_version)
+    audio_unavailable_value = bool(job.audio_unavailable) if job.audio_unavailable is not None else False
+
+    # 用 effective_decision 重算（accepted / rejected / uncertain 三档计数）
+    accepted_count = 0
+    rejected_count = 0
+    uncertain_count = 0
+    accepted_duration_ms = 0
+    total_duration_ms = 0
+    for seg in all_segs:
+        pp_seg = pp_by_idx.get(seg.segment_index)
+        if pp_seg is None:
+            # 极端：分段索引漂移（force=true 重切预处理）—— 跳过
+            continue
+        seg_dur_ms = max(0, pp_seg.end_ms - pp_seg.start_ms)
+        total_duration_ms += seg_dur_ms
+        eff = seg.effective_decision
+        if eff == "accepted":
+            accepted_count += 1
+            accepted_duration_ms += seg_dur_ms
+        elif eff == "rejected":
+            rejected_count += 1
+        else:
+            uncertain_count += 1
+
+    total_duration_seconds = total_duration_ms / 1000.0
+    accepted_duration_seconds = accepted_duration_ms / 1000.0
+    ratio = (
+        accepted_duration_seconds / total_duration_seconds
+        if total_duration_seconds > 0
+        else 0.0
+    )
+    low_quality = ratio < rubric.low_quality_ratio
+    short_video = total_duration_seconds < float(rubric.short_video_seconds)
+
+    summary = {
+        "total_segment_count": len(all_segs),
+        "accepted_segment_count": accepted_count,
+        "rejected_segment_count": rejected_count,
+        "uncertain_segment_count": uncertain_count,
+        "total_duration_seconds": round(total_duration_seconds, 3),
+        "accepted_duration_seconds": round(accepted_duration_seconds, 3),
+        "accepted_duration_ratio": round(ratio, 4),
+        "low_quality": low_quality,
+        "audio_unavailable": audio_unavailable_value,
+        "short_video": short_video,
+    }
+
+    # 6) UPDATE 作业摘要
+    await db.execute(
+        update(VideoCurationJob)
+        .where(VideoCurationJob.id == job_id)
+        .values(updated_at=now, **summary)
+    )
+
+    # 7) 维护 coach_video_classifications.low_quality + kb_stale_after_override
+    #    kb_stale 判定：是否存在已完成的 extraction_jobs 早于"任何分段的 overridden_at"
+    kb_stale = await _evaluate_kb_stale_after_override(
+        db,
+        cos_object_key=job.cos_object_key,
+        coach_video_classification_id=job.coach_video_classification_id,
+    )
+
+    await db.execute(
+        update(CoachVideoClassification)
+        .where(CoachVideoClassification.id == job.coach_video_classification_id)
+        .values(
+            low_quality=low_quality,
+            kb_stale_after_override=kb_stale,
+        )
+    )
+
+    await db.commit()
+
+    # 重新读分段拿到最新 effective_decision（计算列）+ overridden_at
+    updated_seg = (
+        await db.execute(
+            select(VideoCurationSegmentResult).where(
+                VideoCurationSegmentResult.job_id == job_id,
+                VideoCurationSegmentResult.segment_index == segment_index,
+            )
+        )
+    ).scalar_one()
+
+    return OverrideOutcome(
+        job_id=job_id,
+        segment_index=segment_index,
+        auto_decision=updated_seg.auto_decision,
+        override_decision=updated_seg.override_decision,
+        override_user=updated_seg.override_user,
+        override_reason=updated_seg.override_reason,
+        overridden_at=updated_seg.overridden_at,
+        effective_decision=updated_seg.effective_decision,
+        summary_recomputed=summary,
+        kb_stale_after_override=kb_stale,
+    )
+
+
+async def _evaluate_kb_stale_after_override(
+    db: AsyncSession,
+    *,
+    cos_object_key: str,
+    coach_video_classification_id: uuid.UUID,
+) -> bool:
+    """计算 kb_stale_after_override：
+
+    True 当且仅当：
+      - 该视频存在至少一条 ``video_curation_segment_results.overridden_at IS NOT NULL``
+      - **且** 存在一条 ``extraction_jobs`` ``status='success'`` 完成于
+        最早一条 ``overridden_at`` *之后或之前任意时间*——即任何已落地的 KB 抽取
+        都基于"覆盖前"口径
+
+    简化判定（与 router 监控语义对齐）：
+      ``EXISTS extraction_jobs WHERE cos_object_key = ? AND status = 'success' AND
+      completed_at < (MAX overridden_at over all segments of this video's curation jobs)``
+
+    无覆盖记录或无成功 KB 作业 ⇒ False。
+    """
+    from src.models.extraction_job import ExtractionJob, ExtractionJobStatus
+
+    # 该 classification 关联的所有 curation_jobs.id 集合
+    job_ids_rows = (
+        await db.execute(
+            select(VideoCurationJob.id).where(
+                VideoCurationJob.coach_video_classification_id
+                == coach_video_classification_id
+            )
+        )
+    ).all()
+    job_ids = [r[0] for r in job_ids_rows]
+    if not job_ids:
+        return False
+
+    # 取最早一条 overridden_at（如果有覆盖）
+    latest_override_at = (
+        await db.execute(
+            select(func.max(VideoCurationSegmentResult.overridden_at)).where(
+                VideoCurationSegmentResult.job_id.in_(job_ids),
+                VideoCurationSegmentResult.overridden_at.isnot(None),
+            )
+        )
+    ).scalar_one_or_none()
+    if latest_override_at is None:
+        return False
+
+    # 是否存在已完成的 KB 作业 completed_at < latest_override_at
+    stale_exists = (
+        await db.execute(
+            select(func.count())
+            .select_from(ExtractionJob)
+            .where(
+                ExtractionJob.cos_object_key == cos_object_key,
+                ExtractionJob.status == ExtractionJobStatus.success,
+                ExtractionJob.completed_at.isnot(None),
+                ExtractionJob.completed_at < latest_override_at,
+            )
+        )
+    ).scalar_one()
+
+    return bool(stale_exists)
+
+
+async def clear_kb_stale_after_override(
+    db: AsyncSession,
+    *,
+    cos_object_key: str,
+) -> None:
+    """``POST /extraction-jobs/{id}/rerun`` 完成后调用：清零 kb_stale_after_override.
+
+    服务层暴露此函数以让既有 extraction_jobs router 在 rerun success 处加副作用。
+    幂等；多次调用安全。
+    """
+    await db.execute(
+        update(CoachVideoClassification)
+        .where(CoachVideoClassification.cos_object_key == cos_object_key)
+        .values(kb_stale_after_override=False)
+    )
+
+
 __all__ = [
     "CurationSubmissionOutcome",
     "CurationBatchSubmittedItem",
     "CurationBatchRejectedItem",
     "CurationBatchOutcome",
+    "OverrideOutcome",
     "submit_curation",
     "submit_curation_batch",
     "run_curation_job",
     "fetch_curation_job_with_segments",
+    "override_segment",
+    "clear_kb_stale_after_override",
 ]

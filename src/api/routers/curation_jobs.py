@@ -28,6 +28,9 @@ from src.api.schemas.curation import (
     CurationBatchSubmittedItem as _RespSubmitted,
     CurationJobDetail,
     CurationJobSummary,
+    CurationOverrideRecomputed,
+    CurationOverrideRequest,
+    CurationOverrideResponse,
     CurationSegmentItem,
     CurationSubmitRequest,
     CurationSubmitResponse,
@@ -37,6 +40,7 @@ from src.db.session import get_db
 from src.services.curation.curation_service import (
     CurationBatchOutcome,
     fetch_curation_job_with_segments,
+    override_segment,
     submit_curation,
     submit_curation_batch,
 )
@@ -210,3 +214,54 @@ async def get_curation_job(
         ],
     )
     return ok(detail)
+
+
+# ═════════════════════════════════════════════════════════════════════════
+# US4 · PATCH /curation-jobs/{job_id}/segments/{segment_index}
+# ═════════════════════════════════════════════════════════════════════════
+
+
+@router.patch(
+    "/curation-jobs/{job_id}/segments/{segment_index}",
+    status_code=200,
+    response_model=SuccessEnvelope[CurationOverrideResponse],
+    summary="对单分段做人工覆盖（accepted ↔ rejected）或取消覆盖",
+)
+async def patch_curation_segment_override(
+    job_id: UUID,
+    segment_index: int,
+    body: CurationOverrideRequest,
+    db: AsyncSession = Depends(get_db),
+) -> SuccessEnvelope[CurationOverrideResponse]:
+    """spec FR-011 / FR-012：覆盖单分段；视频级摘要事务内重算；
+    若该视频已有早于覆盖时间的 KB 抽取作业则置 ``kb_stale_after_override=true``.
+
+    取消覆盖：``override_decision=null``（``override_reason`` 可空）。
+    """
+    out = await override_segment(
+        db,
+        job_id=job_id,
+        segment_index=segment_index,
+        override_decision=body.override_decision,
+        override_reason=body.override_reason,
+        override_user=body.override_user,
+    )
+    return ok(
+        CurationOverrideResponse(
+            job_id=out.job_id,
+            segment_index=out.segment_index,
+            auto_decision=out.auto_decision,
+            override_decision=out.override_decision,
+            override_user=out.override_user,
+            override_reason=out.override_reason,
+            overridden_at=out.overridden_at,
+            effective_decision=out.effective_decision,
+            summary_recomputed=CurationOverrideRecomputed(
+                accepted_segment_count=out.summary_recomputed["accepted_segment_count"],
+                rejected_segment_count=out.summary_recomputed["rejected_segment_count"],
+                accepted_duration_ratio=out.summary_recomputed["accepted_duration_ratio"],
+                low_quality=out.summary_recomputed["low_quality"],
+                kb_stale_after_override=out.kb_stale_after_override,
+            ),
+        )
+    )

@@ -145,6 +145,57 @@ class CurationJobDetail(BaseModel):
     segments: list[CurationSegmentItem]
 
 
+# ── PATCH /curation-jobs/{job_id}/segments/{segment_index} ─────────
+
+
+class CurationOverrideRequest(BaseModel):
+    """人工覆盖请求体（contracts/override_curation_segment.md）.
+
+    取消覆盖：传 ``override_decision: null`` + 任意（可空）reason；
+    新增 / 修改覆盖：传 ``"accepted"`` / ``"rejected"`` + 必填 reason。
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    override_decision: str | None = Field(
+        ...,
+        description="'accepted' | 'rejected' | null（取消覆盖）",
+    )
+    override_reason: str | None = Field(
+        None,
+        max_length=1000,
+        description="覆盖理由；override_decision != null 时必填",
+    )
+    override_user: str = Field(
+        ..., min_length=1, max_length=64,
+        description="操作员标识；目前为字符串字段，未来接入鉴权时改读上下文",
+    )
+
+
+class CurationOverrideRecomputed(BaseModel):
+    """覆盖后重算的关键摘要字段（响应内嵌；完整摘要可从 GET 接口取）。"""
+
+    accepted_segment_count: int
+    rejected_segment_count: int
+    accepted_duration_ratio: float
+    low_quality: bool
+    kb_stale_after_override: bool
+
+
+class CurationOverrideResponse(BaseModel):
+    """单分段人工覆盖响应（contracts/override_curation_segment.md）。"""
+
+    job_id: UUID
+    segment_index: int
+    auto_decision: str
+    override_decision: str | None
+    override_user: str | None
+    override_reason: str | None
+    overridden_at: datetime | None
+    effective_decision: str
+    summary_recomputed: CurationOverrideRecomputed
+
+
 __all__ = [
     "CurationSubmitRequest",
     "CurationBatchItem",
@@ -156,4 +207,7 @@ __all__ = [
     "CurationSegmentItem",
     "CurationJobSummary",
     "CurationJobDetail",
+    "CurationOverrideRequest",
+    "CurationOverrideRecomputed",
+    "CurationOverrideResponse",
 ]
