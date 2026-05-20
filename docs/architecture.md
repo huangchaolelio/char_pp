@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-04-30 · Feature-020 运动员推理流水线交付
+> 最后更新：2026-05-19 · Feature-021 视频内容清洗与有效片段筛选交付
 ## 目录
 
 - [系统概述](#系统概述)
@@ -106,6 +106,29 @@ fallback: MediaPipe (CPU)
 
 KB 提取四个 executor 改造为**消费预处理产物**：`pose_analysis` 按分段迭代 estimate_pose；`audio_transcription` 直接从 COS 拉 audio.wav 喂 Whisper（强制 `WHISPER_DEVICE=cpu`）；本地产物 24h 温缓存供同视频后续任务复用（先 COS head 校验再读本地）。
 
+### 内容清洗强制门（Feature 021）
+
+为收敛"不同教练风格各异导致 KB 抽取知识离散"问题，Feature-021 在 `classify_video` 与 `extract_kb` 之间插入 `curate_segments` 步骤：
+
+```
+preprocess → classify → curate_segments → extract_kb
+                            ↓                ↑
+                       逐分段决策      只读 effective_decision='accepted'
+```
+
+清洗执行单元：
+- 决策算法：5 维加权（tech_keyword 0.35 / non_teaching 0.25 / coach_dominance 0.20 / topic_relevance 0.15 / duration_floor 0.05）+ LLM 兜底（仅模糊区间 (0.3, 0.7)）
+- 队列：复用 `default`（concurrency=1，与 scan / housekeeping 同列）；不新增 worker
+- 规范文件：`src/config/curation_rubric/vN.yaml` 与代码同源 + jsonschema 启动期校验；运营改规则走 PR
+
+KB 抽取强制门两层对接：
+1. `POST /tasks/kb-extraction` 路由层：视频未跑过 success 清洗 ⇒ 409 `CURATION_REQUIRED`
+2. DAG 内 `download_video` 步：按 `effective_decision='accepted'` 过滤 segments；`accepted_duration_ratio==0` 抛 `LOW_QUALITY_SKIP:` 短路（不调 LLM）
+
+应急回滚：`KB_EXTRACTION_BYPASS_CURATION_GATE=true` 跳过门控 + `extraction_jobs.output_summary.curation_bypass=true` 留痕。
+
+人工覆盖：`PATCH /curation-jobs/{id}/segments/{idx}` 改写 `effective_decision`，视频级摘要事务内重算；`coach_video_classifications.kb_stale_after_override` 提示监控；不级联触发 KB 重抽（运营按需 `POST /extraction-jobs/{id}/rerun`）。
+
 ---
 
 ## 数据模型
@@ -127,11 +150,14 @@ tech_knowledge_bases
 diagnosis_reports
   └── diagnosis_dimension_results   # 诊断维度评分
 
-coach_video_classifications         # Feature-008 COS 视频分类（新增 preprocessed:bool，Feature-016）
+coach_video_classifications         # Feature-008 COS 视频分类（Feature-016: preprocessed; Feature-021: last_curation_job_id / low_quality / kb_stale_after_override）
 video_classifications               # Feature-004 视频分类（老表）
 
 video_preprocessing_jobs            # Feature-016 预处理作业顶级容器
   └── video_preprocessing_segments  # Feature-016 分段映射（job_id FK cascade）
+
+video_curation_jobs                 # Feature-021 内容清洗作业级摘要
+  └── video_curation_segment_results  # Feature-021 逐分段判定 + 人工覆盖留痕（effective_decision STORED 计算列）
 
 skills
   └── skill_executions

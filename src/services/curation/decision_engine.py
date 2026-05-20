@@ -411,9 +411,31 @@ def _llm_fallback_decide(
             temperature=0.0,
             json_mode=True,
         )
+        # T084 — 结构化日志带 purpose 标识，让"清洗 LLM 兜底次数 / 失败率
+        # / token 消耗"可单独按 purpose=curation 聚合（business-workflow.md § 7.5）
+        logger.info(
+            "llm_call: purpose=curation tech_category=%s rule_score=%.3f tokens=%d",
+            tech_category, rule_score, _tokens,
+            extra={
+                "purpose": "curation",
+                "tech_category": tech_category,
+                "rule_score": rule_score,
+                "llm_tokens": _tokens,
+            },
+        )
         payload = json.loads(response_text)
     except Exception as exc:  # noqa: BLE001
-        logger.info("decision_engine LLM fallback failed: %s", exc)
+        # 同样标 purpose=curation，让失败率聚合可用
+        logger.info(
+            "llm_call_failed: purpose=curation tech_category=%s rule_score=%.3f err=%s",
+            tech_category, rule_score, exc,
+            extra={
+                "purpose": "curation",
+                "tech_category": tech_category,
+                "rule_score": rule_score,
+                "llm_error": str(exc)[:200],
+            },
+        )
         return DecisionResult(
             decision=rubric.llm_unavailable_decision,
             validity_score=round(rule_score, 4),

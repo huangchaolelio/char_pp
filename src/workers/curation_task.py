@@ -142,7 +142,75 @@ async def _run_curate(task_id: str, job_id: str) -> dict:
         )
         await session.commit()
 
+        # T083 — 结构化日志（任务监控以 logger.name + extra fields 聚合）.
+        # 与 kb_extraction_task 同惯例：不引入新 metric 客户端，由
+        # business-workflow.md § 7.2 步骤级指标 tag 规则要求落
+        # ``step_name + phase + tech_category`` 三维 + 关键计数。
+        # 这些字段 grep / Loki / ELK 直接可聚合。
+        try:
+            await _emit_curate_complete_log(session, UUID(job_id), final)
+        except Exception:  # noqa: BLE001 — best-effort
+            logger.exception("curate_video: emit completion log failed")
+
         return {"task_id": task_id, "job_id": job_id, "status": final}
+
+
+async def _emit_curate_complete_log(session, job_id: UUID, final_status: str) -> None:
+    """读 video_curation_jobs 终态字段并以结构化字段打 INFO 日志."""
+    from sqlalchemy import select
+
+    from src.models.coach_video_classification import CoachVideoClassification
+    from src.models.video_curation_job import VideoCurationJob
+
+    job = (
+        await session.execute(
+            select(VideoCurationJob).where(VideoCurationJob.id == job_id)
+        )
+    ).scalar_one_or_none()
+    if job is None:
+        return
+    tech_category = (
+        await session.execute(
+            select(CoachVideoClassification.tech_category).where(
+                CoachVideoClassification.id == job.coach_video_classification_id
+            )
+        )
+    ).scalar_one_or_none()
+
+    duration_seconds = None
+    if job.started_at and job.completed_at:
+        duration_seconds = round(
+            (job.completed_at - job.started_at).total_seconds(), 3
+        )
+
+    logger.info(
+        "curation_complete: job_id=%s status=%s duration_s=%s "
+        "rubric_version=%s tech_category=%s "
+        "total=%s accepted=%s rejected=%s uncertain=%s "
+        "accepted_duration_ratio=%s low_quality=%s audio_unavailable=%s",
+        job.id, final_status, duration_seconds,
+        job.curation_rubric_version, tech_category,
+        job.total_segment_count, job.accepted_segment_count,
+        job.rejected_segment_count, job.uncertain_segment_count,
+        job.accepted_duration_ratio, job.low_quality, job.audio_unavailable,
+        extra={
+            # business-workflow.md § 7.2 三维 tag 约定
+            "step_name": "curate_segments",
+            "phase": "TRAINING",
+            "tech_category": tech_category,
+            # 关键计数（成本/准确性聚合可用）
+            "curation_status": final_status,
+            "curation_rubric_version": job.curation_rubric_version,
+            "curation_duration_seconds": duration_seconds,
+            "curation_total_segments": job.total_segment_count,
+            "curation_accepted_segments": job.accepted_segment_count,
+            "curation_rejected_segments": job.rejected_segment_count,
+            "curation_uncertain_segments": job.uncertain_segment_count,
+            "curation_accepted_duration_ratio": job.accepted_duration_ratio,
+            "curation_low_quality": job.low_quality,
+            "curation_audio_unavailable": job.audio_unavailable,
+        },
+    )
 
 
 @shared_task(

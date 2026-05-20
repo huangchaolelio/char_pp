@@ -164,13 +164,14 @@ alembic revision --autogenerate -m "描述"
 - **COS 扫描**：分页 `MaxKeys=1000` + 零字节文件跳过 + 增量比对 `cos_object_key`
 - **四队列物理隔离**（Feature-013）：classification / kb_extraction / diagnosis / default，一队列一 Worker
 - **KB 提取 DAG**（Feature-014）：`download → (pose ∥ audio_transcribe) → (visual_kb ∥ audio_kb) → merge_kb`；作业级占 1 个通道槽位，内部 asyncio 并行
+- **清洗强制门**（Feature-021）：KB 抽取消费 `effective_decision='accepted'` 分段集合；视频未跑清洗 ⇒ 路由层 `CURATION_REQUIRED` (409) 拒绝；`accepted_duration_ratio==0` ⇒ DAG `download_video` 抛 `LOW_QUALITY_SKIP:` 业务短路（不调 LLM）；应急回滚开关 `KB_EXTRACTION_BYPASS_CURATION_GATE` env 字段，命中后 `extraction_jobs.output_summary.curation_bypass=true` 留痕
 
 📖 分类与知识库工作流细节：[.codebuddy/rules/tech-classification.md](.codebuddy/rules/tech-classification.md)
 📖 LLM / 姿态估计 / Celery 任务 / 队列：[.codebuddy/rules/workflow.md](.codebuddy/rules/workflow.md)
 
 ---
 
-## 活跃 Features（001~016，均已完成）
+## 活跃 Features（001~021，均已完成）
 
 | # | Feature | 核心 API |
 |---|---------|----------|
@@ -190,6 +191,7 @@ alembic revision --autogenerate -m "描述"
 | 014 | 知识库提取流水线化（DAG + 并行） | `GET /extraction-jobs`, `GET /extraction-jobs/{id}`, `POST /extraction-jobs/{id}/rerun`（扩展 `POST /tasks/kb-extraction`）|
 | 015 | 真实算法接入（知识库提取流水线） | 无新 API；4 个 executor 接入 Feature-002 算法；`scripts/run_reference_regression.py` 回归工具 |
 | 016 | 视频预处理流水线（标准化 + 分段） | `POST /tasks/preprocessing`, `POST /tasks/preprocessing/batch`, `GET /video-preprocessing/{id}`；KB 提取消费预处理产物（长视频 OOM 防护） |
+| 021 | 视频内容清洗与有效片段筛选 | `POST /tasks/curation`, `POST /tasks/curation/batch`, `GET /curation-jobs/{id}`, `PATCH /curation-jobs/{id}/segments/{segment_index}`；KB 抽取消费 `effective_decision='accepted'` 分段集合 |
 
 📖 产品功能详情：[docs/features.md](docs/features.md)
 📖 技术架构：[docs/architecture.md](docs/architecture.md)

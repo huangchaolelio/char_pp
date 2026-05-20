@@ -52,6 +52,35 @@ pkill -f "celery_default_worker" && \
     >> /tmp/celery_default_worker.log 2>&1 &
 ```
 
+### 1.5 老库存视频回填（可选，但上线前 **强烈推荐**）
+
+Feature-021 上线后，所有"已分类 + 已预处理 + 但还没跑过 success 清洗"的旧视频，
+后续 KB 抽取 / `extract_kb` rerun 会被 router 层 Gate 1（`CURATION_REQUIRED`）拒绝。
+为避免运营临时手工补提交，提供一个回填脚本一次性批量入队清洗任务：
+
+```bash
+# 1. 先 dry-run，看会回填多少条 + 范围确认
+/opt/conda/envs/coaching/bin/python3.11 \
+    scripts/backfill_curation_for_existing_videos.py --dry-run
+
+# 2. 看 default 队列剩余容量
+curl http://localhost:8080/api/v1/task-channels?task_type=video_curation
+
+# 3. 真跑（建议分批 100 条避免一次入队过多冲击通道）
+/opt/conda/envs/coaching/bin/python3.11 \
+    scripts/backfill_curation_for_existing_videos.py --apply --limit 100
+
+# 4. 重复跑直到 dry-run 输出 0 个候选；脚本本身幂等（既有 success 行不会重复入队）
+```
+
+可选限定参数：
+
+- `--tech-category forehand_topspin`：只回填某一类
+- `--coach-name 张继科`：只回填某教练
+- `--rubric-version v2`：用指定版本（默认最新）
+
+完整用法：`scripts/backfill_curation_for_existing_videos.py --help`。
+
 ---
 
 ## 2. 端到端冒烟测试（开发场景）
