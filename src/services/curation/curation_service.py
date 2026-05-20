@@ -1146,19 +1146,25 @@ async def aggregate_curation_stats(
     group_keys = [r.group_key for r in rows]
 
     # 二阶段：每组的 avg_validity_score（以分段为权）
-    seg_score_stmt = select(
-        group_col.label("group_key"),
-        func.avg(VideoCurationSegmentResult.validity_score).label("avg_score"),
-    ).join(
-        VideoCurationJob,
-        VideoCurationJob.id == VideoCurationSegmentResult.job_id,
-    ).join(
-        CoachVideoClassification,
-        CoachVideoClassification.id
-        == VideoCurationJob.coach_video_classification_id,
-    ).where(
-        VideoCurationJob.status == "success",
-        group_col.in_(group_keys),
+    seg_score_stmt = (
+        select(
+            group_col.label("group_key"),
+            func.avg(VideoCurationSegmentResult.validity_score).label("avg_score"),
+        )
+        .select_from(VideoCurationSegmentResult)
+        .join(
+            VideoCurationJob,
+            VideoCurationJob.id == VideoCurationSegmentResult.job_id,
+        )
+        .join(
+            CoachVideoClassification,
+            CoachVideoClassification.id
+            == VideoCurationJob.coach_video_classification_id,
+        )
+        .where(
+            VideoCurationJob.status == "success",
+            group_col.in_(group_keys),
+        )
     )
     if coach_name:
         seg_score_stmt = seg_score_stmt.where(
@@ -1182,20 +1188,26 @@ async def aggregate_curation_stats(
     # rubric_version 维度按 contracts 示例不给该字段）
     with_overrides_by_group: dict[Any, int] = {}
     if group_by in ("coach", "tech_category"):
-        ov_stmt = select(
-            group_col.label("group_key"),
-            func.count(func.distinct(VideoCurationJob.id)).label("with_ov"),
-        ).join(
-            VideoCurationJob,
-            VideoCurationJob.id == VideoCurationSegmentResult.job_id,
-        ).join(
-            CoachVideoClassification,
-            CoachVideoClassification.id
-            == VideoCurationJob.coach_video_classification_id,
-        ).where(
-            VideoCurationJob.status == "success",
-            VideoCurationSegmentResult.override_decision.isnot(None),
-            group_col.in_(group_keys),
+        ov_stmt = (
+            select(
+                group_col.label("group_key"),
+                func.count(func.distinct(VideoCurationJob.id)).label("with_ov"),
+            )
+            .select_from(VideoCurationSegmentResult)
+            .join(
+                VideoCurationJob,
+                VideoCurationJob.id == VideoCurationSegmentResult.job_id,
+            )
+            .join(
+                CoachVideoClassification,
+                CoachVideoClassification.id
+                == VideoCurationJob.coach_video_classification_id,
+            )
+            .where(
+                VideoCurationJob.status == "success",
+                VideoCurationSegmentResult.override_decision.isnot(None),
+                group_col.in_(group_keys),
+            )
         )
         if coach_name:
             ov_stmt = ov_stmt.where(CoachVideoClassification.coach_name == coach_name)
