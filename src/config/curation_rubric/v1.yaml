@@ -1,0 +1,81 @@
+# Feature-021 视频内容清洗规范 — 初版
+#
+# 改规则的工作流：
+#   1. 复制本文件为 v(N+1).yaml，修改字段
+#   2. 顶部 `version` 必须与文件名匹配（`vN`），否则 RUBRIC_INVALID
+#   3. 跑 `tests/unit/test_rubric_loader.py` 本地校验通过
+#   4. 提 PR；CI `make spec-compliance` + 单测自动校验
+#   5. 合并发版后，新清洗任务可显式声明 `curation_rubric_version: vN+1`
+#   6. 旧版作业的 `curation_rubric_version` 字段保留，可对比版本差异（P3 接口）
+
+version: v1
+description: "Feature-021 内容清洗规范初版（规则路 5 维加权 + LLM 兜底）"
+
+thresholds:
+  validity_score_accept: 0.7      # ≥ 此阈值直接 accepted
+  validity_score_reject: 0.3      # ≤ 此阈值直接 rejected
+  low_quality_ratio: 0.3          # accepted_duration_ratio < 此阈值标 low_quality=true
+  short_video_seconds: 30         # 视频总时长 < 此值 ⇒ short_video=true
+  min_segment_seconds: 5          # 单分段 < 此时长 ⇒ duration_floor 维度直接 0 分
+
+rules:
+  # 第 1 维：教学关键词命中（权重最高）
+  tech_keyword:
+    enabled: true
+    weight: 0.35
+    # 复用 F-002 教学术语字典（项目实际位置在顶层 config/keywords/）
+    keywords_ref: "config/keywords/tech_hint_keywords.json"
+
+  # 第 2 维：非教学内容排除（命中即重罚）
+  non_teaching:
+    enabled: true
+    weight: 0.25
+    keywords:
+      match:
+        # 比赛 / 集锦
+        - "比赛"
+        - "决赛"
+        - "半决赛"
+        - "冠军"
+        - "全场比分"
+        - "本场胜利"
+        # 采访 / 自我介绍
+        - "采访"
+        - "我是"
+        - "大家好"
+        - "今天给大家"
+        # 商业 / 闲聊
+        - "祝大家"
+        - "感谢大家"
+        - "感谢观看"
+        - "点赞"
+        - "关注"
+        - "订阅"
+        - "评论"
+        - "广告"
+        - "赞助"
+
+  # 第 3 维：目标教练主导
+  coach_dominance:
+    enabled: true
+    weight: 0.20
+    min_dominance_ratio: 0.6        # 目标教练讲解时长占比 ≥ 0.6 才不扣分
+
+  # 第 4 维：与目标 tech_category 主题相关性
+  topic_relevance:
+    enabled: true
+    weight: 0.15
+    # 复用 21 类技术分类关键词（反向用其命中本段是否聊到目标类别）
+    keywords_ref: "config/tech_classification_rules.json"
+
+  # 第 5 维：单分段最短时长硬约束
+  duration_floor:
+    enabled: true
+    weight: 0.05
+
+llm_fallback:
+  enabled: true
+  invoke_when_score_in: [0.3, 0.7] # 仅模糊区间调 LLM
+  prompt_template: "src/config/curation_rubric/prompts/segment_decision_v1.md"
+  timeout_seconds: 5
+  unavailable_decision: "uncertain"

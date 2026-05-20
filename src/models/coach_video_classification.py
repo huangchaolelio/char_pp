@@ -13,12 +13,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
     Float,
+    ForeignKey,
     Index,
     Integer,
     String,
@@ -26,11 +27,14 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import ARRAY, TEXT, UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.sql import func
 from sqlalchemy import text
 
 from src.db.session import Base
+
+if TYPE_CHECKING:
+    from src.models.video_curation_job import VideoCurationJob
 
 
 class CoachVideoClassification(Base):
@@ -61,6 +65,23 @@ class CoachVideoClassification(Base):
     preprocessed: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+
+    # ── Feature-021: 视频内容清洗扩列 ────────────────────────────
+    # 由 services/curation/curation_service.py 在清洗 success 后维护：
+    # - last_curation_job_id: 指向最近一次成功清洗作业（FK，SET NULL on delete）
+    # - low_quality:           从 video_curation_jobs.low_quality 同步，避免列表 join
+    # - kb_stale_after_override: 任意分段在 KB 抽取作业完成后被覆盖时为 true；
+    #     运营 POST /extraction-jobs/{id}/rerun 重抽完成后清零
+    last_curation_job_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("video_curation_jobs.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+    low_quality: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    kb_stale_after_override: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
@@ -69,6 +90,17 @@ class CoachVideoClassification(Base):
         nullable=False,
         server_default=text("timezone('Asia/Shanghai', now())"),
         onupdate=text("timezone('Asia/Shanghai', now())"),
+    )
+
+    # ── 关系 ─────────────────────────────────────────────────
+    # 一对多：本素材的所有清洗作业（按时序留痕，不仅是 latest）
+    curation_jobs: Mapped[list["VideoCurationJob"]] = relationship(
+        "VideoCurationJob",
+        back_populates="coach_video_classification",
+        cascade="all, delete-orphan",
+        lazy="noload",
+        # 与 last_curation_job_id 反向 FK 区分；显式指定关系外键避免歧义
+        foreign_keys="VideoCurationJob.coach_video_classification_id",
     )
 
     __table_args__ = (
@@ -90,4 +122,5 @@ class CoachVideoClassification(Base):
         Index("idx_cvclf_kb", "kb_extracted"),
         Index("idx_cvclf_preprocessed", "preprocessed"),
         Index("idx_cvclf_coach_tech", "coach_name", "tech_category"),
+        Index("ix_coach_class_last_curation", "last_curation_job_id"),
     )

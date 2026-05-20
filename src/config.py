@@ -111,6 +111,16 @@ class Settings(BaseSettings):
     preprocessing_local_retention_hours: int = 24         # 本地温缓存保留时长（success/failed 统一）
     preprocessing_upload_concurrency: int = 2             # ThreadPoolExecutor max_workers
 
+    # Feature 021 — Video content curation pipeline
+    curation_job_timeout_seconds: int = 600               # 作业级超时（清洗 task；与孤儿回收阈值对齐）
+    curation_llm_timeout_seconds: int = 5                 # 单分段 LLM 兜底超时
+    # Feature-021 应急回滚开关（business-workflow.md § 10 登记）：
+    # 设为 True 时 KB 抽取跳过"清洗强制门"，行为退回 Feature-021 之前
+    # （读全量 video_preprocessing_segments）；命中后每条 KB 作业的
+    # extraction_jobs.output_summary.curation_bypass=true 留痕，事后审计可定位。
+    # 仅在"清洗规则误伤导致 KB 读到的有效片段大量减少"时启用；恢复后立即关闭。
+    kb_extraction_bypass_curation_gate: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

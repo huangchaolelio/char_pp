@@ -30,6 +30,8 @@ def create_celery_app() -> Celery:
             "src.workers.athlete_scan_task",
             "src.workers.athlete_preprocessing_callback",
             # Feature-020
+            # Feature-021 video content curation
+            "src.workers.curation_task",
         ],
     )
 
@@ -82,6 +84,10 @@ def create_celery_app() -> Celery:
             "src.workers.preprocessing_task.preprocess_video": {"queue": "preprocessing"},
             "src.workers.athlete_scan_task.scan_athlete_videos": {"queue": "default"},
             "src.workers.athlete_preprocessing_callback.mark_athlete_preprocessed_cb": {"queue": "default"},
+            # Feature-021 — content curation also rides the default queue (concurrency=1,
+            # alongside scan / housekeeping / sweep). Quick rule-path + light LLM
+            # fallback; not heavy enough to warrant a dedicated worker.
+            "src.workers.curation_task.curate_video": {"queue": "default"},
         },
         # Beat schedule for data retention cleanup
         beat_schedule={

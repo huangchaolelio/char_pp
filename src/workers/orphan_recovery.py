@@ -42,8 +42,10 @@ async def sweep_orphan_tasks() -> int:
     settings = get_settings()
     timeout_s = settings.orphan_task_timeout_seconds
     step_timeout_s = settings.extraction_step_timeout_seconds
+    curation_timeout_s = settings.curation_job_timeout_seconds  # Feature-021
     cutoff = now_cst() - timedelta(seconds=timeout_s)
     step_cutoff = now_cst() - timedelta(seconds=step_timeout_s)
+    curation_cutoff = now_cst() - timedelta(seconds=curation_timeout_s)
 
     engine = create_async_engine(
         settings.database_url,
@@ -91,9 +93,68 @@ completed_at=now_cst(),
             preprocessing_orphans = await _sweep_preprocessing_orphans(
                 session, cutoff
             )
-            return count + pipeline_orphans + preprocessing_orphans
+            # Feature 021: sweep stuck curation jobs (cutoff uses
+            # CURATION_JOB_TIMEOUT_SECONDS so it stays in sync with the
+            # Celery soft_time_limit; reclaim sets error_code=CURATION_TIMEOUT).
+            curation_orphans = await _sweep_curation_orphans(
+                session, curation_cutoff
+            )
+            return (
+                count
+                + pipeline_orphans
+                + preprocessing_orphans
+                + curation_orphans
+            )
     finally:
         await engine.dispose()
+
+
+async def _sweep_curation_orphans(
+    session: AsyncSession, cutoff: datetime
+) -> int:
+    """Feature 021 — reclaim ``video_curation_jobs`` rows stuck in ``running``
+    past ``CURATION_JOB_TIMEOUT_SECONDS``.
+
+    Each reclaimed job:
+      - flips ``status`` from ``running`` to ``failed``
+      - sets ``error_code='CURATION_TIMEOUT'`` + a clear ``error_message``
+      - sets ``completed_at`` to now
+
+    Cascade behaviour: ``video_curation_segment_results`` rows are kept
+    (some may already be persisted from the partial run); they are
+    auditable but no longer feed downstream because the job-level
+    ``status='failed'`` short-circuits ``effective_decision`` joins.
+
+    Returns the number of curation jobs reclaimed.
+    """
+    from src.models.video_curation_job import VideoCurationJob  # noqa: PLC0415
+
+    stmt = (
+        update(VideoCurationJob)
+        .where(
+            VideoCurationJob.status == "running",
+            VideoCurationJob.started_at.isnot(None),
+            VideoCurationJob.started_at < cutoff,
+        )
+        .values(
+            status="failed",
+            completed_at=now_cst(),
+            error_code="CURATION_TIMEOUT",
+            error_message="orphan_recovered: curation job exceeded timeout",
+        )
+        .returning(VideoCurationJob.id)
+    )
+    result = await session.execute(stmt)
+    reclaimed = result.fetchall()
+    await session.commit()
+
+    if reclaimed:
+        logger.warning(
+            "orphan recovery: reclaimed %d stale curation job(s) "
+            "older than cutoff %s",
+            len(reclaimed), cutoff.isoformat(),
+        )
+    return len(reclaimed)
 
 
 async def _sweep_preprocessing_orphans(

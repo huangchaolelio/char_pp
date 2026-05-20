@@ -134,6 +134,8 @@ alembic revision --autogenerate -m "描述"
 | `VIDEO_PREPROCESSING_TARGET_SHORT_SIDE` | 标准化目标短边像素，默认 720（Feature-016）|
 | `PREPROCESSING_LOCAL_RETENTION_HOURS` | 预处理本地温缓存保留时长，默认 24（Feature-016）|
 | `PREPROCESSING_UPLOAD_CONCURRENCY` | COS 上传 ThreadPool 并发，默认 2（Feature-016）|
+| `CURATION_JOB_TIMEOUT_SECONDS` | 视频内容清洗作业级超时，默认 600（Feature-021）|
+| `CURATION_LLM_TIMEOUT_SECONDS` | 单分段 LLM 兜底超时，默认 5（Feature-021）|
 
 📖 COS 存储与教练-目录映射：[.codebuddy/rules/cos-storage.md](.codebuddy/rules/cos-storage.md)
 

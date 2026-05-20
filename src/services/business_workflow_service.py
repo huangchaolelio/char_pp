@@ -71,6 +71,7 @@ _PHASE_STEP_TASK_TYPE_MATRIX: dict[tuple[str, str], set[str]] = {
     ("TRAINING", "scan_cos_videos"): {"video_classification"},
     ("TRAINING", "preprocess_video"): {"video_preprocessing"},
     ("TRAINING", "classify_video"): {"video_classification"},
+    ("TRAINING", "curate_segments"): {"video_curation"},  # Feature-021
     ("TRAINING", "extract_kb"): {"kb_extraction"},
     ("STANDARDIZATION", "review_conflicts"): set(),  # 非 analysis_tasks 业务；显式 task_type 一律冲突
     ("STANDARDIZATION", "kb_version_activate"): set(),
@@ -82,7 +83,12 @@ _PHASE_STEP_TASK_TYPE_MATRIX: dict[tuple[str, str], set[str]] = {
 
 # 单独按 phase 维度的允许 task_type 集合（phase 指定但 step 未指定时使用）
 _PHASE_TASK_TYPES: dict[str, set[str]] = {
-    "TRAINING": {"video_classification", "video_preprocessing", "kb_extraction"},
+    "TRAINING": {
+        "video_classification",
+        "video_preprocessing",
+        "kb_extraction",
+        "video_curation",  # Feature-021
+    },
     "STANDARDIZATION": set(),
     "INFERENCE": {
         "athlete_diagnosis",

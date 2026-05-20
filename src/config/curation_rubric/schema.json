@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://charhuang.local/curation_rubric.schema.json",
+  "title": "Curation Rubric Schema",
+  "description": "Feature-021 视频内容清洗规范文件 schema（参考 specs/021-video-content-curation/data-model.md § 3.1）",
+  "type": "object",
+  "required": ["version", "thresholds", "rules", "llm_fallback"],
+  "additionalProperties": false,
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^v[0-9]+$",
+      "description": "版本号，格式 vN（仅整数递增），与文件名一致"
+    },
+    "description": {
+      "type": "string"
+    },
+    "thresholds": {
+      "type": "object",
+      "required": [
+        "validity_score_accept",
+        "validity_score_reject",
+        "low_quality_ratio",
+        "short_video_seconds",
+        "min_segment_seconds"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "validity_score_accept": {"type": "number", "minimum": 0, "maximum": 1},
+        "validity_score_reject": {"type": "number", "minimum": 0, "maximum": 1},
+        "low_quality_ratio":     {"type": "number", "minimum": 0, "maximum": 1},
+        "short_video_seconds":   {"type": "integer", "minimum": 1},
+        "min_segment_seconds":   {"type": "integer", "minimum": 1}
+      }
+    },
+    "rules": {
+      "type": "object",
+      "required": [
+        "tech_keyword",
+        "non_teaching",
+        "coach_dominance",
+        "topic_relevance",
+        "duration_floor"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "tech_keyword":    {"$ref": "#/$defs/rule_with_keywords_ref"},
+        "non_teaching":    {"$ref": "#/$defs/rule_with_inline_keywords"},
+        "coach_dominance": {"$ref": "#/$defs/rule_coach_dominance"},
+        "topic_relevance": {"$ref": "#/$defs/rule_with_keywords_ref"},
+        "duration_floor":  {"$ref": "#/$defs/rule_simple"}
+      }
+    },
+    "llm_fallback": {
+      "type": "object",
+      "required": [
+        "enabled",
+        "invoke_when_score_in",
+        "prompt_template",
+        "timeout_seconds",
+        "unavailable_decision"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "enabled":              {"type": "boolean"},
+        "invoke_when_score_in": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {"type": "number", "minimum": 0, "maximum": 1}
+        },
+        "prompt_template":      {"type": "string", "minLength": 1},
+        "timeout_seconds":      {"type": "integer", "minimum": 1, "maximum": 60},
+        "unavailable_decision": {"type": "string", "enum": ["uncertain", "rejected"]}
+      }
+    }
+  },
+  "$defs": {
+    "rule_simple": {
+      "type": "object",
+      "required": ["enabled", "weight"],
+      "properties": {
+        "enabled": {"type": "boolean"},
+        "weight":  {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    },
+    "rule_with_keywords_ref": {
+      "type": "object",
+      "required": ["enabled", "weight", "keywords_ref"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled":      {"type": "boolean"},
+        "weight":       {"type": "number", "minimum": 0, "maximum": 1},
+        "keywords_ref": {"type": "string", "minLength": 1}
+      }
+    },
+    "rule_with_inline_keywords": {
+      "type": "object",
+      "required": ["enabled", "weight", "keywords"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled":  {"type": "boolean"},
+        "weight":   {"type": "number", "minimum": 0, "maximum": 1},
+        "keywords": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "array",
+            "items": {"type": "string", "minLength": 1}
+          }
+        }
+      }
+    },
+    "rule_coach_dominance": {
+      "type": "object",
+      "required": ["enabled", "weight", "min_dominance_ratio"],
+      "additionalProperties": false,
+      "properties": {
+        "enabled":             {"type": "boolean"},
+        "weight":              {"type": "number", "minimum": 0, "maximum": 1},
+        "min_dominance_ratio": {"type": "number", "minimum": 0, "maximum": 1}
+      }
+    }
+  }
+}

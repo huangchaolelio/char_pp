@@ -100,6 +100,18 @@ class ErrorCode(str, Enum):
     STANDARD_NOT_AVAILABLE = "STANDARD_NOT_AVAILABLE"
     ATHLETE_VIDEO_POSE_UNUSABLE = "ATHLETE_VIDEO_POSE_UNUSABLE"
 
+    # ── Feature-021 视频内容清洗（7） ─────────────────
+    # 清洗强制门 + 业务结果型错误码（其中 LOW_QUALITY_SKIP / CURATION_LLM_UNAVAILABLE
+    # 是"业务结果"而非异常：写入 extraction_jobs.error_code 或 segment.rejection_reason，
+    # 不抛 AppException —— 见 contracts/error-codes.md "业务结果型错误码处理约定"）
+    CURATION_REQUIRED = "CURATION_REQUIRED"
+    LOW_QUALITY_SKIP = "LOW_QUALITY_SKIP"
+    RUBRIC_INVALID = "RUBRIC_INVALID"
+    RUBRIC_VERSION_NOT_FOUND = "RUBRIC_VERSION_NOT_FOUND"
+    CURATION_TIMEOUT = "CURATION_TIMEOUT"
+    CURATION_LLM_UNAVAILABLE = "CURATION_LLM_UNAVAILABLE"
+    CURATION_RUBRIC_MISMATCH = "CURATION_RUBRIC_MISMATCH"
+
 # ── 错误码 → HTTP 状态（单一事实来源） ────────────────────────────────────
 ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     # 通用
@@ -170,6 +182,20 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.ATHLETE_VIDEO_NOT_PREPROCESSED: HTTPStatus.CONFLICT,                   # 409
     ErrorCode.STANDARD_NOT_AVAILABLE: HTTPStatus.CONFLICT,                           # 409
     ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE: HTTPStatus.UNPROCESSABLE_ENTITY,          # 422
+
+    # Feature-021（视频内容清洗）
+    # LOW_QUALITY_SKIP / CURATION_LLM_UNAVAILABLE 是"业务结果型"标记，不会通过
+    # AppException 路径返回给 HTTP 客户端 —— 它们写入 extraction_jobs.error_code
+    # / video_curation_segment_results.rejection_reason 字段，由任务监控接口读取。
+    # 但根据章程 IX 的"集中错误码"约束，仍须登记到 ERROR_STATUS_MAP；映射到 409
+    # 表"该资源处于无法继续处理的业务状态"，与 KB_CONFLICT_UNRESOLVED 同语义档位。
+    ErrorCode.CURATION_REQUIRED: HTTPStatus.CONFLICT,                                # 409
+    ErrorCode.LOW_QUALITY_SKIP: HTTPStatus.CONFLICT,                                 # 409（业务结果，不直接返回客户端）
+    ErrorCode.RUBRIC_INVALID: HTTPStatus.UNPROCESSABLE_ENTITY,                       # 422
+    ErrorCode.RUBRIC_VERSION_NOT_FOUND: HTTPStatus.NOT_FOUND,                        # 404
+    ErrorCode.CURATION_TIMEOUT: HTTPStatus.INTERNAL_SERVER_ERROR,                    # 500
+    ErrorCode.CURATION_LLM_UNAVAILABLE: HTTPStatus.CONFLICT,                         # 409（业务结果，不直接返回客户端）
+    ErrorCode.CURATION_RUBRIC_MISMATCH: HTTPStatus.CONFLICT,                         # 409
 }
 
 
@@ -243,6 +269,15 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.ATHLETE_VIDEO_NOT_PREPROCESSED: "运动员视频尚未完成预处理，不能直接诊断",
     ErrorCode.STANDARD_NOT_AVAILABLE: "该技术类别暂无可用的激活版标准",
     ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE: "运动员视频姿态提取全程无可用关键点",
+
+    # Feature-021（视频内容清洗）
+    ErrorCode.CURATION_REQUIRED: "视频尚未完成内容清洗，请先提交清洗任务",
+    ErrorCode.LOW_QUALITY_SKIP: "视频清洗判定为低质量，KB 抽取已业务跳过",
+    ErrorCode.RUBRIC_INVALID: "清洗规范文件 schema 校验失败",
+    ErrorCode.RUBRIC_VERSION_NOT_FOUND: "指定的清洗规范版本不存在",
+    ErrorCode.CURATION_TIMEOUT: "清洗任务执行超时已被孤儿回收",
+    ErrorCode.CURATION_LLM_UNAVAILABLE: "LLM 不可用，模糊分段已落 uncertain",
+    ErrorCode.CURATION_RUBRIC_MISMATCH: "本次提交的规范版本与既有 success 作业不一致；如需新建请使用 force=true",
 }
 
 

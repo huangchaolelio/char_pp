@@ -54,6 +54,8 @@ RejectionCode = Literal[
     "CLASSIFICATION_REQUIRED",
     "CHANNEL_DISABLED",
     "INVALID_INPUT",
+    # Feature-021: kb-extraction batch can reject items per-curation-gate
+    "CURATION_REQUIRED",
 ]
 
 

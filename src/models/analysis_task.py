@@ -29,6 +29,8 @@ class TaskType(str, enum.Enum):
     Feature-016 adds ``video_preprocessing`` as a fourth channel.
     Feature-020 adds ``athlete_video_classification`` / ``athlete_video_preprocessing``
     for the athlete inference pipeline (migration 0018).
+    Feature-021 adds ``video_curation`` for the content curation step that
+    sits between classify_video and extract_kb (migration 0020).
     """
 
     video_classification = "video_classification"
@@ -38,6 +40,8 @@ class TaskType(str, enum.Enum):
     # Feature-020
     athlete_video_classification = "athlete_video_classification"
     athlete_video_preprocessing = "athlete_video_preprocessing"
+    # Feature-021
+    video_curation = "video_curation"
 
 
 class TaskStatus(str, enum.Enum):

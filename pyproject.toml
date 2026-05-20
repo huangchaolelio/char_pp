@@ -38,6 +38,8 @@ dependencies = [
     "tenacity>=8.2.0",
     # YAML parsing (Feature 018: optimization_levers.yml / scan-exclude.yml)
     "pyyaml>=6.0",
+    # JSON Schema validation (Feature 021: curation rubric schema enforcement)
+    "jsonschema>=4.0",
 ]
 
 [project.optional-dependencies]
