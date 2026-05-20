@@ -91,6 +91,21 @@ def client(db_no_op):
     return TestClient(app)
 
 
+@pytest.fixture(autouse=True)
+def _bypass_feature021_curation_gate():
+    """让 F-021 清洗门直通；本文件仅覆盖 F-013 批量提交语义."""
+    from unittest.mock import patch
+
+    from src.services.curation.kb_gate import GateResult
+
+    with patch(
+        "src.api.routers.tasks.evaluate_curation_gate",
+        new_callable=AsyncMock,
+        return_value=GateResult(decision="bypassed"),
+    ):
+        yield
+
+
 @pytest.fixture
 def db_no_op():
     from src.db.session import get_db

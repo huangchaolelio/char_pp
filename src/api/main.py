@@ -24,6 +24,9 @@ from src.api.routers.extraction_jobs import router as extraction_jobs_router
 from src.api.routers.video_preprocessing import router as video_preprocessing_router
 # Feature-018 — 三阶段业务总览
 from src.api.routers.business_workflow import router as business_workflow_router
+# Feature-021 — 视频内容清洗
+from src.api.routers.curation_jobs import router as curation_jobs_router
+from src.api.routers.curation_stats import router as curation_stats_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -45,6 +48,26 @@ def create_app() -> FastAPI:
 
     settings = get_settings()
     _configure_logging(settings.log_level)
+
+    # Feature-021 (T048): 在 API 启动期加载并校验当前最新清洗规范.
+    # 目的是 fail-fast 把"线上规范文件错"的发现时机从"第一条清洗任务"提前到
+    # "API 启动"——但**不阻断 API 启动**：失败时只打 critical 日志，让运维仍能
+    # 走 /admin 应急、查询 / 重启 等通道。一旦清洗任务真的提交，curation_service
+    # 会再做一次同样的 load + 校验，第二道闸门把住。
+    try:
+        from src.services.curation.rubric_loader import latest_version, load
+        rubric = load(latest_version())
+        logger.info(
+            "F-021 curation rubric loaded at startup: version=%s rules=%d",
+            rubric.version, len(rubric.data.get("rules", {})),
+        )
+    except Exception as exc:  # noqa: BLE001 — fail-soft on purpose
+        logger.critical(
+            "F-021 curation rubric failed to load at startup: %s "
+            "(API will start; clean curation submissions will be rejected with "
+            "RUBRIC_INVALID / RUBRIC_VERSION_NOT_FOUND until fixed)",
+            exc,
+        )
 
     app = FastAPI(
         title="乒乓球AI智能教练系统",
@@ -100,6 +123,10 @@ def create_app() -> FastAPI:
     app.include_router(video_preprocessing_router, prefix="/api/v1")
     # Feature-018 — 三阶段业务总览接口（US1）
     app.include_router(business_workflow_router, prefix="/api/v1")
+    # Feature-021 — 视频内容清洗（POST /tasks/curation + GET /curation-jobs/{job_id}）
+    app.include_router(curation_jobs_router, prefix="/api/v1")
+    # Feature-021 US5 — 聚合统计观测（GET /curation-stats）
+    app.include_router(curation_stats_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():

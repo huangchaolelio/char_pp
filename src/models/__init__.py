@@ -33,6 +33,10 @@ from src.models.video_preprocessing_job import (
 )
 from src.models.video_preprocessing_segment import VideoPreprocessingSegment
 
+# Feature-021 视频内容清洗
+from src.models.video_curation_job import VideoCurationJob
+from src.models.video_curation_segment_result import VideoCurationSegmentResult
+
 # Feature-018 — 所有 ORM 模型加载完毕后注册 before_insert 钩子
 # （自动派生 business_phase / business_step）
 from src.models._phase_step_hook import register_phase_step_hooks as _register_phase_step_hooks
@@ -83,4 +87,7 @@ __all__ = [
     "VideoPreprocessingJob",
     "PreprocessingJobStatus",
     "VideoPreprocessingSegment",
+    # Feature-021
+    "VideoCurationJob",
+    "VideoCurationSegmentResult",
 ]

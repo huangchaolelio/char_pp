@@ -55,6 +55,24 @@ def db_no_op():
     app.dependency_overrides.pop(get_db, None)
 
 
+@pytest.fixture(autouse=True)
+def _bypass_feature021_curation_gate():
+    """Feature-013 合约测试与 Feature-021 清洗门解耦.
+
+    本文件聚焦 F-013 自身门控（CLASSIFICATION_REQUIRED / 通道容量 / submission
+    服务路径），用 ``GateResult(decision='bypassed')`` 让 F-021 门控直通；
+    F-021 自己的契约测试在 ``test_kb_extraction_curation_gate.py`` 单独覆盖。
+    """
+    from src.services.curation.kb_gate import GateResult
+
+    with patch(
+        "src.api.routers.tasks.evaluate_curation_gate",
+        new_callable=AsyncMock,
+        return_value=GateResult(decision="bypassed"),
+    ):
+        yield
+
+
 @pytest.fixture
 def client(db_no_op):
     return TestClient(app)

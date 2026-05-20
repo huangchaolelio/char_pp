@@ -33,6 +33,7 @@ def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
     - video_classification + parent_scan_task_id NOT NULL ⇒ (TRAINING, classify_video)
     - video_preprocessing ⇒ (TRAINING, preprocess_video)
     - kb_extraction ⇒ (TRAINING, extract_kb)
+    - video_curation ⇒ (TRAINING, curate_segments)              # Feature-021
     - athlete_diagnosis ⇒ (INFERENCE, diagnose_athlete)
     - athlete_video_classification ⇒ (INFERENCE, scan_athlete_videos)     # Feature-020
     - athlete_video_preprocessing ⇒ (INFERENCE, preprocess_athlete_video) # Feature-020
@@ -45,6 +46,9 @@ def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
         return (BusinessPhase.TRAINING.value, "preprocess_video")
     if tt == TaskType.kb_extraction:
         return (BusinessPhase.TRAINING.value, "extract_kb")
+    # ── Feature-021 新增派生规则 ──────────────────────────────
+    if tt == TaskType.video_curation:
+        return (BusinessPhase.TRAINING.value, "curate_segments")
     if tt == TaskType.athlete_diagnosis:
         return (BusinessPhase.INFERENCE.value, "diagnose_athlete")
     # ── Feature-020 新增派生规则 ──────────────────────────────

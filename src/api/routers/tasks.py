@@ -132,6 +132,8 @@ async def list_tasks(
         "review_conflicts", "kb_version_activate", "build_standards", "diagnose_athlete",
         # Feature-020 运动员推理流水线新增 2 步
         "scan_athlete_videos", "preprocess_athlete_video",
+        # Feature-021 内容清洗新增 1 步
+        "curate_segments",
     }
     step_val: Optional[str] = (
         validate_enum_choice(business_step, field="business_step", allowed=_VALID_BUSINESS_STEPS)
@@ -751,6 +753,8 @@ from src.models.analysis_task import TaskType as _F13TaskType  # noqa: E402
 from src.services.classification_gate_service import (  # noqa: E402
     ClassificationGateService as _F13ClassificationGateService,
 )
+# Feature-021 清洗门：在 submit_kb_extraction 入口拦截"未跑过清洗"
+from src.services.curation.kb_gate import evaluate_curation_gate  # noqa: E402
 from src.services.task_submission_service import (  # noqa: E402
     BatchTooLargeError as _F13BatchTooLargeError,
     ChannelDisabledError as _F13ChannelDisabledError,
@@ -961,6 +965,18 @@ async def submit_kb_extraction(
             },
         )
 
+    # Feature-021 Gate 1 (FR-010): require a successful curation job.
+    # bypass_curation_gate=True 的应急路径在 evaluate_curation_gate 内统一处理。
+    gate_result = await evaluate_curation_gate(db, cos_object_key=body.cos_object_key)
+    if gate_result.decision == "required":
+        raise AppException(
+            ErrorCode.CURATION_REQUIRED,
+            details={
+                "cos_object_key": body.cos_object_key,
+                "hint": "submit POST /api/v1/tasks/curation first",
+            },
+        )
+
     # Feature 014: carry tech_category + force into task_kwargs so the
     # submission service can seed the ExtractionJob + 6 PipelineSteps in the
     # same DB transaction as the analysis_tasks INSERT.
@@ -1045,24 +1061,12 @@ async def submit_kb_extraction_batch(
             },
         )
     gate = _F13ClassificationGateService()
+    # Feature-021 Gate 1 (FR-010): require successful curation per cos_object_key.
     classified_items: list[_F13SubmissionInputItem] = []
     classified_original_index: list[int] = []
     gate_rejections: list[_F13SubmissionItem] = []
     for idx, req in enumerate(body.items):
-        if await gate.check_classified(db, req.cos_object_key):
-            item = _f13_submission_from_kb_req(req)
-            # Feature 014: inject tech_category + force so submit_batch can
-            # seed ExtractionJob rows in the same transaction.
-            item.task_kwargs = {
-                **item.task_kwargs,
-                "tech_category": (
-                    await gate.get_tech_category(db, req.cos_object_key)
-                ) or "unclassified",
-                "force": getattr(req, "force", False),
-            }
-            classified_items.append(item)
-            classified_original_index.append(idx)
-        else:
+        if not await gate.check_classified(db, req.cos_object_key):
             current = await gate.get_tech_category(db, req.cos_object_key)
             gate_rejections.append(
                 _F13SubmissionItem(
@@ -1078,6 +1082,39 @@ async def submit_kb_extraction_batch(
                     existing_task_id=None,
                 )
             )
+            continue
+
+        # Feature-021 curation gate (per-item)
+        cur_gate = await evaluate_curation_gate(db, cos_object_key=req.cos_object_key)
+        if cur_gate.decision == "required":
+            gate_rejections.append(
+                _F13SubmissionItem(
+                    index=idx,
+                    accepted=False,
+                    task_id=None,
+                    cos_object_key=req.cos_object_key,
+                    rejection_code="CURATION_REQUIRED",
+                    rejection_message=(
+                        "video has not been curated; "
+                        "submit POST /api/v1/tasks/curation first"
+                    ),
+                    existing_task_id=None,
+                )
+            )
+            continue
+
+        item = _f13_submission_from_kb_req(req)
+        # Feature 014: inject tech_category + force so submit_batch can
+        # seed ExtractionJob rows in the same transaction.
+        item.task_kwargs = {
+            **item.task_kwargs,
+            "tech_category": (
+                await gate.get_tech_category(db, req.cos_object_key)
+            ) or "unclassified",
+            "force": getattr(req, "force", False),
+        }
+        classified_items.append(item)
+        classified_original_index.append(idx)
 
     # If every item failed the gate, still return a 200 with live channel snapshot.
     if not classified_items:

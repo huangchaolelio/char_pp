@@ -1,7 +1,7 @@
 
 # 业务执行流程规范
 
-> 最后更新：2026-04-30
+> 最后更新：2026-05-18
 >
 > 本文档抽象项目的核心业务为**三阶段八步骤**执行模型，明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆与调度图。
 >
@@ -27,7 +27,8 @@ flowchart LR
   subgraph S1[阶段一 · 训练 TRAINING]
     direction TB
     T1[1.素材归集<br/>scan_cos_videos] --> T2[2.视频预处理<br/>preprocess_video]
-    T2 --> T3[3.技术分类<br/>classify_video] --> T4[4.知识库抽取<br/>extract_kb 6步DAG]
+    T2 --> T3[3.技术分类<br/>classify_video] --> T35[3.5 内容清洗<br/>curate_segments F-021]
+    T35 --> T4[4.知识库抽取<br/>extract_kb 6步DAG]
   end
 
   subgraph S2[阶段二 · 建立标准 STANDARDIZATION]
@@ -70,9 +71,10 @@ flowchart LR
 | 1 | **scan_cos_videos** | `POST /api/v1/classifications/scan` | `default` | 1 | COS 根路径可读（`COS_VIDEO_ALL_COCAH`） | `coach_video_classifications` + `coaches` | `analysis_tasks(task_type=video_classification, submitted_via=batch_scan)` |
 | 2 | **preprocess_video** | 批量提交 `POST /api/v1/tasks type=video_preprocessing` | `preprocessing` | 3 | `coach_video_classifications` 存在 | 标准化 mp4 + N×180s 分片（COS）+ 16k mono WAV | `video_preprocessing_jobs` + `video_preprocessing_segments` |
 | 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `tech_category` 字段落定（21 类之一） | `analysis_tasks(task_type=video_classification)` |
-| 4 | **extract_kb**（6 步 DAG） | `POST /api/v1/tasks type=kb_extraction` | `kb_extraction` | 2 | `tech_category` 非空、预处理完成 | `expert_tech_points` + `kb_conflicts` + `kb_extracted=true` | `extraction_jobs` + `pipeline_steps`(×6) |
+| 3.5 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `tech_category` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
+| 4 | **extract_kb**（6 步 DAG） | `POST /api/v1/tasks type=kb_extraction` | `kb_extraction` | 2 | `tech_category` 非空、预处理完成、**`video_curation_jobs.status=success`** | `expert_tech_points` + `kb_conflicts` + `kb_extracted=true` | `extraction_jobs` + `pipeline_steps`(×6) |
 
-> **队列复用说明（Feature-020）**：`default` / `preprocessing` / `diagnosis` 三个队列**同时被 INFERENCE 阶段的运动员侧三步骤复用**（§ 5.1 步骤 8a/8b/8 共用队列）；不新增 Celery 队列、不新增 worker。两侧通过 `analysis_tasks.business_phase` 与独立的 `task_type` 枚举值区分任务来源，`task_channel_configs` 容量/并发配置对两侧统一生效。
+> **队列复用说明（Feature-020 + Feature-021）**：`default` / `preprocessing` / `diagnosis` 三个队列**同时被 INFERENCE 阶段的运动员侧三步骤复用**（§ 5.1 步骤 8a/8b/8 共用队列）；Feature-021 的 `curate_segments` 步骤同样**复用 `default` 队列**（与 `scan_cos_videos` / `housekeeping` / `cleanup_*` / `sweep_orphan_jobs` 同列），不新增 Celery 队列、不新增 worker。各侧通过 `analysis_tasks.business_phase` 与独立的 `task_type` 枚举值区分任务来源，`task_channel_configs` 容量/并发配置统一生效。
 
 ### 3.2 KB 抽取 DAG 的 6 个子步骤
 
@@ -102,6 +104,41 @@ wave4:  merge_kb
 | 视觉路失败 | 整个 job 失败（视觉是硬依赖） |
 | LLM 未配置 | `audio_kb_extract` fail-fast，错误码 `LLM_UNCONFIGURED:` |
 | 分类器与提交类别不一致 | 不阻断，仅计数 `classifier_disagreements`，按 `job.tech_category` 落库 |
+
+### 3.4 内容清洗契约（`curate_segments` · Feature-021）
+
+清洗任务以"预处理分段"为最小判定粒度，对每个分段产出 `auto_decision ∈ {accepted, rejected, uncertain}` + `validity_score ∈ [0,1]` + `rejection_reason`，并整段汇总成视频级摘要。
+
+**判定算法 — 规则优先 + LLM 兜底两层骨架**：
+
+1. **第 1 层结构化规则**（基于规范文件）：关键词命中 / 时长 / 教练主导识别 / 主题相关性 → 输出 `validity_score`
+   - `validity_score ≥ 0.7` → 直接 `accepted`
+   - `validity_score ≤ 0.3` → 直接 `rejected`
+2. **第 2 层 LLM 复核**：仅对落入 `(0.3, 0.7)` 模糊区间的分段调用一次 LLM（Venus 优先 → OpenAI fallback，统一走 `src/services/llm_client.py`）；LLM 返回最终 `decision` 与 `validity_score`
+   - LLM 不可用 → 模糊区间分段一律落 `uncertain`，不阻断作业
+
+**清洗规范文件契约**：
+
+- 存放在代码仓 `src/config/curation_rubric/`（YAML / JSON），文件头部含 `version: vN` 字段
+- 运营调整规则走 PR + CI schema 校验合并发版，**禁止任何线上编辑接口**
+- 任意一次清洗结果必须持久化所用 `curation_rubric_version` 字符串到 `video_curation_jobs.curation_rubric_version`，事后按版本号回查 git 历史还原判据快照
+- 加载时强制 schema 校验：缺字段 / 类型错误 / 阈值越界一律 `RUBRIC_INVALID:` 拒绝任务排队
+
+**视频级摘要派生与 KB 抽取消费门**：
+
+| `accepted_duration_ratio` | `low_quality` | KB 抽取（步骤 4）行为 |
+|---------------------------|---------------|---------------------|
+| `== 0` | `true` | 业务短路 — 错误码 `LOW_QUALITY_SKIP:`，不调 LLM、不落空白成功作业 |
+| `> 0 且 < 0.3` | `true` | 正常执行，但在 `extraction_jobs` 落 warning 标记供运营二次审 |
+| `≥ 0.3` | `false` | 正常执行 |
+
+**强制前置门**：步骤 4 `extract_kb` 必须读取的分段集合 = `effective_decision = override_decision ?? auto_decision == 'accepted'`；若该视频无 `video_curation_jobs.status=success` 记录，提交 `extract_kb` 立即以 `CURATION_REQUIRED:` 拒绝（禁止悄悄回退到读全量分段的旧行为）。
+
+**人工覆盖与重抽**：
+
+- 运营可对单分段调用覆盖接口把 `effective_decision` 改写为 `accepted` / `rejected`，必留 `auto_decision / override_decision / override_user / override_reason / overridden_at`
+- 覆盖后视频级摘要自动重算
+- 覆盖**不自动触发**对该视频已存在 KB 抽取作业的重抽；如需重抽，运营按既有 `POST /extraction-jobs/{id}/rerun` 显式发起；任务监控对存在覆盖且未重抽的视频暴露 `kb_stale_after_override=true` 提示
 
 ---
 
@@ -285,6 +322,12 @@ diagnosis_reports
 | `STANDARD_NOT_AVAILABLE:` | Feature-020 — 该 `tech_category` 无 active `tech_standards`，诊断立即 `failed`，`details.tech_category` 必填 | 否（运营到 KB 管理页发布标准） |
 | `ATHLETE_VIDEO_POSE_UNUSABLE:` | Feature-020 — 运动员视频姿态估计全程无可用关键点，任务失败而非产出 0 分报告 | 否 |
 | `ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND:` | Feature-020 — 预处理 / 诊断提交时 `athlete_video_classification_id` 不存在 | 否 |
+| `CURATION_REQUIRED:` | Feature-021 — KB 抽取前置门：该视频无 `video_curation_jobs.status=success` 记录，禁止读全量分段，立即拒绝提交 | 否（先跑清洗再重提）|
+| `LOW_QUALITY_SKIP:` | Feature-021 — 视频清洗后 `accepted_duration_ratio == 0`，KB 抽取业务短路、不调 LLM | 否（人工覆盖后可手动 rerun） |
+| `RUBRIC_INVALID:` | Feature-021 — 清洗规范文件加载失败（缺字段 / 类型错误 / 阈值越界 / schema 校验未通过），任务拒绝排队 | 否（修规范文件后重提）|
+| `RUBRIC_VERSION_NOT_FOUND:` | Feature-021 — 清洗任务声明的 `curation_rubric_version` 在 `src/config/curation_rubric/` 中找不到对应版本 | 否 |
+| `CURATION_TIMEOUT:` | Feature-021 — 清洗任务超出作业级或步骤级超时阈值，由 `sweep_orphan_jobs` 兜底回收 | 视情况（重提） |
+| `CURATION_LLM_UNAVAILABLE:` | Feature-021 — 模糊区间分段需 LLM 复核但 Venus / OpenAI 均不可用；分段落 `uncertain`，不阻断整个作业 | 否（不阻断作业，仅记录） |
 ### 7.5 建议补强的三类指标
 
 | 类别 | 指标 | 建议落点 | 用途 |
@@ -337,7 +380,8 @@ flowchart TD
   Q -->|新专家视频入库| A1[scan_cos_videos]
   A1 --> A2[preprocess_video]
   A2 --> A3[classify_video]
-  A3 --> A4[extract_kb 6步DAG]
+  A3 --> A35[curate_segments<br/>F-021 清洗门]
+  A35 --> A4[extract_kb 6步DAG]
   A4 --> Q5{有冲突?}
   Q5 -->|是| A5[人工审阅 kb_conflicts]
   Q5 -->|否| A6[approve_version]
@@ -399,6 +443,8 @@ flowchart TD
 | KB 抽取作业卡在 running | 等 `sweep_orphan_jobs` 自动回收，或 `POST /extraction-jobs/{id}/rerun?force=true` 重跑 |
 | 诊断队列拥塞 | `PATCH /admin/channels/athlete_diagnosis {enabled=false}` 临时熔断，处理积压后再恢复 |
 | 数据全量重置（压测/联调） | 调用 `system-init` skill（等价 `/api/v1/admin/reset-task-pipeline`，保留 schema + alembic_version） |
+| Feature-021 清洗规则误伤导致 KB 抽取读到的有效片段过少 | 临时把 `extract_kb` 的"清洗强制前置门"切到 `bypass`（运营级开关，需登记审计），下游退回到读全量分段；同时回滚到上一版 `curation_rubric_version` 并对受影响视频 `force=true` 重跑清洗；事后恢复门控 |
+| Feature-021 清洗结果或人工覆盖数据本身错误 | 删除该视频的 `video_curation_jobs` 行 + `video_curation_segment_results` 子行后重跑清洗；若已重抽过 KB，覆盖后再次走 `POST /extraction-jobs/{id}/rerun` 即可，**不影响 KB / standards / teaching_tips** |
 
 ---
 

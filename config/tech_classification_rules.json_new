@@ -1,0 +1,142 @@
+{
+  "shakehand": {
+    "label": "横拍",
+    "rubber_types": {
+      "inverted": {
+        "label": "反胶",
+        "hand_techniques": {
+          "forehand": {
+            "label": "正手",
+            "categories": {
+              "serve": {
+                "label": "发球",
+                "actions": [
+                  "平击发球",
+                  "奔球",
+                  "左侧下旋",
+                  "左侧上旋",
+                  "右侧上旋",
+                  "右侧下旋",
+                  "下旋转球",
+                  "不转球"
+                ]
+              },
+              "attack": {
+                "label": "进攻",
+                "actions": [
+                  "快攻",
+                  "突击",
+                  "扣杀",
+                  "挑",
+                  "高吊弧圈球",
+                  "前冲弧圈球",
+                  "反拉",
+                  "反冲"
+                ]
+              },
+              "defense": {
+                "label": "防御",
+                "actions": [
+                  "挡",
+                  "快带",
+                  "兜",
+                  "放高球",
+                  "削球",
+                  "搓球"
+                ]
+              }
+            }
+          },
+          "backhand": {
+            "label": "反手",
+            "categories": {
+              "serve": {
+                "label": "发球",
+                "actions": [
+                  "平击发球",
+                  "右侧下旋",
+                  "右侧上旋",
+                  "左侧上旋",
+                  "左侧下旋",
+                  "下旋转球",
+                  "不转球"
+                ]
+              },
+              "attack": {
+                "label": "进攻",
+                "actions": [
+                  "拨",
+                  "弹",
+                  "扣杀",
+                  "高吊弧圈球",
+                  "前冲弧圈球",
+                  "反冲",
+                  "拧",
+                  "反拉"
+                ]
+              },
+              "defense": {
+                "label": "防御",
+                "actions": [
+                  "挡",
+                  "快撕",
+                  "贴",
+                  "放高球",
+                  "兜",
+                  "削球",
+                  "搓球"
+                ]
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "aliases": {
+    "正手拉下旋": { "path": "shakehand.inverted.forehand.attack", "action": "高吊弧圈球" },
+    "正手下旋拉球": { "path": "shakehand.inverted.forehand.attack", "action": "高吊弧圈球" },
+    "正手拉球": { "path": "shakehand.inverted.forehand.attack", "action": "前冲弧圈球" },
+    "正手上旋拉球": { "path": "shakehand.inverted.forehand.attack", "action": "前冲弧圈球" },
+    "正手弧圈": { "path": "shakehand.inverted.forehand.attack", "action": "前冲弧圈球" },
+    "正手拉上旋": { "path": "shakehand.inverted.forehand.attack", "action": "前冲弧圈球" },
+    "前冲拉球": { "path": "shakehand.inverted.forehand.attack", "action": "前冲弧圈球" },
+    "高调弧圈": { "path": "shakehand.inverted.forehand.attack", "action": "高吊弧圈球" },
+    "高调拉球": { "path": "shakehand.inverted.forehand.attack", "action": "高吊弧圈球" },
+    "高吊拉球": { "path": "shakehand.inverted.forehand.attack", "action": "高吊弧圈球" },
+    "高吊": { "path": "shakehand.inverted.forehand.attack", "action": "高吊弧圈球" },
+    "正手拧拉": { "path": "shakehand.inverted.forehand.attack", "action": "挑" },
+    "台内挑打": { "path": "shakehand.inverted.forehand.attack", "action": "挑" },
+    "正手挑": { "path": "shakehand.inverted.forehand.attack", "action": "挑" },
+    "正手攻球": { "path": "shakehand.inverted.forehand.attack", "action": "快攻" },
+    "正手攻": { "path": "shakehand.inverted.forehand.attack", "action": "快攻" },
+    "劈长": { "path": "shakehand.inverted.forehand.defense", "action": "搓球" },
+    "反手拉下旋": { "path": "shakehand.inverted.backhand.attack", "action": "高吊弧圈球" },
+    "反手下旋拉球": { "path": "shakehand.inverted.backhand.attack", "action": "高吊弧圈球" },
+    "反手拉球": { "path": "shakehand.inverted.backhand.attack", "action": "前冲弧圈球" },
+    "反手上旋拉球": { "path": "shakehand.inverted.backhand.attack", "action": "前冲弧圈球" },
+    "反手拉上旋": { "path": "shakehand.inverted.backhand.attack", "action": "前冲弧圈球" },
+    "反手弹击": { "path": "shakehand.inverted.backhand.attack", "action": "弹" },
+    "近台弹击": { "path": "shakehand.inverted.backhand.attack", "action": "弹" },
+    "拧拉": { "path": "shakehand.inverted.backhand.attack", "action": "拧" },
+    "反手台内拧拉": { "path": "shakehand.inverted.backhand.attack", "action": "拧" },
+    "台内拧拉": { "path": "shakehand.inverted.backhand.attack", "action": "拧" },
+    "快撕": { "path": "shakehand.inverted.backhand.defense", "action": "快撕" },
+    "推挡": { "path": "shakehand.inverted.backhand.defense", "action": "挡" },
+    "搓球": { "path": "shakehand.inverted.backhand.defense", "action": "搓球" },
+    "反手推": { "path": "shakehand.inverted.backhand.defense", "action": "挡" },
+    "搓长": { "path": "shakehand.inverted.backhand.defense", "action": "搓球" },
+    "反手攻球": { "path": "shakehand.inverted.backhand.attack", "action": "拨" },
+    "反手攻": { "path": "shakehand.inverted.backhand.attack", "action": "拨" },
+    "反手横打": { "path": "shakehand.inverted.backhand.attack", "action": "拨" },
+    "发球": { "path": "shakehand.inverted.forehand.serve", "action": null },
+    "侧旋": { "path": "shakehand.inverted.forehand.serve", "action": null },
+    "逆侧旋": { "path": "shakehand.inverted.forehand.serve", "action": null },
+    "下旋球": { "path": "shakehand.inverted.forehand.serve", "action": "下旋转球" },
+    "下旋发球": { "path": "shakehand.inverted.forehand.serve", "action": "下旋转球" },
+    "勾手": { "path": "shakehand.inverted.forehand.serve", "action": null },
+    "直拍正手": { "path": "shakehand.inverted.forehand.attack", "action": "快攻" },
+    "直拍横打": { "path": "shakehand.inverted.backhand.attack", "action": "拨" },
+    "横拍要点": { "path": "shakehand.inverted.backhand.attack", "action": "拨" }
+  }
+}

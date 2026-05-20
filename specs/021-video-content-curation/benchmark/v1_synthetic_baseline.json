@@ -1,0 +1,44 @@
+{
+  "rubric_version": "v1",
+  "sample_count": 3,
+  "segment_count": 9,
+  "by_human_label": {
+    "accepted": 4,
+    "rejected": 4,
+    "uncertain": 1
+  },
+  "by_auto_decision": {
+    "accepted": 4,
+    "rejected": 4,
+    "uncertain": 1
+  },
+  "confusion_matrix": {
+    "accepted": {
+      "accepted": 4
+    },
+    "rejected": {
+      "rejected": 4
+    },
+    "uncertain": {
+      "uncertain": 1
+    }
+  },
+  "metrics": {
+    "precision_accepted": 1.0,
+    "recall_accepted": 1.0,
+    "f1_accepted": 1.0,
+    "precision_rejected": 1.0,
+    "recall_rejected": 1.0,
+    "f1_rejected": 1.0,
+    "llm_invocation_rate": 0.0,
+    "uncertain_rate": 0.1111,
+    "llm_token_reduction_pct_estimate": 0.3984
+  },
+  "sc_check": {
+    "sc_001_recall_rejected_ge_0_85": true,
+    "sc_001_precision_accepted_ge_0_85": true,
+    "sc_002_token_reduction_ge_0_30": true
+  },
+  "ran_at": "2026-05-20T10:40:24.040034",
+  "rubric_path": "src/config/curation_rubric/v1.yaml"
+}
