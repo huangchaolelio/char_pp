@@ -82,6 +82,34 @@ class CoachVideoClassification(Base):
         Boolean, nullable=False, default=False, server_default="false"
     )
 
+    # ── Feature-022: 内容审核状态机字段 ────────────────────────────
+    # 由 services/content_review/* 在审核决策提交 / 重新清洗后维护：
+    # - review_state:          四态枚举（pending_review / approved / rejected / stale）
+    #   * pending_review: 等待审核（清洗成功后默认 / 重新清洗后从 approved 迁回）
+    #   * approved:       审核通过（KB 抽取门放行）
+    #   * rejected:       审核拒绝（澄清 Q5：永久保留，不再迁出此态）
+    #   * stale:          内部中间态，approved 重洗后理论上经过它再到 pending_review
+    #     —— 但 stale_handler 直接合并迁移，不暴露给客户端
+    # - review_version:        乐观锁版本号；每次状态变更 +1，EP-3 决策提交时校验
+    # - pending_since:          首次进入 pending_review 的时刻；用于积压告警 / SLA 统计
+    #   决策落地（approved / rejected）时清空（NULL）
+    # - last_decision_id:      指向最近一次决策行（审计回溯）；FK SET NULL on delete
+    review_state: Mapped[str] = mapped_column(
+        String(16), nullable=False, default="pending_review",
+        server_default="pending_review",
+    )
+    review_version: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0",
+    )
+    pending_since: Mapped[Optional[datetime]] = mapped_column(
+        TIMESTAMP(timezone=False), nullable=True,
+    )
+    last_decision_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("content_review_decisions.id", ondelete="SET NULL", use_alter=True),
+        nullable=True,
+    )
+
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=False), nullable=False, server_default=text("timezone('Asia/Shanghai', now())")
     )
@@ -117,10 +145,34 @@ class CoachVideoClassification(Base):
             "name_source IN ('map', 'fallback')",
             name="ck_cvclf_name_source",
         ),
+        # Feature-022: review_state 四态闭包
+        CheckConstraint(
+            "review_state IN ('pending_review', 'approved', 'rejected', 'stale')",
+            name="ck_cvclf_review_state",
+        ),
         Index("idx_cvclf_coach", "coach_name"),
         Index("idx_cvclf_tech", "tech_category"),
         Index("idx_cvclf_kb", "kb_extracted"),
         Index("idx_cvclf_preprocessed", "preprocessed"),
         Index("idx_cvclf_coach_tech", "coach_name", "tech_category"),
         Index("ix_coach_class_last_curation", "last_curation_job_id"),
+        # Feature-022 索引：审核工作台 P95 < 500ms（澄清 Q4 中规模 50–200 条/日）
+        # idx_cvclf_review_state_pending_since: 列表默认按"积压最久"排序；
+        #   审核工作台主查询路径（state=pending_review ORDER BY pending_since ASC）
+        Index(
+            "idx_cvclf_review_state_pending_since",
+            "review_state", "pending_since",
+        ),
+        # idx_cvclf_review_state_tech: 工作台二级筛选（state + tech_category）
+        Index(
+            "idx_cvclf_review_state_tech",
+            "review_state", "tech_category",
+        ),
+        # idx_cvclf_review_state_coach: 工作台三级筛选（state + coach_name）
+        Index(
+            "idx_cvclf_review_state_coach",
+            "review_state", "coach_name",
+        ),
+        # idx_cvclf_last_decision: 详情接口快速 join 决策表
+        Index("idx_cvclf_last_decision", "last_decision_id"),
     )

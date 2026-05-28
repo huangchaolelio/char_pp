@@ -1,6 +1,6 @@
 # 产品功能文档
 
-> 最后更新：2026-05-19
+> 最后更新：2026-05-28 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付
 
 ## 目录
 
@@ -25,6 +25,7 @@
 - [Feature-018 业务工作流标准化](#feature-018-业务工作流标准化)
 - [Feature-020 运动员推理流水线](#feature-020-运动员推理流水线)
 - [Feature-021 视频内容清洗与有效片段筛选](#feature-021-视频内容清洗与有效片段筛选)
+- [Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门](#feature-022-业务流程四阶段化--内容准备阶段引入审核门)
 - [全链路时区统一（基础治理）](#全链路时区统一基础治理)
 
 ---
@@ -1148,4 +1149,128 @@ TRAINING:
 - 集成（5 文件，25 测试）：end_to_end / kb_extract_consumes_accepted_only **(SC-008 关键护栏)** / low_quality_skip / override_recompute / rubric_versioning
 - 总计 **149/149** PASSED；与 F-013 / F-019 / F-020 既有测试零回归
 - 基准回归脚本：`scripts/run_curation_benchmark.py` 对照 SC-001/002/003 三项指标
+
+
+---
+
+## Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门
+
+> 状态：MVP 全量上线（2026-05-28）；spec.md US1 + US2 + US3 + US4 全部闭合
+> 规范文档：`specs/022-content-review-workflow/`
+> 业务工作流：`docs/business-workflow.md` 章程级业务流程结构变更（三阶段 → 四阶段）
+> 章程依据：v2.1.0 原则 X（业务工作流对齐）
+
+### 业务问题
+
+Feature-021 引入清洗后，仍存在两个治理盲区：
+1. **训练阶段产能账本被前置链路噪声污染**：scan / preprocess / classify / curate 四步本质属于"原始素材到可用语料"链路，与 KB 抽取的"语料到知识库"链路混在 TRAINING 阶段统计，导致训练阶段的吞吐 / 成功率指标失真
+2. **清洗只能做规则级把关，无法承载"内容质量"二元决策**：需要人工运营对单条视频做"通过 / 拒绝"决策（涉及内容质量、技术相关性、教练权威性、视频质量），这一闸门不能下放给规则
+
+### 功能描述
+
+把当前的"训练-建标-诊断"**三阶段升级为"内容准备-训练-建立标准-诊断"四阶段**，并在内容准备阶段末端引入**审核门**作为该阶段的最终判据：
+
+```
+CONTENT_PREP（新阶段）：scan_cos_videos → preprocess_video → classify_video → curate_segments → content_review
+  TRAINING：           extract_kb → kb_conflicts 审阅 → kb_version_activate
+  STANDARDIZATION：    build_standards（保持不变）
+  INFERENCE：          diagnose_athlete（保持不变）
+```
+
+只有"通过审核"的视频条目才能被 TRAINING 阶段的 KB 抽取消费；审核状态通过 4 个新错误码在 KB 抽取入口强制拦截。
+
+### 核心能力
+
+- **章程级阶段升级**（FR-001/FR-002/FR-003/FR-004/FR-005）：四张业务表统一识别 4 个 phase 取值（`CONTENT_PREP` / `TRAINING` / `STANDARDIZATION` / `INFERENCE`）
+- **审核门状态机**（FR-006/FR-007/FR-008/FR-009/FR-010/FR-011）：在既有 `coach_video_classifications` 行上承载 4 状态枚举：`pending_review` → `approved` / `rejected` / `stale`
+- **审核工作台**（FR-007/FR-007a，US3）：列表 + 详情 + 通过 / 拒绝（含理由码）+ 已审核历史 + 跨教练 / tech_category / 时间窗筛选
+- **KB 抽取入口三态拦截**（FR-009）：3 个新错误码 `CONTENT_NOT_REVIEWED` / `CONTENT_REVIEW_REJECTED` / `CONTENT_REVIEW_STALE` 在 `POST /tasks/kb-extraction` 路由层 + DAG 入口双闸门生效
+- **重新清洗自动失效**（FR-011/FR-011a）：清洗版本递进 → 旧审核结论自动 `stale`；已入队 / running 的 `extract_kb` **不级联中止**（继续跑完落库），仅新提交的 KB 抽取在入口被 `CONTENT_REVIEW_STALE` 拒绝
+- **审核门绕过开关**（FR-014）：`PATCH /api/v1/admin/review-gate {enabled}` 30 秒内热生效；切回 `enabled=true` 立即恢复严格行为，不留遗留豁免；切换全程审计字段 `last_toggled_at` / `last_toggled_by` 落库（SC-007）
+- **阶段级可观测性**（FR-012/FR-013）：4 个审核门指标 `content_review_pending_count` / `content_review_decision_count{decision}` / `content_review_latency_seconds` / `content_review_pending_since_p95_seconds` + 任务级 `phase_enter_count{phase}` 锚点
+- **积压告警 hourly beat**（FR-016）：`cleanup_pending_backlog` 每小时巡检 `pending_since < now() - review_pending_red_line_hours`（默认 24h），命中即写 ERROR 级结构化日志触发 SRE 高优先级告警；不阻塞业务流程
+- **拒绝条目永久保留**（FR-010a，澄清 Q5）：拒绝条目 DB 行保留并置 `rejected`；不软删除、不物理删除、COS 文件不同步删除；工作台默认列表过滤 `rejected`，但支持 `?state=rejected` 显式查看；未来"申诉重审"零迁移即可改状态机
+
+### 关键 API
+
+| 方法 | 路径 | 用途 |
+|------|------|------|
+| `GET` | `/api/v1/content-reviews` | 审核工作台列表（按 `state` / `coach_name` / `tech_category` / `decided_after` / `decided_before` 筛选；page_size ≤ 50 时 P95 < 500 ms，page_size = 100 时 P95 < 1s）|
+| `GET` | `/api/v1/content-reviews/{cvclf_id}` | 审核详情（含决策历史 + 当前清洗版本）|
+| `POST` | `/api/v1/content-reviews/{cvclf_id}/decide` | 提交审核决策（`decision` ∈ `approved`/`rejected`，`reason_code` 拒绝必填，`expected_review_version` 乐观锁）|
+| `GET` | `/api/v1/content-reviews/stats` | 审核统计（按时间窗：总量 / 通过率 / 平均时延 / 人均吞吐）|
+| `GET` | `/api/v1/admin/review-gate` | 查询审核门当前状态（`enabled` / `last_toggled_at` / `last_toggled_by`）|
+| `PATCH` | `/api/v1/admin/review-gate` | 切换审核门（`enabled=false` 应急绕过；30s 内全局热生效）|
+
+### 错误码（4 个新增，全部 HTTP 409）
+
+| 错误码 | 触发场景 |
+|-------|---------|
+| `CONTENT_NOT_REVIEWED` | KB 抽取提交时来源条目 `review_state='pending_review'` |
+| `CONTENT_REVIEW_REJECTED` | KB 抽取提交时来源条目 `review_state='rejected'` |
+| `CONTENT_REVIEW_STALE` | KB 抽取提交时来源条目 `review_state='stale'`（清洗版本已递进，旧审核失效）|
+| `REVIEW_VERSION_CONFLICT` | 提交决策时 `expected_review_version` 与 DB 当前版本不一致（并发冲突）|
+
+### 数据模型变更（迁移 0021_content_review_workflow）
+
+- `coach_video_classifications` 新增 5 列：
+  - `review_state VARCHAR(20)` — 4 状态枚举（`pending_review` / `approved` / `rejected` / `stale`），`server_default='pending_review'`
+  - `cleansing_version INTEGER` — 单调递增计数（清洗版本号），用于审核失效判定
+  - `pending_since TIMESTAMP` — 进入 `pending_review` 时间戳，驱动积压告警 + p95 指标
+  - `review_version INTEGER` — 决策乐观锁版本号
+  - `last_review_decision_id UUID` — 反向指针指向 `content_review_decisions.id`（最新决策）
+- `coach_video_classifications` 新增 3 个复合索引：
+  - `(review_state, decided_at DESC)` — 驱动「待审核列表 / 已审核历史」主路径
+  - `(coach_id, review_state)` — 驱动按教练过滤的列表
+  - `(tech_category, review_state)` — 驱动按技术类别过滤的列表
+- 新表 `content_review_decisions`：每次审核动作的留痕（`reviewer_id` / `decision` / `reason_code` / `note` / `decided_at` / `cleansing_version`）；`cvclf_id` FK CASCADE
+- 新表 `task_channel_configs.content_review_gate`：审核门开关行（`enabled` / `last_toggled_at` / `last_toggled_by`）
+- `business_phase_enum` PG enum 新增取值 `CONTENT_PREP`；四阶段映射在 `_phase_step_hook.py` 派生规则中：
+  - `video_classification` / `video_preprocessing` / `video_curation` 全部从 `TRAINING` 改归 `CONTENT_PREP`
+  - `TRAINING` 仅保留 `kb_extraction`
+  - `business_step` 新增 `content_review`
+
+### 业务行为决策（spec.md Clarifications）
+
+| 议题 | 决策 |
+|------|------|
+| **审核粒度** | 整段视频条目（与 `coach_video_classifications` 行 1:1），不做片段级拆分 |
+| **审核员角色** | 单一 `reviewer` 角色（admin 为其超集），无分级 / 分组 / 二审 / 申诉 / 审计员 |
+| **重新清洗对入队 KB 任务的影响** | 已入队 / running 不级联中止（继续跑完）；新提交在入口被 `CONTENT_REVIEW_STALE` 拒绝 |
+| **工作台列表性能 SLO** | 50 万条规模下：page_size ≤ 50 时 P95 < 500 ms；page_size = 100 时 P95 < 1s |
+| **拒绝条目保留策略** | DB 行永久保留 + `state='rejected'`；不软删 / 不物理删 / COS 不同步删；默认列表过滤 + `?state=rejected` 显式查看 |
+| **存量数据迁移** | 章程原则 XI（测试阶段未上线）：不做强一致回填脚本；存量数据按 `pending_review` 默认值进入新流程，运营按需补审或绕过开关降级 |
+
+### 性能指标（SC）
+
+| SC | 目标 | 达成方式 |
+|----|------|---------|
+| SC-001 | 阶段拆分后运营在仪表盘 100% 区分四阶段吞吐与积压 | `business_phase_enum` 新增取值 `CONTENT_PREP` + `phase_enter_count` 指标按 phase 派生 |
+| SC-002 | 审核平均时延 ≤ 4h | `content_review_latency_seconds` 指标实时观测；超过 4h 触发运营复盘（不直接作为系统验收）|
+| SC-003 | "未审核即被消费"比例 = 0 | 路由层 + DAG 双闸门强制；`tests/integration/test_022_review_gate_blocks_kb.py` 6 集成测试 PASS |
+| SC-005 | 待审核积压超红线告警从触发到响应 ≤ 30 分钟 | hourly beat `cleanup_pending_backlog` + ERROR 级结构化日志（`alert.severity=high`）|
+| SC-006 | 阶段拆分对 STANDARDIZATION / INFERENCE 兼容性影响 = 0 | 既有 4 张业务表 phase 派生规则保持向后兼容；`tests/contract/test_022_phase_compat.py` 验证 |
+| SC-007 | 审核门切换从切换到生效 ≤ 30s + 100% 留审计 | `task_channel_configs.content_review_gate` 30s TTL 缓存；`tests/integration/test_022_bypass_switch.py` 3 集成测试 PASS（含端到端时延断言）|
+
+### 测试覆盖
+
+- **合约**（5 文件）：`test_022_content_reviews_contract.py` / `test_022_admin_review_gate_contract.py` / `test_022_kb_extraction_review_gate_contract.py` / `test_022_phase_compat.py` / `test_022_decision_lock.py`
+- **集成**（4 文件）：`test_022_review_gate_blocks_kb.py`（6 测试，AC1-AC5 端到端）/ `test_022_stale_after_recurate.py`（清洗递进自动 stale）/ `test_022_bypass_switch.py`（3 测试，30s 热生效 + 切回严格 + 审计字段）/ `test_022_phase_observability.py`（4 测试，4 个日志锚点契约）
+- **总计 51/51 PASSED**；与 F-013 / F-019 / F-020 / F-021 既有测试零回归
+
+### 关键里程碑
+
+- **阶段 1 — Setup**（T001-T004）：迁移 0021 + 4 状态枚举 + `business_phase_enum` 扩展 + 错误码登记
+- **阶段 2 — Foundational**（T005-T010）：`_phase_step_hook.py` 派生规则升级 + content_review_decisions 模型 + review_gate 服务 + ORM 钩子单测
+- **阶段 3 — US1（P1🎯MVP）**：业务流程升级为四阶段（spec FR-001 ~ FR-005）
+- **阶段 4 — US2（P1🎯MVP）**：审核门 KB 抽取强制拦截（spec FR-006 ~ FR-011a + SC-003）
+- **阶段 5 — US3（P2）**：审核工作台 + 决策乐观锁 + 统计接口（spec FR-007/FR-015/FR-017/FR-018）
+- **阶段 6 — US4（P3）**：阶段级可观测性 + 绕过开关回滚剧本（spec FR-012/FR-013/FR-014/FR-016 + SC-007）
+
+### 章程合规
+
+- **原则 IV**（接口下线物理删除）：本 Feature 0 接口下线，仅新增
+- **原则 IX**（错误码集中化）：4 个新错误码同步 `src/api/errors.py` 三张映射表（`ErrorCode` / `ERROR_STATUS_MAP` / `ERROR_DEFAULT_MESSAGE`）
+- **原则 X**（业务工作流对齐）：`docs/business-workflow.md` § 1 概述 / § 2 阶段全景图（三阶段 → 四阶段）/ § 3 阶段一·内容准备 / § 7.4 错误码表 / § 10 回滚剧本（新增审核门绕过）/ § 11 交叉索引六处同步；`docs/.specify/memory/constitution.md` 措辞修订为四阶段
+- **原则 XI**（测试阶段宽松）：不做存量数据回填脚本；存量按默认 `pending_review` 进入新流程
 

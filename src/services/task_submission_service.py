@@ -42,6 +42,22 @@ from src.services.task_channel_service import ChannelLiveSnapshot, TaskChannelSe
 logger = logging.getLogger(__name__)
 
 
+# ── Feature-022 · T031 task_type → business_phase 映射（仅服务于阶段级指标埋点） ──
+# 与 src/models/_phase_step_hook.py 的 _derive_for_analysis_task 派生规则保持
+# 一致；脱离 ORM hook 直接由 enqueue 路径取用，避免为埋点重复触发 DB 查询。
+# Feature-022 重构：原属 TRAINING 的 video_classification / video_preprocessing /
+# video_curation 全部迁至 CONTENT_PREP；TRAINING 仅保留 kb_extraction。
+_PHASE_BY_TASK_TYPE: dict[TaskType, str] = {
+    TaskType.video_classification: "CONTENT_PREP",
+    TaskType.video_preprocessing: "CONTENT_PREP",
+    TaskType.video_curation: "CONTENT_PREP",
+    TaskType.kb_extraction: "TRAINING",
+    TaskType.athlete_diagnosis: "INFERENCE",
+    TaskType.athlete_video_classification: "INFERENCE",
+    TaskType.athlete_video_preprocessing: "INFERENCE",
+}
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Exceptions
 # ──────────────────────────────────────────────────────────────────────────────
@@ -341,6 +357,23 @@ class TaskSubmissionService:
                 logger.exception(
                     "celery enqueue failed after commit: task_type=%s task_id=%s err=%s",
                     task_type.value, task_id, exc,
+                )
+            else:
+                # ── Feature-022 · T031 阶段级指标埋点 ───────────────────────
+                # 仅在 enqueue 成功后埋 phase_enter_count；与 _phase_step_hook
+                # 派生规则保持一致（CONTENT_PREP=分类/预处理/清洗 / TRAINING=KB
+                # 抽取 / INFERENCE=运动员诊断）。phase_exit_count 与
+                # phase_dwell_seconds 走 housekeeping 周期采样（避开侵入 5 个 worker）。
+                phase = _PHASE_BY_TASK_TYPE.get(task_type, "TRAINING")
+                logger.info(
+                    "phase_enter: phase=%s task_type=%s task_id=%s",
+                    phase, task_type.value, task_id,
+                    extra={
+                        "metric": "phase_enter_count",
+                        "phase": phase,
+                        "task_type": task_type.value,
+                        "task_id": str(task_id),
+                    },
                 )
 
         snapshot = await self._channels.get_snapshot(session, task_type)

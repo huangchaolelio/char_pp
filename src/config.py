@@ -121,6 +121,23 @@ class Settings(BaseSettings):
     # 仅在"清洗规则误伤导致 KB 读到的有效片段大量减少"时启用；恢复后立即关闭。
     kb_extraction_bypass_curation_gate: bool = False
 
+    # ── Feature-022: 内容审核门 bypass 全局开关（应急） ─────────────────
+    # 设为 True 时 KB 抽取跳过"内容审核强制门"，行为退回 Feature-022 之前
+    # （任何 review_state 都直通）；命中后请求被 evaluate_review_gate 标
+    # decision='bypassed' bypass_reason='settings'。
+    # 仅在"审核积压导致 KB 抽取卡顿"或"审核数据异常需绕开调试"时启用；
+    # 恢复后立即关闭。与 task_channel_configs.content_review_gate.enabled
+    # 是 OR 关系（任一启用 bypass 即直通）。
+    kb_extraction_bypass_review_gate: bool = False
+
+    # ── Feature-022 · T032 积压告警阈值（小时） ─────────────────────
+    # ``coach_video_classifications.pending_since`` 早于 (now - N 小时) 即视为
+    # "审核积压告警"，触发 ERROR 级结构化日志（不阻塞业务，只通知）。
+    # 默认 24h：审核员工作日内应能消化前一日的待审核积压；超过该阈值
+    # 通常意味着审核团队失能或绕过开关漏切。
+    # 由 backlog_monitor.check_pending_backlog 读取，housekeeping Beat 每小时触发一次。
+    review_pending_red_line_hours: int = 24
+
 
 @lru_cache
 def get_settings() -> Settings:

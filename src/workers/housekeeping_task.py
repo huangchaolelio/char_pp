@@ -268,3 +268,42 @@ def sweep_orphan_jobs() -> dict:
     count = sweep_orphan_tasks_sync()
     logger.info("sweep_orphan_jobs: reclaimed=%s", count)
     return {"reclaimed": count}
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Feature-022 · T033 — review backlog hourly check
+# ══════════════════════════════════════════════════════════════════════════
+
+
+@shared_task(
+    name="src.workers.housekeeping_task.cleanup_pending_backlog",
+    bind=False,
+)
+def cleanup_pending_backlog() -> dict:
+    """每小时巡检审核积压（Feature-022 T032/T033 / FR-019 / SC-007）.
+
+    包装 :func:`src.services.content_review.backlog_monitor.check_pending_backlog`,
+    沿用 ``default`` 队列；不阻塞业务流程，仅写结构化日志告警。
+
+    与 ``cleanup_intermediate_artifacts`` 同 worker 同小时频，避免新增 Beat
+    入口；运维仪表盘可按 ``metric=content_review_backlog_alert`` 聚合。
+    """
+    import asyncio
+
+    from src.db.session import AsyncSessionFactory
+    from src.services.content_review.backlog_monitor import (
+        check_pending_backlog,
+    )
+
+    async def _runner() -> dict:
+        async with AsyncSessionFactory() as session:
+            return await check_pending_backlog(session)
+
+    result = asyncio.run(_runner())
+    logger.info(
+        "cleanup_pending_backlog: pending=%s backlog=%s p95=%s",
+        result.get("pending_count"),
+        result.get("backlog_count"),
+        result.get("p95_seconds"),
+    )
+    return result

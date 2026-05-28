@@ -250,6 +250,9 @@ class TaskListItemResponse(BaseModel):
     created_at: datetime
     started_at: Optional[datetime] = None
     completed_at: Optional[datetime] = None
+    # Feature-022: 暴露阶段/步骤，让前端可按阶段过滤、统计
+    business_phase: Optional[str] = None
+    business_step: Optional[str] = None
 
 
 # Rebuild TaskStatusResponse to resolve forward reference to TaskSummary

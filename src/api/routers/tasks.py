@@ -220,6 +220,12 @@ async def list_tasks(
             created_at=task.created_at,
             started_at=task.started_at,
             completed_at=task.completed_at,
+            # Feature-022: 暴露阶段/步骤
+            business_phase=(
+                task.business_phase.value
+                if task.business_phase is not None else None
+            ),
+            business_step=task.business_step,
         )
         for task, coach_name in rows
     ]
@@ -755,6 +761,7 @@ from src.services.classification_gate_service import (  # noqa: E402
 )
 # Feature-021 清洗门：在 submit_kb_extraction 入口拦截"未跑过清洗"
 from src.services.curation.kb_gate import evaluate_curation_gate  # noqa: E402
+from src.services.content_review.review_gate import evaluate_review_gate  # noqa: E402  Feature-022
 from src.services.task_submission_service import (  # noqa: E402
     BatchTooLargeError as _F13BatchTooLargeError,
     ChannelDisabledError as _F13ChannelDisabledError,
@@ -977,6 +984,59 @@ async def submit_kb_extraction(
             },
         )
 
+    # Feature-022 Gate 2 (FR-008/9): 审核门 — 必须 review_state=approved 才能抽 KB。
+    # 双层 bypass（settings + task_channel_configs.content_review_gate.enabled）在
+    # evaluate_review_gate 内统一处理；bypass 命中返回 decision='bypassed' 不拦截。
+    review_gate = await evaluate_review_gate(db, cos_object_key=body.cos_object_key)
+    if review_gate.decision == "not_reviewed":
+        logger.info(
+            "review_gate.block: code=CONTENT_NOT_REVIEWED "
+            "cos_object_key=%s cvclf_id=%s review_version=%s",
+            body.cos_object_key, review_gate.cvclf_id, review_gate.review_version,
+        )
+        raise AppException(
+            ErrorCode.CONTENT_NOT_REVIEWED,
+            details={
+                "cos_object_key": body.cos_object_key,
+                "cvclf_id": str(review_gate.cvclf_id),
+                "current_review_state": review_gate.review_state,
+            },
+        )
+    if review_gate.decision == "rejected":
+        logger.info(
+            "review_gate.block: code=CONTENT_REVIEW_REJECTED "
+            "cos_object_key=%s cvclf_id=%s review_version=%s",
+            body.cos_object_key, review_gate.cvclf_id, review_gate.review_version,
+        )
+        raise AppException(
+            ErrorCode.CONTENT_REVIEW_REJECTED,
+            details={
+                "cos_object_key": body.cos_object_key,
+                "cvclf_id": str(review_gate.cvclf_id),
+                "current_review_state": review_gate.review_state,
+            },
+        )
+    if review_gate.decision == "stale":
+        logger.info(
+            "review_gate.block: code=CONTENT_REVIEW_STALE "
+            "cos_object_key=%s cvclf_id=%s review_version=%s",
+            body.cos_object_key, review_gate.cvclf_id, review_gate.review_version,
+        )
+        raise AppException(
+            ErrorCode.CONTENT_REVIEW_STALE,
+            details={
+                "cos_object_key": body.cos_object_key,
+                "cvclf_id": str(review_gate.cvclf_id),
+                "current_review_state": review_gate.review_state,
+                "hint": "video has been re-curated; please re-review on the workbench",
+            },
+        )
+    if review_gate.decision == "bypassed":
+        logger.warning(
+            "review_gate.bypassed: cos_object_key=%s reason=%s",
+            body.cos_object_key, review_gate.bypass_reason,
+        )
+
     # Feature 014: carry tech_category + force into task_kwargs so the
     # submission service can seed the ExtractionJob + 6 PipelineSteps in the
     # same DB transaction as the analysis_tasks INSERT.
@@ -1098,6 +1158,46 @@ async def submit_kb_extraction_batch(
                         "video has not been curated; "
                         "submit POST /api/v1/tasks/curation first"
                     ),
+                    existing_task_id=None,
+                )
+            )
+            continue
+
+        # Feature-022 review gate (per-item) — 仅过了清洗门才走审核门。
+        # 3 个不同状态分别映射为 3 个错误码，让运营一眼看出是哪种需要人工干预。
+        rev_gate = await evaluate_review_gate(db, cos_object_key=req.cos_object_key)
+        review_rejection_code: str | None = None
+        review_rejection_msg: str = ""
+        if rev_gate.decision == "not_reviewed":
+            review_rejection_code = "CONTENT_NOT_REVIEWED"
+            review_rejection_msg = (
+                "video pending content review; "
+                "please decide on the review workbench"
+            )
+        elif rev_gate.decision == "rejected":
+            review_rejection_code = "CONTENT_REVIEW_REJECTED"
+            review_rejection_msg = "video review rejected; cannot enter training stage"
+        elif rev_gate.decision == "stale":
+            review_rejection_code = "CONTENT_REVIEW_STALE"
+            review_rejection_msg = (
+                "video has been re-curated; "
+                "original review decision is stale, please re-review"
+            )
+        if review_rejection_code is not None:
+            logger.info(
+                "review_gate.block (batch): code=%s cos_object_key=%s "
+                "cvclf_id=%s review_version=%s",
+                review_rejection_code, req.cos_object_key,
+                rev_gate.cvclf_id, rev_gate.review_version,
+            )
+            gate_rejections.append(
+                _F13SubmissionItem(
+                    index=idx,
+                    accepted=False,
+                    task_id=None,
+                    cos_object_key=req.cos_object_key,
+                    rejection_code=review_rejection_code,
+                    rejection_message=review_rejection_msg,
                     existing_task_id=None,
                 )
             )

@@ -28,12 +28,16 @@ from src.models.video_preprocessing_job import VideoPreprocessingJob
 def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
     """派生 analysis_tasks 行的 (phase, step)。
 
+    Feature-022 重构（2026-05）：
+      引入 ``CONTENT_PREP`` 作为四阶段中的第一阶段，原属 TRAINING 的内容准备
+      步骤迁入 CONTENT_PREP；TRAINING 仅保留 KB 抽取。详见 data-model.md § 5。
+
     规则见 data-model.md § 3.1：
-    - video_classification + parent_scan_task_id IS NULL ⇒ (TRAINING, scan_cos_videos)
-    - video_classification + parent_scan_task_id NOT NULL ⇒ (TRAINING, classify_video)
-    - video_preprocessing ⇒ (TRAINING, preprocess_video)
-    - kb_extraction ⇒ (TRAINING, extract_kb)
-    - video_curation ⇒ (TRAINING, curate_segments)              # Feature-021
+    - video_classification + parent_scan_task_id IS NULL ⇒ (CONTENT_PREP, scan_cos_videos)
+    - video_classification + parent_scan_task_id NOT NULL ⇒ (CONTENT_PREP, classify_video)
+    - video_preprocessing ⇒ (CONTENT_PREP, preprocess_video)
+    - video_curation ⇒ (CONTENT_PREP, curate_segments)            # Feature-021 + 022 改归 CONTENT_PREP
+    - kb_extraction ⇒ (TRAINING, extract_kb)                       # 训练阶段仅保留 KB 抽取
     - athlete_diagnosis ⇒ (INFERENCE, diagnose_athlete)
     - athlete_video_classification ⇒ (INFERENCE, scan_athlete_videos)     # Feature-020
     - athlete_video_preprocessing ⇒ (INFERENCE, preprocess_athlete_video) # Feature-020
@@ -41,14 +45,13 @@ def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
     tt = row.task_type
     if tt == TaskType.video_classification:
         step = "scan_cos_videos" if row.parent_scan_task_id is None else "classify_video"
-        return (BusinessPhase.TRAINING.value, step)
+        return (BusinessPhase.CONTENT_PREP.value, step)
     if tt == TaskType.video_preprocessing:
-        return (BusinessPhase.TRAINING.value, "preprocess_video")
+        return (BusinessPhase.CONTENT_PREP.value, "preprocess_video")
+    if tt == TaskType.video_curation:
+        return (BusinessPhase.CONTENT_PREP.value, "curate_segments")
     if tt == TaskType.kb_extraction:
         return (BusinessPhase.TRAINING.value, "extract_kb")
-    # ── Feature-021 新增派生规则 ──────────────────────────────
-    if tt == TaskType.video_curation:
-        return (BusinessPhase.TRAINING.value, "curate_segments")
     if tt == TaskType.athlete_diagnosis:
         return (BusinessPhase.INFERENCE.value, "diagnose_athlete")
     # ── Feature-020 新增派生规则 ──────────────────────────────
@@ -62,7 +65,8 @@ def _derive_for_analysis_task(row: AnalysisTask) -> tuple[str, str]:
 # 表名 → (默认 phase, 默认 step) 或派生函数
 _TABLE_DEFAULTS: dict[type, tuple[str, str] | Callable[[object], tuple[str, str]]] = {
     ExtractionJob: (BusinessPhase.TRAINING.value, "extract_kb"),
-    VideoPreprocessingJob: (BusinessPhase.TRAINING.value, "preprocess_video"),
+    # Feature-022: video_preprocessing_jobs 改归 CONTENT_PREP（与 analysis_tasks 派生规则保持一致）
+    VideoPreprocessingJob: (BusinessPhase.CONTENT_PREP.value, "preprocess_video"),
     TechKnowledgeBase: (BusinessPhase.STANDARDIZATION.value, "kb_version_activate"),
     AnalysisTask: _derive_for_analysis_task,
 }

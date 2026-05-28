@@ -1,0 +1,429 @@
+openapi: 3.1.0
+info:
+  title: Feature-022 Content Review API Contracts
+  version: 0.1.0
+  description: |
+    审核工作台与审核门控制接口（5 个新 endpoint）。
+    本契约只覆盖本 Feature 新增的接口；KB 抽取入口的修改（在 tasks.py 中追加审核门校验）
+    不暴露新路径，仅在错误码表中新增 3 个错误码（见 error-codes.md）。
+
+    所有响应 MUST 走章程 v1.4.0 的统一信封：
+      - 成功：{"success": true, "data": ..., "meta": ... | null}
+      - 错误：{"success": false, "error": {"code", "message", "details"}}
+
+servers:
+  - url: /api/v1
+
+components:
+  schemas:
+    SuccessEnvelope:
+      type: object
+      required: [success, data]
+      properties:
+        success: { type: boolean, enum: [true] }
+        data: {}
+        meta:
+          oneOf:
+            - { $ref: "#/components/schemas/PaginationMeta" }
+            - { type: "null" }
+
+    ErrorEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: { type: boolean, enum: [false] }
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string, example: "CONTENT_NOT_REVIEWED" }
+            message: { type: string }
+            details: { type: object, nullable: true }
+
+    PaginationMeta:
+      type: object
+      required: [page, page_size, total]
+      properties:
+        page: { type: integer, minimum: 1 }
+        page_size: { type: integer, minimum: 1, maximum: 100 }
+        total: { type: integer, minimum: 0 }
+
+    ReviewState:
+      type: string
+      enum: [pending_review, approved, rejected, stale]
+
+    Decision:
+      type: string
+      enum: [approved, rejected]
+
+    ReasonCode:
+      type: string
+      enum: [quality_low, tech_irrelevant, coach_unauthorized, content_duplicated, other]
+
+    ContentReviewItem:
+      type: object
+      required: [id, coach_name, tech_category, review_state, review_version, cleansing_version, cos_object_key]
+      properties:
+        id: { type: string, format: uuid }
+        coach_name: { type: string }
+        tech_category: { type: string }
+        cos_object_key: { type: string }
+        filename: { type: string }
+        review_state: { $ref: "#/components/schemas/ReviewState" }
+        review_version: { type: integer }
+        pending_since: { type: string, format: date-time, nullable: true }
+        cleansing_version: { type: string, format: uuid, nullable: true }
+        last_decision: { $ref: "#/components/schemas/ReviewDecision", nullable: true }
+
+    ReviewDecision:
+      type: object
+      required: [id, decision, reviewer_id, decided_at]
+      properties:
+        id: { type: string, format: uuid }
+        decision: { $ref: "#/components/schemas/Decision" }
+        reason_code: { $ref: "#/components/schemas/ReasonCode", nullable: true }
+        note: { type: string, nullable: true, maxLength: 1000 }
+        reviewer_id: { type: string, maxLength: 64 }
+        decided_at: { type: string, format: date-time }
+        cleansing_version: { type: string, format: uuid, nullable: true }
+        superseded_at: { type: string, format: date-time, nullable: true }
+
+    ContentReviewDetail:
+      allOf:
+        - $ref: "#/components/schemas/ContentReviewItem"
+        - type: object
+          properties:
+            curation_summary:
+              type: object
+              description: |
+                清洗摘要（取自 video_curation_jobs 最近一次成功作业），
+                包含片段总数、保留率、若干样例片段
+              properties:
+                total_segments: { type: integer }
+                accepted_segments: { type: integer }
+                rejected_segments: { type: integer }
+                accepted_duration_ratio: { type: number }
+                sample_segments:
+                  type: array
+                  maxItems: 5
+                  items:
+                    type: object
+                    properties:
+                      start_seconds: { type: number }
+                      end_seconds: { type: number }
+                      transcript_excerpt: { type: string }
+            decision_history:
+              type: array
+              items: { $ref: "#/components/schemas/ReviewDecision" }
+
+    DecisionSubmitRequest:
+      type: object
+      required: [decision, reviewer_id, expected_review_version]
+      properties:
+        decision: { $ref: "#/components/schemas/Decision" }
+        reason_code: { $ref: "#/components/schemas/ReasonCode", nullable: true }
+        note: { type: string, maxLength: 1000, nullable: true }
+        reviewer_id: { type: string, maxLength: 64 }
+        expected_review_version:
+          type: integer
+          description: |
+            乐观锁版本号；必须等于服务端当前 review_version；不一致返回 409 REVIEW_VERSION_CONFLICT
+      example:
+        decision: rejected
+        reason_code: quality_low
+        note: "前 30 秒抖动严重，关键动作不可见"
+        reviewer_id: "ops-zhangwei"
+        expected_review_version: 0
+
+    StatsResponse:
+      type: object
+      properties:
+        from: { type: string, format: date-time }
+        to: { type: string, format: date-time }
+        total: { type: integer }
+        approved: { type: integer }
+        rejected: { type: integer }
+        approval_rate: { type: number, description: "approved / total" }
+        avg_latency_seconds: { type: number, nullable: true }
+        per_reviewer:
+          type: array
+          items:
+            type: object
+            properties:
+              reviewer_id: { type: string }
+              decisions: { type: integer }
+        per_reason:
+          type: array
+          items:
+            type: object
+            properties:
+              reason_code: { $ref: "#/components/schemas/ReasonCode" }
+              count: { type: integer }
+
+    ReviewGateConfig:
+      type: object
+      properties:
+        enabled:
+          type: boolean
+          description: "true=严格审核门（默认），false=绕过模式"
+        last_toggled_at: { type: string, format: date-time, nullable: true }
+        last_toggled_by: { type: string, nullable: true }
+
+    ReviewGatePatchRequest:
+      type: object
+      required: [enabled, operator_id, reason]
+      properties:
+        enabled: { type: boolean }
+        operator_id: { type: string, maxLength: 64 }
+        reason: { type: string, maxLength: 500 }
+
+  parameters:
+    Page:
+      name: page
+      in: query
+      schema: { type: integer, minimum: 1, default: 1 }
+    PageSize:
+      name: page_size
+      in: query
+      schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+
+paths:
+  /content-reviews:
+    get:
+      summary: "EP-1: 列出审核条目"
+      description: |
+        列出审核条目，默认列表自动过滤 `rejected` 状态（澄清 Q5）；可通过 `state` 参数显式查询任意状态。
+        所有筛选与分页走服务端，目标性能：page_size ≤ 50 时 P95 < 500 ms（FR-017）。
+      security: [{ AdminToken: [] }]
+      parameters:
+        - name: state
+          in: query
+          schema: { $ref: "#/components/schemas/ReviewState" }
+          description: "省略时默认查询 pending_review + approved + stale 三态（不含 rejected）"
+        - name: coach_name
+          in: query
+          schema: { type: string }
+        - name: tech_category
+          in: query
+          schema: { type: string }
+        - name: from
+          in: query
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          schema: { type: string, format: date-time }
+        - $ref: "#/components/parameters/Page"
+        - $ref: "#/components/parameters/PageSize"
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items: { $ref: "#/components/schemas/ContentReviewItem" }
+                      meta: { $ref: "#/components/schemas/PaginationMeta" }
+              example:
+                success: true
+                data:
+                  - id: "11111111-2222-3333-4444-555555555555"
+                    coach_name: "马琳"
+                    tech_category: "forehand_topspin"
+                    cos_object_key: "charhuang/tt_video/.../001.mp4"
+                    filename: "001.mp4"
+                    review_state: "pending_review"
+                    review_version: 0
+                    pending_since: "2026-05-28T08:30:00"
+                    cleansing_version: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+                    last_decision: null
+                meta:
+                  page: 1
+                  page_size: 20
+                  total: 42
+        "400":
+          description: 参数非法
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /content-reviews/{cvclf_id}:
+    get:
+      summary: "EP-2: 单条审核条目详情（含清洗摘要 + 决策历史）"
+      security: [{ AdminToken: [] }]
+      parameters:
+        - name: cvclf_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/ContentReviewDetail" }
+        "404":
+          description: 条目不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /content-reviews/{cvclf_id}/decisions:
+    post:
+      summary: "EP-3: 提交审核决策"
+      description: |
+        提交"通过"或"拒绝"决策；走乐观锁，请求体的 expected_review_version 必须等于服务端当前值。
+        - decision=rejected 时 reason_code 必填
+        - reason_code=other 时 note 必填
+        - 提交成功后服务端：
+          1. 在 content_review_decisions 写一条新决策行
+          2. 把当前所有 superseded_at IS NULL 的旧决策行标记为 superseded
+          3. 更新 coach_video_classifications.review_state / last_decision_id / review_version (+1) / pending_since (置 NULL)
+      security: [{ AdminToken: [] }]
+      parameters:
+        - name: cvclf_id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+        - name: X-Reviewer-Id
+          in: header
+          required: true
+          schema: { type: string, maxLength: 64 }
+          description: "必须与请求体 reviewer_id 一致；不一致返回 400 INVALID_REVIEWER_IDENTITY"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DecisionSubmitRequest" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/ReviewDecision" }
+        "400":
+          description: |
+            参数错误：
+            - VALIDATION_FAILED — 字段缺失或格式错误
+            - INVALID_REVIEWER_IDENTITY — header 与 body 中 reviewer_id 不一致
+            - REJECTED_REQUIRES_REASON — decision=rejected 缺少 reason_code
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: 条目不存在
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "409":
+          description: |
+            状态冲突：
+            - REVIEW_VERSION_CONFLICT — expected_review_version 与服务端不一致
+            - REVIEW_NOT_PENDING — 条目当前状态不是 pending_review，不能再决策（除非 stale 重审）
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /content-reviews/stats:
+    get:
+      summary: "EP-4: 时间窗审核统计"
+      security: [{ AdminToken: [] }]
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date-time }
+        - name: group_by
+          in: query
+          schema: { type: string, enum: [reviewer, reason, day] }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/StatsResponse" }
+        "400":
+          description: 时间窗参数非法
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+
+  /admin/review-gate:
+    get:
+      summary: "EP-5a: 查询审核门开关状态"
+      security: [{ AdminToken: [] }]
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/ReviewGateConfig" }
+    patch:
+      summary: "EP-5b: 切换审核门开关（FR-014 应急回滚剧本）"
+      description: |
+        切换审核门为"严格"（enabled=true，默认）或"绕过"（enabled=false）。
+        切换为绕过后，TRAINING 阶段允许消费"已清洗未审核"的条目；
+        切回严格后立即恢复"必须审核通过才能进入 TRAINING"的默认行为，且不留遗留豁免。
+        操作必须留下审计日志（structured logging + DB 字段 last_toggled_at / last_toggled_by）。
+        热生效时延 ≤ 30 秒（SC-007）。
+      security: [{ AdminToken: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReviewGatePatchRequest" }
+      responses:
+        "200":
+          description: 成功
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/SuccessEnvelope"
+                  - type: object
+                    properties:
+                      data: { $ref: "#/components/schemas/ReviewGateConfig" }
+        "401":
+          description: X-Admin-Token 非法或缺失
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "500":
+          description: 内部错误
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }

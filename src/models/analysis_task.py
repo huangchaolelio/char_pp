@@ -54,15 +54,26 @@ class TaskStatus(str, enum.Enum):
 
 
 class BusinessPhase(str, enum.Enum):
-    """Feature-018 — 业务阶段三阶段枚举（TRAINING / STANDARDIZATION / INFERENCE）。
+    """Feature-018 / Feature-022 — 业务阶段四阶段枚举.
 
-    权威参考: docs/business-workflow.md § 2 阶段 DoD。
-    与数据库 enum type ``business_phase_enum`` 一一对应（migration 0016）。
+    Feature-022 重构（2026-05）：
+      引入 ``CONTENT_PREP`` 作为业务流的第一阶段，承接以下原属 TRAINING 的步骤：
+      - ``video_classification`` (含 scan_cos_videos / classify_video)
+      - ``video_preprocessing``  (preprocess_video)
+      - ``video_curation``       (curate_segments)
+      - 内容审核工作台 (审核决策提交不是 task，不入 analysis_tasks，但属阶段 1)
+
+      ``TRAINING`` 阶段仅保留：
+      - ``kb_extraction`` (extract_kb)
+
+    权威参考: docs/business-workflow.md § 2 + specs/022-content-review-workflow/data-model.md § 5.
+    与数据库 enum type ``business_phase_enum`` 一一对应（migration 0016 + 0021 加值）。
     """
 
-    TRAINING = "TRAINING"
-    STANDARDIZATION = "STANDARDIZATION"
-    INFERENCE = "INFERENCE"
+    CONTENT_PREP = "CONTENT_PREP"          # Feature-022: 内容准备（分类→预处理→清洗→审核）
+    TRAINING = "TRAINING"                  # 训练（KB 抽取）
+    STANDARDIZATION = "STANDARDIZATION"    # 建立标准
+    INFERENCE = "INFERENCE"                # 诊断推理
 
 
 class AnalysisTask(Base):
