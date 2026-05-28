@@ -11,6 +11,11 @@ executor:
   - We load the corresponding ``video_preprocessing`` view via
     ``preprocessing_service`` to recover each segment's ``start_ms`` (needed
     to rebase frame timestamps onto the original-video timeline);
+  - **Feature-021 alignment**: ``download_video`` filters segments through the
+    curation gate (only ``effective_decision='accepted'`` ones are written to
+    disk), so we iterate **the segment files actually present in
+    ``segments/``** rather than the full ``view.segments`` list — otherwise
+    rejected indices would trip a "segment file missing" error.
   - Iterate segments in order, call ``estimate_pose`` per segment (ships
     frames with segment-local timestamps), rebase to global timeline, and
     accumulate into one list;
@@ -114,14 +119,47 @@ async def execute(
     # Load preprocessing view for segment timing.
     view = await _load_preprocessing_view(session, job.cos_object_key)
 
-    segments = sorted(view.segments, key=lambda s: s.segment_index)
-    if not segments:  # pragma: no cover — defensive
+    all_segments = sorted(view.segments, key=lambda s: s.segment_index)
+    if not all_segments:  # pragma: no cover — defensive
         raise RuntimeError(
             f"preprocessing view has 0 segments for {job.cos_object_key!r}"
         )
 
-    # Quality gate on segment 0 (cheap — ffprobe on first 3 minutes).
-    seg0_path = download_dir / "segments" / f"seg_{segments[0].segment_index:04d}.mp4"
+    # Feature-021 对齐：download_video 会按清洗门 (effective_decision='accepted')
+    # 过滤分段，仅把被接受的 seg_NNNN.mp4 写入 KB job 目录。pose_analysis 必须
+    # **以目录中实际存在的分段文件为准**，否则会按 view.segments 全集去找而踩到
+    # 被清洗门 reject 的空洞，抛 "segment file missing in job dir"。
+    # 用 segment_index → start_ms 映射保留 timeline rebase 所需的元数据。
+    segments_dir = download_dir / "segments"
+    start_ms_by_index = {
+        int(s.segment_index): int(s.start_ms) for s in all_segments
+    }
+    accepted_segments: list[tuple[int, Path]] = []
+    if segments_dir.is_dir():
+        for seg_path in sorted(segments_dir.glob("seg_*.mp4")):
+            try:
+                seg_idx = int(seg_path.stem.split("_", 1)[1])
+            except (IndexError, ValueError):  # pragma: no cover — defensive
+                logger.warning(
+                    "skipping unparseable segment filename: %s", seg_path,
+                )
+                continue
+            if seg_idx not in start_ms_by_index:
+                logger.warning(
+                    "segment file %s not in preprocessing view (idx=%d); "
+                    "skipping", seg_path, seg_idx,
+                )
+                continue
+            accepted_segments.append((seg_idx, seg_path))
+
+    if not accepted_segments:
+        raise RuntimeError(
+            f"no segment files under {segments_dir} — download_video step "
+            f"may have failed or curation gate rejected all segments"
+        )
+
+    # Quality gate on the first accepted segment (cheap — ffprobe on first 3 minutes).
+    seg0_path = accepted_segments[0][1]
     try:
         video_meta = await asyncio.to_thread(
             video_validator.validate_video, seg0_path,
@@ -136,19 +174,11 @@ async def execute(
     segments_processed = 0
     segments_failed = 0
 
-    for seg in segments:
-        seg_path = download_dir / "segments" / f"seg_{seg.segment_index:04d}.mp4"
-        if not seg_path.exists():
-            segments_failed += 1
-            raise RuntimeError(
-                f"segment file missing in job dir: {seg_path} "
-                f"(segment_index={seg.segment_index})"
-            )
-
+    for seg_idx, seg_path in accepted_segments:
         seg_frames = await asyncio.to_thread(pose_estimator.estimate_pose, seg_path)
 
         # Rebase timestamps onto original-video timeline.
-        offset_ms = int(seg.start_ms)
+        offset_ms = start_ms_by_index[seg_idx]
         for frame in seg_frames:
             if hasattr(frame, "timestamp_ms") and frame.timestamp_ms is not None:
                 frame.timestamp_ms = int(frame.timestamp_ms) + offset_ms
