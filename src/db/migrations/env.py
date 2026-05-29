@@ -13,8 +13,10 @@ from src.db.session import Base
 config = context.config
 
 # Setup logging from alembic.ini if present
+# disable_existing_loggers=False —— 避免 alembic.command 在测试场景下被调用时
+# 重置 / 禁用 pytest 已经配置好的所有 logger（默认 True 会让 caplog 失效）。
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Metadata for autogenerate
 target_metadata = Base.metadata

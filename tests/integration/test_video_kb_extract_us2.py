@@ -108,7 +108,7 @@ async def seeded_kb_task(session_factory):
         if job_ids:
             versions = (
                 await session.execute(
-                    select(ExpertTechPoint.knowledge_base_version)
+select(ExpertTechPoint.kb_version)
                     .where(ExpertTechPoint.source_video_id == task_id)
                     .distinct()
                 )

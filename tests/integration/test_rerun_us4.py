@@ -210,7 +210,7 @@ async def seeded_failed_job(session_factory):
     async with session_factory() as session:
         versions = (
             await session.execute(
-                select(ExpertTechPoint.knowledge_base_version)
+select(ExpertTechPoint.kb_version)
                 .where(ExpertTechPoint.source_video_id == task_id)
                 .distinct()
             )

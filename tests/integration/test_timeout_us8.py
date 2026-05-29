@@ -190,7 +190,7 @@ async def test_step_timeout_fails_step_and_job(
         async with session_factory() as session:
             versions = (
                 await session.execute(
-                    select(ExpertTechPoint.knowledge_base_version)
+select(ExpertTechPoint.kb_version)
                     .where(ExpertTechPoint.source_video_id == task_id)
                     .distinct()
                 )

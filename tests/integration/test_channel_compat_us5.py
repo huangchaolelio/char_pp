@@ -94,6 +94,8 @@ async def seeded_classifications(session_factory):
                     confidence=1.0,
                     name_source="fallback",
                     kb_extracted=False,
+                    # Feature-022：内容审核门，KB 抽取需 review_state=approved 才能进入后续
+                    review_state="approved",
                 )
             )
         await session.commit()
@@ -147,13 +149,19 @@ async def _count_kb_channel(session_factory) -> dict:
 
 
 async def test_channel_counts_by_job_not_substeps(
-    client, session_factory, seeded_classifications
+    client, session_factory, seeded_classifications, monkeypatch
 ) -> None:
     """T054 + T055 combined.
 
     - Submitting 2 jobs bumps the channel by 2 rows, not by 12 (6 sub-steps × 2).
     - A subsequent failed+rerun cycle on the same job keeps the count at 2.
     """
+    # Feature-022 引入了 KB 提取前的 curation gate；本用例聚焦通道槽位计数语义
+    # （per-job vs per-substep），与 Feature-022 的 curation 流程解耦。
+    monkeypatch.setattr(
+        get_settings(), "kb_extraction_bypass_curation_gate", True, raising=False
+    )
+
     initial = await _count_kb_channel(session_factory)
 
     # ── 1) Submit 2 kb-extraction jobs.

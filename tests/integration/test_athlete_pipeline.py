@@ -27,7 +27,7 @@ def active_kb_fixture():
 
     ep = MagicMock(spec=ExpertTechPoint)
     ep.id = uuid.uuid4()
-    ep.knowledge_base_version = "1.0.0"
+    ep.kb_version = "1.0.0"
     ep.action_type = ActionType.forehand_topspin
     ep.dimension = "elbow_angle"
     ep.param_min = 80.0

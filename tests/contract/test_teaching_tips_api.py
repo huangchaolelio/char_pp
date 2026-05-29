@@ -75,7 +75,10 @@ class TestGetTeachingTipsContract:
         tip = TeachingTipResponse(
             id=uuid.uuid4(),
             task_id=uuid.uuid4(),
-            action_type="forehand_topspin",
+            tech_category="forehand_topspin",
+            kb_tech_category="forehand_topspin",
+            kb_version=1,
+            status="active",
             tech_phase="contact",
             tip_text="击球瞬间手腕要有爆发性摩擦",
             confidence=0.92,
@@ -84,7 +87,7 @@ class TestGetTeachingTipsContract:
             created_at=datetime.datetime.now(),
             updated_at=datetime.datetime.now(),
         )
-        assert tip.action_type == "forehand_topspin"
+        assert tip.tech_category == "forehand_topspin"
         assert tip.tech_phase == "contact"
         assert tip.source_type == "auto"
 
@@ -200,7 +203,10 @@ class TestTeachingTipsCoachFilter:
         tip = TeachingTipResponse(
             id=__import__("uuid").uuid4(),
             task_id=__import__("uuid").uuid4(),
-            action_type="forehand_topspin",
+            tech_category="forehand_topspin",
+            kb_tech_category="forehand_topspin",
+            kb_version=1,
+            status="active",
             tech_phase="contact",
             tip_text="击球瞬间手腕内旋",
             confidence=0.9,
@@ -223,7 +229,10 @@ class TestTeachingTipsCoachFilter:
         tip = TeachingTipResponse(
             id=uuid.uuid4(),
             task_id=uuid.uuid4(),
-            action_type="forehand_topspin",
+            tech_category="forehand_topspin",
+            kb_tech_category="forehand_topspin",
+            kb_version=1,
+            status="active",
             tech_phase="contact",
             tip_text="击球瞬间手腕内旋",
             confidence=0.9,
