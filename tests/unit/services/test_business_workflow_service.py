@@ -29,14 +29,17 @@ class TestPhaseStepTaskTypeMatrix:
     def test_valid_inference_diagnose(self):
         _validate_phase_step_task_type_combo("INFERENCE", "diagnose_athlete", "athlete_diagnosis")
 
-    def test_valid_training_classify_video(self):
-        _validate_phase_step_task_type_combo("TRAINING", "classify_video", "video_classification")
+    def test_valid_content_prep_classify_video(self):
+        # Feature-022：classify_video 迁入 CONTENT_PREP
+        _validate_phase_step_task_type_combo("CONTENT_PREP", "classify_video", "video_classification")
 
-    def test_valid_training_scan_cos(self):
-        _validate_phase_step_task_type_combo("TRAINING", "scan_cos_videos", "video_classification")
+    def test_valid_content_prep_scan_cos(self):
+        # Feature-022：scan_cos_videos 迁入 CONTENT_PREP
+        _validate_phase_step_task_type_combo("CONTENT_PREP", "scan_cos_videos", "video_classification")
 
-    def test_valid_training_preprocess(self):
-        _validate_phase_step_task_type_combo("TRAINING", "preprocess_video", "video_preprocessing")
+    def test_valid_content_prep_preprocess(self):
+        # Feature-022：preprocess_video 迁入 CONTENT_PREP
+        _validate_phase_step_task_type_combo("CONTENT_PREP", "preprocess_video", "video_preprocessing")
 
     # ── task_type 空 ⇒ 通过 ──────────────────────────
     def test_none_task_type_bypasses(self):

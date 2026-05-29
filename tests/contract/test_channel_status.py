@@ -69,6 +69,8 @@ class TestChannelStatusContract:
                                       # Feature-020 新增 2 个 task_type
                                       "athlete_video_classification": 10,
                                       "athlete_video_preprocessing": 20,
+                                      # Feature-021 新增 video_curation
+                                      "video_curation": 10,
                                       }.get(tt.value, 5))
 
             inst.get_snapshot = AsyncMock(side_effect=_side)
@@ -82,16 +84,18 @@ class TestChannelStatusContract:
         assert body["meta"] is not None
         assert body["meta"]["page"] == 1
         assert body["meta"]["page_size"] == 20
-        # Feature-020 新增 2 个 task_type（athlete_video_classification /
-        # athlete_video_preprocessing），端点枚举型全量返回 6 条。
-        assert body["meta"]["total"] == 6
+        # Feature-020 新增 2 个 task_type + Feature-021 新增 video_curation：
+        # 端点枚举型全量返回 7 条。content_review_gate（F-022）是同步 API，
+        # 不入 Celery 队列，故 task-channels 端点不返回。
+        assert body["meta"]["total"] == 7
         channels = body["data"]
-        assert len(channels) == 6
+        assert len(channels) == 7
         types = {c["task_type"] for c in channels}
         assert types == {
             "video_classification", "kb_extraction",
             "athlete_diagnosis", "video_preprocessing",
             "athlete_video_classification", "athlete_video_preprocessing",
+            "video_curation",
         }
         for ch in channels:
             assert set(ch.keys()) >= {

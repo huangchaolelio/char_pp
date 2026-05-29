@@ -527,6 +527,17 @@ async def get_stats(
 
     ``group_by`` 当前作为占位参数（T023 不区分），后续可在此分支扩展按 day/week 维度展开。
     """
+    # 章程 v2.0 时区规范：全项目使用 CST 北京时间裸时间（tz-naive）。
+    # FastAPI 自动解析 ISO-8601 query 参数时若客户端带 tz 偏移（如 +08:00），
+    # 会得到 tz-aware datetime，与 DB 列 TIMESTAMP(timezone=False) 比较时
+    # asyncpg 会抛 "can't subtract offset-naive and offset-aware datetimes"。
+    # 此处统一剥时区：客户端如传 +08:00（CST 同语义）直接当裸时间用；
+    # 若传 UTC 时间（+00:00）则视为客户端违反章程，仍按裸时间处理（语义自负）。
+    if from_.tzinfo is not None:
+        from_ = from_.replace(tzinfo=None)
+    if to.tzinfo is not None:
+        to = to.replace(tzinfo=None)
+
     # ── 总数与按 decision 聚合 ─────────────────────────────────────────
     total_stmt = (
         select(

@@ -13,7 +13,7 @@ Create Date: 2026-05-28
    - review_version (Integer NOT NULL DEFAULT 0)
    - last_decision_id (UUID NULL FK → content_review_decisions.id, ON DELETE SET NULL)
    - pending_since (TIMESTAMP NULL)
-5. ADD CHECK ck_cvclf_review_state；ADD 4 个新索引（含 1 个 partial index）
+5. ADD CHECK ck_cvclf_review_state；ADD 4 个新索引（命名/列序对齐 model）
 6. INSERT task_channel_configs 默认行 ('content_review_gate', 1, 1, true)
    ⚠️ queue_capacity / concurrency 在此 task_type 下无业务意义（审核门是同步 API 决策，
       不入 Celery 队列），但因表上 CHECK 要求 > 0，用 (1, 1) 做最小占位
@@ -208,32 +208,39 @@ def upgrade() -> None:
     )
 
     # ── Step 5: 索引 + CHECK ──────────────────────────────────────────
+    # ⚠️ 命名与列序 100% 对齐 src/models/coach_video_classification.py
+    # 设计原则：以 review_state 为主列，因为 review_state 是工作台所有查询的最优过滤列
+    # （主列表默认 state != 'rejected'；backlog_monitor / stats 均按 state 过滤）
     op.create_check_constraint(
         "ck_cvclf_review_state",
         "coach_video_classifications",
         "review_state IN ('pending_review', 'approved', 'rejected', 'stale')",
     )
+    # idx_cvclf_review_state_pending_since: 工作台主查询 ORDER BY pending_since ASC
+    #   覆盖 list_pending（默认 state != 'rejected'）+ backlog_monitor（state = 'pending_review'）
+    #   不带 partial 谓词，使其对所有 state 通用
     op.create_index(
-        "idx_cvclf_review_state_decided",
+        "idx_cvclf_review_state_pending_since",
         "coach_video_classifications",
-        ["review_state", "last_decision_id"],
+        ["review_state", "pending_since"],
     )
+    # idx_cvclf_review_state_tech: 工作台二级筛选（state + tech_category）
     op.create_index(
-        "idx_cvclf_coach_review",
+        "idx_cvclf_review_state_tech",
         "coach_video_classifications",
-        ["coach_name", "review_state"],
+        ["review_state", "tech_category"],
     )
+    # idx_cvclf_review_state_coach: 工作台三级筛选（state + coach_name）
     op.create_index(
-        "idx_cvclf_tech_review",
+        "idx_cvclf_review_state_coach",
         "coach_video_classifications",
-        ["tech_category", "review_state"],
+        ["review_state", "coach_name"],
     )
-    # 部分索引：仅索引 pending 行；用于积压告警 + 平均等待时延扫描
+    # idx_cvclf_last_decision: 详情接口快速 join 决策表
     op.create_index(
-        "idx_cvclf_pending_since",
+        "idx_cvclf_last_decision",
         "coach_video_classifications",
-        ["pending_since"],
-        postgresql_where=sa.text("review_state = 'pending_review'"),
+        ["last_decision_id"],
     )
 
     # ── Step 6: task_channel_configs 默认行 ───────────────────────────
@@ -262,19 +269,19 @@ def downgrade() -> None:
 
     # ── Step 5: 删 4 个索引 + CHECK ───────────────────────────────────
     op.drop_index(
-        "idx_cvclf_pending_since",
+        "idx_cvclf_last_decision",
         table_name="coach_video_classifications",
     )
     op.drop_index(
-        "idx_cvclf_tech_review",
+        "idx_cvclf_review_state_coach",
         table_name="coach_video_classifications",
     )
     op.drop_index(
-        "idx_cvclf_coach_review",
+        "idx_cvclf_review_state_tech",
         table_name="coach_video_classifications",
     )
     op.drop_index(
-        "idx_cvclf_review_state_decided",
+        "idx_cvclf_review_state_pending_since",
         table_name="coach_video_classifications",
     )
     op.drop_constraint(
