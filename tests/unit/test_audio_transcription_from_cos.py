@@ -79,8 +79,19 @@ async def test_audio_transcription_forces_cpu_and_uses_existing_wav(
         lambda p: 25.0, raising=False,
     )
 
+    # Feature-005 引入了 audio_transcripts 回写（兼容老 /extract-tips 接口）；
+    # unit test 不依赖 DB，bypass 该 helper 维持 SimpleNamespace mock session 隔离。
+    async def _noop_upsert(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(
+        audio_transcription, "_upsert_audio_transcript", _noop_upsert,
+        raising=False,
+    )
+
     job = SimpleNamespace(
         id=job_id, cos_object_key="x/y/z.mp4",
+        analysis_task_id=None,
         enable_audio_analysis=True, audio_language="zh",
     )
     step = SimpleNamespace(id=uuid4(), output_artifact_path=None)
@@ -119,6 +130,7 @@ async def test_audio_transcription_skipped_when_has_audio_false(
 
     job = SimpleNamespace(
         id=job_id, cos_object_key="x/y/z.mp4",
+        analysis_task_id=None,
         enable_audio_analysis=True, audio_language="zh",
     )
     step = SimpleNamespace(id=uuid4(), output_artifact_path=None)

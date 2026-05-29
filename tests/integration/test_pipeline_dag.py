@@ -30,6 +30,7 @@ from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.coach_video_classification import CoachVideoClassification
 from src.models.extraction_job import ExtractionJob, ExtractionJobStatus
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
+from src.models.tech_knowledge_base import TechKnowledgeBase
 from src.services.kb_extraction_pipeline.orchestrator import Orchestrator
 
 
@@ -220,10 +221,24 @@ async def seeded_kb_task(session_factory):
 
     yield task_id, cos_key
 
-    # Teardown — delete by cos_object_key cascade.
+    # Teardown — 需先删 TechKnowledgeBase（FK ondelete=RESTRICT）再删 AnalysisTask。
     async with session_factory() as session:
         if task_id:
-            # Delete the task (cascades to extraction_jobs -> pipeline_steps / kb_conflicts).
+            # 先查出本 task 关联的所有 ExtractionJob，以便定位 KB
+            job_ids = (
+                await session.execute(
+                    select(ExtractionJob.id).where(
+                        ExtractionJob.analysis_task_id == task_id
+                    )
+                )
+            ).scalars().all()
+            if job_ids:
+                await session.execute(
+                    delete(TechKnowledgeBase).where(
+                        TechKnowledgeBase.extraction_job_id.in_(job_ids)
+                    )
+                )
+            # 现在可以安全 cascade 删 AnalysisTask → extraction_jobs → pipeline_steps / kb_conflicts
             await session.execute(
                 delete(AnalysisTask).where(AnalysisTask.id == task_id)
             )

@@ -110,8 +110,9 @@ async def _ensure_active_standard(session) -> tuple[int, int]:
         tech_category=_TECH,
         version=1,
         status=StandardStatus.active,
-        source_quality=SourceQuality.low,
-        built_from_expert_count=1,
+        source_quality=SourceQuality.single_source,
+        coach_count=1,
+        point_count=1,
     )
     session.add(std)
     await session.flush()

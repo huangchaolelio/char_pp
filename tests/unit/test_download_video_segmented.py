@@ -25,6 +25,22 @@ from src.services.kb_extraction_pipeline.step_executors import download_video
 pytestmark = pytest.mark.asyncio
 
 
+async def _bypass_curation_gate(session, *, view, cos_object_key):
+    """Unit-test stub: 绕过 F-022 curation gate（不依赖真实 DB session）.
+
+    返回结构与 ``download_video._apply_curation_gate`` 的 ``bypassed`` 分支一致：
+    所有 segments 直通，无 curation 元数据。
+    """
+    return {
+        "_accepted_segments": list(view.segments),
+        "curation_job_id": None,
+        "curation_rubric_version": None,
+        "curation_warning": None,
+        "curation_bypass": True,
+        "low_quality_skip": False,
+    }
+
+
 def _seg(index: int, start_ms: int, size: int, key: str):
     return SimpleNamespace(
         segment_index=index, start_ms=start_ms, end_ms=start_ms + 180_000,
@@ -48,6 +64,9 @@ async def test_download_video_raises_segment_missing(tmp_path, monkeypatch):
         )
     monkeypatch.setattr(
         download_video, "_load_preprocessing_view", fake_view, raising=False,
+    )
+    monkeypatch.setattr(
+        download_video, "_apply_curation_gate", _bypass_curation_gate, raising=False,
     )
 
     # head_object: seg_0000 exists, seg_0001 missing.
@@ -83,6 +102,9 @@ async def test_download_video_raises_audio_missing(tmp_path, monkeypatch):
         )
     monkeypatch.setattr(
         download_video, "_load_preprocessing_view", fake_view, raising=False,
+    )
+    monkeypatch.setattr(
+        download_video, "_apply_curation_gate", _bypass_curation_gate, raising=False,
     )
 
     def fake_exists(key):
@@ -131,6 +153,9 @@ async def test_download_video_local_cache_hit(tmp_path, monkeypatch):
         )
     monkeypatch.setattr(
         download_video, "_load_preprocessing_view", fake_view, raising=False,
+    )
+    monkeypatch.setattr(
+        download_video, "_apply_curation_gate", _bypass_curation_gate, raising=False,
     )
     monkeypatch.setattr(
         download_video, "_cos_object_exists", lambda k: True, raising=False,

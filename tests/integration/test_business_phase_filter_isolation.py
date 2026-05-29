@@ -142,15 +142,32 @@ async def test_inference_phase_returns_only_athlete_tasks(
 async def test_training_phase_returns_only_coach_tasks(
     session_factory, client, six_seeded_tasks
 ):
-    """business_phase=TRAINING 只能看到 3 条教练侧任务."""
-    resp = await client.get("/api/v1/tasks?page_size=100&business_phase=TRAINING")
-    assert resp.status_code == 200, resp.text
-    data = assert_success_envelope(resp.json())
+    """Feature-022 重构后：TRAINING 仅保留 KB 抽取，scan/preprocess 迁至 CONTENT_PREP。
 
-    ours = [t for t in data if _TAG in t.get("video_filename", "")]
-    assert len(ours) == 3, f"Expected 3 TRAINING tasks, got {len(ours)}"
+    校验：
+    - business_phase=TRAINING ⇒ 仅 1 条（kb_extraction）
+    - business_phase=CONTENT_PREP ⇒ 2 条（video_classification + video_preprocessing）
+    - 两阶段合并 ⇒ 3 条教练侧任务，类型集合等于旧期望
+    """
+    tr_resp = await client.get("/api/v1/tasks?page_size=100&business_phase=TRAINING")
+    cp_resp = await client.get("/api/v1/tasks?page_size=100&business_phase=CONTENT_PREP")
+    assert tr_resp.status_code == 200, tr_resp.text
+    assert cp_resp.status_code == 200, cp_resp.text
+
+    tr_ours = [
+        t for t in assert_success_envelope(tr_resp.json())
+        if _TAG in t.get("video_filename", "")
+    ]
+    cp_ours = [
+        t for t in assert_success_envelope(cp_resp.json())
+        if _TAG in t.get("video_filename", "")
+    ]
+    assert len(tr_ours) == 1, f"Expected 1 TRAINING task (kb_extraction), got {len(tr_ours)}"
+    assert tr_ours[0]["task_type"] == "kb_extraction"
+    assert len(cp_ours) == 2, f"Expected 2 CONTENT_PREP tasks, got {len(cp_ours)}"
+
     coach_types = {"video_classification", "video_preprocessing", "kb_extraction"}
-    got_types = {t["task_type"] for t in ours}
+    got_types = {t["task_type"] for t in tr_ours + cp_ours}
     assert got_types == coach_types, f"got task_types={got_types}"
 
 
@@ -158,29 +175,43 @@ async def test_training_phase_returns_only_coach_tasks(
 async def test_inference_plus_training_equals_all_seeded(
     session_factory, client, six_seeded_tasks
 ):
-    """两阶段求和 == 全量 seed 数（核心隔离证明：无交集/漏项）."""
+    """三阶段求和 == 全量 seed 数（核心隔离证明：无交集/漏项）。
+
+    Feature-022 后教练侧拆为 CONTENT_PREP（2 条）+ TRAINING（1 条）。
+    """
     inf_resp = await client.get(
         "/api/v1/tasks?page_size=100&business_phase=INFERENCE"
+    )
+    cp_resp = await client.get(
+        "/api/v1/tasks?page_size=100&business_phase=CONTENT_PREP"
     )
     tr_resp = await client.get(
         "/api/v1/tasks?page_size=100&business_phase=TRAINING"
     )
     assert inf_resp.status_code == 200
+    assert cp_resp.status_code == 200
     assert tr_resp.status_code == 200
 
     inf_ours = [
         t for t in assert_success_envelope(inf_resp.json())
         if _TAG in t.get("video_filename", "")
     ]
+    cp_ours = [
+        t for t in assert_success_envelope(cp_resp.json())
+        if _TAG in t.get("video_filename", "")
+    ]
     tr_ours = [
         t for t in assert_success_envelope(tr_resp.json())
         if _TAG in t.get("video_filename", "")
     ]
-    assert len(inf_ours) + len(tr_ours) == 6
-    # 交集必须为空
+    assert len(inf_ours) + len(cp_ours) + len(tr_ours) == 6
+    # 三阶段交集必须两两为空
     inf_ids = {t["task_id"] for t in inf_ours}
+    cp_ids = {t["task_id"] for t in cp_ours}
     tr_ids = {t["task_id"] for t in tr_ours}
-    assert inf_ids.isdisjoint(tr_ids), "phase 隔离失败：出现交集"
+    assert inf_ids.isdisjoint(cp_ids), "phase 隔离失败：INFERENCE × CONTENT_PREP 出现交集"
+    assert inf_ids.isdisjoint(tr_ids), "phase 隔离失败：INFERENCE × TRAINING 出现交集"
+    assert cp_ids.isdisjoint(tr_ids), "phase 隔离失败：CONTENT_PREP × TRAINING 出现交集"
 
 
 @pytest.mark.asyncio

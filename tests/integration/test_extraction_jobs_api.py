@@ -62,6 +62,8 @@ async def seeded_cvc(session_factory):
             confidence=1.0,
             name_source="fallback",
             kb_extracted=False,
+            # Feature-022：内容审核门，KB 抽取需 review_state=approved 才能进入后续
+            review_state="approved",
         )
         session.add(cvc)
         await session.commit()
@@ -105,7 +107,7 @@ async def client():
 
 
 async def test_kb_extraction_full_api_flow(
-    client, session_factory, seeded_cvc
+    client, session_factory, seeded_cvc, monkeypatch
 ) -> None:
     """End-to-end: submit → DB assertion → detail → list → rerun-501.
 
@@ -113,6 +115,12 @@ async def test_kb_extraction_full_api_flow(
     cross-loop engine caching that plagues asyncpg when pytest-asyncio
     creates a fresh loop per test.
     """
+    # Feature-022 引入了 KB 提取前的 curation gate；本用例聚焦 KB 提取通道
+    # （ExtractionJob + PipelineStep 创建链路），通过 bypass 开关绕过 gate，
+    # 与 Feature-022 的 curation 流程解耦。
+    monkeypatch.setattr(
+        get_settings(), "kb_extraction_bypass_curation_gate", True, raising=False
+    )
     with patch(
         "src.services.task_submission_service.TaskSubmissionService._dispatch_celery",
         return_value=None,

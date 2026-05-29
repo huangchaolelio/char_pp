@@ -22,7 +22,7 @@ def _make_ep(kb_version: str, action_type_val: str, dimension: str, task_id: uui
 
     ep = MagicMock(spec=ExpertTechPoint)
     ep.id = uuid.uuid4()
-    ep.knowledge_base_version = kb_version
+    ep.kb_version = kb_version
     ep.action_type = ActionType(action_type_val)
     ep.dimension = dimension
     ep.param_min = 80.0
@@ -63,7 +63,7 @@ class TestCoachKBPipeline:
             select(ExpertTechPoint)
             .join(_AT, ExpertTechPoint.source_video_id == _AT.id)
             .where(
-                ExpertTechPoint.knowledge_base_version == kb_version,
+                ExpertTechPoint.kb_version == kb_version,
                 _AT.coach_id == coach_a_id,
             )
         )
@@ -81,7 +81,7 @@ class TestCoachKBPipeline:
 
         kb_version = "1.0.0"
         stmt_global = select(ExpertTechPoint).where(
-            ExpertTechPoint.knowledge_base_version == kb_version
+            ExpertTechPoint.kb_version == kb_version
         )
 
         from sqlalchemy.dialects import postgresql
@@ -108,7 +108,7 @@ class TestCoachKBPipeline:
                 select(ExpertTechPoint)
                 .join(_AT, ExpertTechPoint.source_video_id == _AT.id)
                 .where(
-                    ExpertTechPoint.knowledge_base_version == kb_version,
+                    ExpertTechPoint.kb_version == kb_version,
                     _AT.coach_id == coach_id,
                 )
             )
