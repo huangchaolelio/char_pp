@@ -505,6 +505,17 @@ async def _persist_results(
         )
     )
 
+    # 4) Feature-022 — 审核状态机：approved 重洗 → pending_review（不暴露中间 stale 态）
+    #    必须在 commit 之前同事务调用，以保证：
+    #    - last_curation_job_id（步骤 3）与 review_state/version（步骤 4）原子可见
+    #    - 任意 KB 抽取请求看到的 cvclf 行总是"清洗版本与审核状态一致"的快照
+    from src.services.content_review.stale_handler import mark_stale_after_recurate
+    await mark_stale_after_recurate(
+        db,
+        cvclf_id=job.coach_video_classification_id,
+        new_curation_job_id=job.id,
+    )
+
     await db.commit()
 
 

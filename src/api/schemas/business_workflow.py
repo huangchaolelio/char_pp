@@ -20,6 +20,10 @@ BusinessStepLiteral = Literal[
     "scan_cos_videos",
     "preprocess_video",
     "classify_video",
+    # Feature-021: 视频内容清洗（Feature-022 之后归 CONTENT_PREP 阶段）
+    "curate_segments",
+    # Feature-022: 内容审核（虚拟步骤，无对应 task_type；表示在审核工作台提交决策）
+    "content_review",
     "extract_kb",
     "review_conflicts",
     "kb_version_activate",
@@ -30,7 +34,7 @@ BusinessStepLiteral = Literal[
     "preprocess_athlete_video",
 ]
 
-BusinessPhaseLiteral = Literal["TRAINING", "STANDARDIZATION", "INFERENCE"]
+BusinessPhaseLiteral = Literal["CONTENT_PREP", "TRAINING", "STANDARDIZATION", "INFERENCE"]
 
 
 class StepSnapshot(BaseModel):
@@ -62,10 +66,11 @@ class PhaseSnapshot(BaseModel):
 
 
 class WorkflowOverviewSnapshot(BaseModel):
-    """三阶段总览——路由 response_model data 载荷."""
+    """四阶段总览——路由 response_model data 载荷（Feature-022）."""
 
     model_config = ConfigDict(extra="forbid")
 
+    CONTENT_PREP: PhaseSnapshot
     TRAINING: PhaseSnapshot
     STANDARDIZATION: PhaseSnapshot
     INFERENCE: PhaseSnapshot

@@ -1,9 +1,9 @@
 
 # 业务执行流程规范
 
-> 最后更新：2026-05-18
+> 最后更新：2026-05-29
 >
-> 本文档抽象项目的核心业务为**三阶段八步骤**执行模型，明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆与调度图。
+> 本文档抽象项目的核心业务为**四阶段九步骤**执行模型（Feature-022 从三阶段趋升级），明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆与调度图。
 >
 > 适用对象：运营 / 开发 / SRE；配合 [architecture.md](./architecture.md)（技术架构）与 [features.md](./features.md)（功能清单）阅读。
 
@@ -20,28 +20,34 @@
 
 ---
 
-## 2. 三阶段全景
+## 2. 四阶段全景
 
 ```mermaid
 flowchart LR
-  subgraph S1[阶段一 · 训练 TRAINING]
+  subgraph S0[阶段一 · 内容准备 CONTENT_PREP]
     direction TB
-    T1[1.素材归集<br/>scan_cos_videos] --> T2[2.视频预处理<br/>preprocess_video]
-    T2 --> T3[3.技术分类<br/>classify_video] --> T35[3.5 内容清洗<br/>curate_segments F-021]
-    T35 --> T4[4.知识库抽取<br/>extract_kb 6步DAG]
+    P1[1.素材归集<br/>scan_cos_videos] --> P2[2.视频预处理<br/>preprocess_video]
+    P2 --> P3[3.技术分类<br/>classify_video] --> P4[4.内容清洗<br/>curate_segments F-021]
+    P4 --> P5[5.内容审核<br/>content_review F-022]
   end
 
-  subgraph S2[阶段二 · 建立标准 STANDARDIZATION]
+  subgraph S1[阶段二 · 训练 TRAINING]
     direction TB
-    B1[5.冲突审阅<br/>kb_conflicts 审核] --> B2[6.KB版本激活<br/>draft→active→archived]
-    B2 --> B3[7.技术标准构建<br/>build_standards 多教练聚合]
+    T1[6.知识库抽取<br/>extract_kb 6步DAG]
   end
 
-  subgraph S3[阶段三 · 诊断 INFERENCE]
+  subgraph S2[阶段三 · 建立标准 STANDARDIZATION]
     direction TB
-    D1[8.学员诊断<br/>diagnose_athlete] --> D2[9.输出报告<br/>overall_score+dims+advice]
+    B1[7.冲突审阅<br/>kb_conflicts 审核] --> B2[8.KB版本激活<br/>draft→active→archived]
+    B2 --> B3[技术标准构建<br/>build_standards 多教练聚合]
   end
 
+  subgraph S3[阶段四 · 诊断 INFERENCE]
+    direction TB
+    D1[9.学员诊断<br/>diagnose_athlete] --> D2[输出报告<br/>overall_score+dims+advice]
+  end
+
+  S0 -- approved 条目才能进 TRAINING --> S1
   S1 -- 产出 expert_tech_points --> S2
   S2 -- 产出 active KB / standards --> S3
 ```
@@ -50,19 +56,23 @@ flowchart LR
 
 | 阶段 | 必过判据 | 查询方式 |
 |-----|---------|---------|
+| **内容准备**（F-022 新增） | `coach_video_classifications.review_state='approved'` 且 对应最新 `cleansing_version` | `GET /api/v1/content-reviews/{cvclf_id}` |
 | 训练 | `extraction_jobs.status=success` 且 `coach_video_classifications.kb_extracted=true` | `GET /api/v1/extraction-jobs/{id}` |
 | 建标 | `tech_knowledge_bases.status=active` 且所有 `kb_conflicts.resolution != null` | `GET /api/v1/knowledge-base/versions` |
 | 诊断 | `diagnosis_reports` 行存在且 `overall_score != null` | `GET /api/v1/tasks/{task_id}` |
 
 **阶段特性**：
 
-- 阶段一是**冷链路**（离线批处理，可重跑，允许失败）
-- 阶段二是**门控**（人审 + 规则把关，单 active 原子切换）
-- 阶段三是**热链路**（只读，低延迟，关键路径不碰 LLM 时 50ms 级返回）
+- 阶段一（内容准备）是**冷链路 + 门控**：离线批处理可重跑 + 末端有人工审核门，只有 `approved` 才能进 TRAINING
+- 阶段二（训练）是**冷链路**：离线批处理可重跑，允许失败
+- 阶段三（建标）是**门控**：人审 + 规则把关，单 active 原子切换
+- 阶段四（诊断）是**热链路**：只读，低延迟，关键路径不碰 LLM 时 50ms 级返回
 
 ---
 
-## 3. 阶段一 · 训练 TRAINING（专家视频 → 知识库草稿）
+## 3. 阶段一 · 内容准备 CONTENT_PREP（原始素材 → 已审核语料）
+
+> **本阶段在 Feature-022 中从原 TRAINING 阶段拆分独立**：原「训练」阶段中「原始素材到形成可用语料」这一段长流程独立为 CONTENT_PREP，由其以应运营 / SRE / PM 能在该维度上独立观测吞吐与质量，TRAINING 阶段的成功率统计不被前置链路噪声污染。
 
 ### 3.1 步骤总览
 
@@ -71,12 +81,16 @@ flowchart LR
 | 1 | **scan_cos_videos** | `POST /api/v1/classifications/scan` | `default` | 1 | COS 根路径可读（`COS_VIDEO_ALL_COCAH`） | `coach_video_classifications` + `coaches` | `analysis_tasks(task_type=video_classification, submitted_via=batch_scan)` |
 | 2 | **preprocess_video** | 批量提交 `POST /api/v1/tasks type=video_preprocessing` | `preprocessing` | 3 | `coach_video_classifications` 存在 | 标准化 mp4 + N×180s 分片（COS）+ 16k mono WAV | `video_preprocessing_jobs` + `video_preprocessing_segments` |
 | 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `tech_category` 字段落定（21 类之一） | `analysis_tasks(task_type=video_classification)` |
-| 3.5 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `tech_category` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
-| 4 | **extract_kb**（6 步 DAG） | `POST /api/v1/tasks type=kb_extraction` | `kb_extraction` | 2 | `tech_category` 非空、预处理完成、**`video_curation_jobs.status=success`** | `expert_tech_points` + `kb_conflicts` + `kb_extracted=true` | `extraction_jobs` + `pipeline_steps`(×6) |
+| 4 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `tech_category` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
+| 5 | **content_review**（Feature-022） | `POST /api/v1/content-reviews/{cvclf_id}/decisions` | —（同步人工决策路径） | — | `video_curation_jobs.status=success`；cvclf 本身 `review_state IN ('pending_review', 'stale')` | `coach_video_classifications.review_state` 转为 `approved` / `rejected`；`content_review_decisions` 新增一行决策留痕 | `coach_video_classifications` + `content_review_decisions` |
 
 > **队列复用说明（Feature-020 + Feature-021）**：`default` / `preprocessing` / `diagnosis` 三个队列**同时被 INFERENCE 阶段的运动员侧三步骤复用**（§ 5.1 步骤 8a/8b/8 共用队列）；Feature-021 的 `curate_segments` 步骤同样**复用 `default` 队列**（与 `scan_cos_videos` / `housekeeping` / `cleanup_*` / `sweep_orphan_jobs` 同列），不新增 Celery 队列、不新增 worker。各侧通过 `analysis_tasks.business_phase` 与独立的 `task_type` 枚举值区分任务来源，`task_channel_configs` 容量/并发配置统一生效。
+>
+> **content_review 不走 Celery 队列**（Feature-022）：该步骤是同步人工决策 API 的状态转换动作，不需后台 worker；决策乐观锁 `expected_review_version` 防并发覆写。`task_channel_configs` 中新增 `content_review_gate` 行，是路由层的热开关而非任务队列。
 
 ### 3.2 KB 抽取 DAG 的 6 个子步骤
+
+> Feature-022 后本小节描述的 DAG 本身属于**阶段二 · 训练 TRAINING**（§ 4）；保留于此仅因为子步骤可观测架构与阶段一的步骤级错误码同源。读者阅读本节请默认其阶段归属已升级为 TRAINING。
 
 ```
 wave1:  download_video
@@ -140,17 +154,74 @@ wave4:  merge_kb
 - 覆盖后视频级摘要自动重算
 - 覆盖**不自动触发**对该视频已存在 KB 抽取作业的重抽；如需重抽，运营按既有 `POST /extraction-jobs/{id}/rerun` 显式发起；任务监控对存在覆盖且未重抽的视频暴露 `kb_stale_after_override=true` 提示
 
+### 3.5 内容审核契约（`content_review` · Feature-022）
+
+审核以**整段视频条目为最小粒度**（与 `coach_video_classifications` 行 1：1，澄清 Q1），首版仅承载"通过 / 拒绝"二元决策。审核员采用**单一 `reviewer` 角色**，admin 为其超集；任何 reviewer 均可对任一"待审核"条目下决策，最后一次写入为准，不支持申诉 / 二审 / 分级 / 分组 / 审计员（澄清 Q2）。
+
+**4 状态状态机**（承载在既有 `coach_video_classifications` 行上，未另建子粒度表）：
+
+```
+[pending_review] --decide approved--> [approved]
+      |                                  ^
+      |--decide rejected--> [rejected]   |
+      |                                  | curate_segments 递进 cleansing_version
+      |                                  | (旧民控质量进为 stale)
+      +--------------> [stale] -----------+
+```
+
+| 列 | 语义 |
+|----|------|
+| `review_state VARCHAR(20)` | 4 状态枚举（`pending_review` / `approved` / `rejected` / `stale`），默认 `pending_review` |
+| `cleansing_version INTEGER` | 单调递增计数；curate 路径递进后旧审核结论自动 `stale`（FR-011） |
+| `pending_since TIMESTAMP` | 进入 `pending_review` 时间戳，驱动积压告警 + p95 指标 |
+| `review_version INTEGER` | 决策乐观锁版本号，防并发覆写 |
+| `last_decision_id UUID` | 反向指针 → `content_review_decisions` 表最新决策行 |
+
+**决策留痕**（新表 `content_review_decisions`）：`reviewer_id` / `decision` / `reason_code` / `note` / `decided_at` / `cleansing_version`；拒绝条目 DB 行**永久保留** + COS 文件不同步删除（澄清 Q5）；审核工作台默认列表过滤 `rejected`，但支持 `?state=rejected` 显式查看。
+
+**KB 抽取入口三态拦截**（FR-009）：`POST /tasks/kb-extraction` 路由层 + DAG 入口双闸门读 `review_state`：
+
+| 当前 `review_state` | 错误码 | HTTP |
+|---------------------|---------|------|
+| `pending_review` | `CONTENT_NOT_REVIEWED` | 409 |
+| `rejected` | `CONTENT_REVIEW_REJECTED` | 409 |
+| `stale` | `CONTENT_REVIEW_STALE` | 409 |
+| `approved` | —（放行） | — |
+
+**重新清洗不级联**（FR-011a）：`curate_segments` 递进 `cleansing_version` 后旧审核自动 `stale`；**已入队 / running 的 `extract_kb` 不中止**（继续跑完落库），仅新提交在入口被 `CONTENT_REVIEW_STALE` 拒绝。
+
+**可观测锦点**（FR-013）：4 个审核门指标均由 `src/services/content_review/review_service.py` 与 `backlog_monitor.py` 以结构化日志锦点输出（`metric=...` + `phase=CONTENT_PREP` + `step=content_review`）：
+
+| 指标 | 含义 | 采样路径 |
+|------|------|---------|
+| `content_review_pending_count` | 当前待审核总量 | hourly housekeeping beat 采样 |
+| `content_review_decision_count{decision}` | 单位时间决策计数，按通过/拒绝打标 | submit_decision 出口锦点 |
+| `content_review_latency_seconds` | `decided_at - pending_since` 审核延迟 | submit_decision 出口锦点 |
+| `content_review_pending_since_p95_seconds` | pending 中条目等待时长 p95 | hourly housekeeping beat 采样 |
+
+**积压告警（FR-016）**：`cleanup_pending_backlog` Celery beat 每小时一次巡检 `pending_since < now() - settings.review_pending_red_line_hours`（默认 24h）；命中即写 ERROR 级结构化日志（`metric=content_review_backlog_alert` + `alert.severity=high`）；不阻塞业务流程。
+
+**全局热开关**（FR-014）：`PATCH /api/v1/admin/review-gate {enabled, operator_id, reason}` 30 秒内热生效；切回 `enabled=true` 立即恢复严格不留遗留豁免；切换全程 `last_toggled_at` / `last_toggled_by` 落库审计（SC-007）。与应用级 `KB_EXTRACTION_BYPASS_REVIEW_GATE=true` 开关是 OR 关系（任一启用即直通）。
+
 ---
 
-## 4. 阶段二 · 建立标准 STANDARDIZATION（草稿 → 正式）
+## 4. 阶段二 · 训练 TRAINING + 阶段三 · 建立标准 STANDARDIZATION
+
+> **Feature-022 后阶段调整说明**：原「阶段二 · 建立标准」为保证 § 1–§ 11 章节编号稳定不变合并为本节，实际覆盖两个阶段：
+>
+> - **阶段二 · TRAINING**—仅包含 `extract_kb`（6 步 DAG）一个业务步骤；详见 § 3.2 与 § 3.3
+> - **阶段三 · STANDARDIZATION**—本节 § 4.1–§ 4.3。
+>
+> KB 抽取的路由层与 DAG 入口两处都由审核门控豆 — `coach_video_classifications.review_state != 'approved'` 即在 `POST /tasks/kb-extraction` 路由层被 `CONTENT_NOT_REVIEWED` / `CONTENT_REVIEW_REJECTED` / `CONTENT_REVIEW_STALE` 拒绝；详见 § 7.4 错误码表与 § 10 回滚剧本。
 
 ### 4.1 步骤总览
 
 | # | 步骤 | 触发方式 | 执行者 | 产物 |
 |---|------|---------|-------|------|
-| 5 | **冲突审阅** | 运营手动 | `GET /api/v1/extraction-jobs/{id}`（含 conflicts）→ 合并工具 | `kb_conflicts.resolution` 变为 `resolved / overridden` |
-| 6 | **KB 版本激活** | `POST /api/v1/knowledge-base/{version}/approve` | `knowledge_base_svc.approve_version` | 原 active → archived；新 version → active |
-| 7 | **技术标准构建** | `POST /api/v1/standards/build`（Feature-010） | `standards_builder` | `tech_standards` + `tech_standard_points`（多教练聚合后的"考纲"） |
+| 6 | **extract_kb**（6 步 DAG，TRAINING）| `POST /api/v1/tasks type=kb_extraction` | `extract_kb` Celery 任务（`kb_extraction` 队列，并发 2）| `expert_tech_points` + `kb_conflicts` + `kb_extracted=true`；前置门需 `review_state='approved'`（F-022） |
+| 7 | **冲突审阅** | 运营手动 | `GET /api/v1/extraction-jobs/{id}`（含 conflicts）→ 合并工具 | `kb_conflicts.resolution` 变为 `resolved / overridden` |
+| 8 | **KB 版本激活** | `POST /api/v1/knowledge-base/{version}/approve` | `knowledge_base_svc.approve_version` | 原 active → archived；新 version → active |
+| 9 | **技术标准构建** | `POST /api/v1/standards/build`（Feature-010） | `standards_builder` | `tech_standards` + `tech_standard_points`（多教练聚合后的"考纲"） |
 
 ### 4.2 三条硬约束（章程 / DB 级强制）
 
@@ -328,6 +399,10 @@ diagnosis_reports
 | `RUBRIC_VERSION_NOT_FOUND:` | Feature-021 — 清洗任务声明的 `curation_rubric_version` 在 `src/config/curation_rubric/` 中找不到对应版本 | 否 |
 | `CURATION_TIMEOUT:` | Feature-021 — 清洗任务超出作业级或步骤级超时阈值，由 `sweep_orphan_jobs` 兜底回收 | 视情况（重提） |
 | `CURATION_LLM_UNAVAILABLE:` | Feature-021 — 模糊区间分段需 LLM 复核但 Venus / OpenAI 均不可用；分段落 `uncertain`，不阻断整个作业 | 否（不阻断作业，仅记录） |
+| `CONTENT_NOT_REVIEWED:` | Feature-022 — KB 抽取提交时来源条目 `review_state='pending_review'`，路由层与 DAG 入口双闸门拒绝 | 否（先完成审核后重提） |
+| `CONTENT_REVIEW_REJECTED:` | Feature-022 — KB 抽取提交时来源条目 `review_state='rejected'`；DB 行与 COS 文件永久保留（澄清 Q5） | 否（需运营重新判定或补全素材） |
+| `CONTENT_REVIEW_STALE:` | Feature-022 — 重新清洗导致 `cleansing_version` 递进，旧审核结论自动失效；**已入队 / running KB 任务不级联中止**，仅新提交被拒（澄清 Q3） | 否（先重新审核后再提交） |
+| `REVIEW_VERSION_CONFLICT:` | Feature-022 — 提交决策时 `expected_review_version` 与 DB 当前 `review_version` 不一致（乐观锁并发冲突） | 否（刷新全重读后重试） |
 ### 7.5 建议补强的三类指标
 
 | 类别 | 指标 | 建议落点 | 用途 |
@@ -336,11 +411,11 @@ diagnosis_reports
 | **准确性** | `conflict_items / merged_items` 比、`classifier_disagreements`、LLM fallback 率、`reliability_level=low` 占比 | `output_summary` JSONB 聚合到日报 | 驱动规则/模型迭代 |
 | **成本** | LLM tokens/任务、GPU 占用、COS 流量 | 在 `llm_client` + `cos_client` 加 metric hook | 预算对账 |
 
-### 7.6 业务阶段总览接口（Feature-018 US1）
+### 7.6 业务阶段总览接口（Feature-018 US1，Feature-022 升级为四阶段）
 
 | 接口 | 路径 | 鉴权 | 说明 |
 |-----|-----|------|------|
-| `GET /api/v1/business-workflow/overview` | `?window_hours=1..168`（默认 24） | 无 | 一次返回三阶段 × 八步骤的计数、耗时 P50/P95、24h 吞吐 |
+| `GET /api/v1/business-workflow/overview` | `?window_hours=1..168`（默认 24） | 无 | 一次返回四阶段 × 九步骤的计数、耗时 P50/P95、24h 吞吐 |
 
 响应信封 `meta` 字段：
 - `generated_at` — CST 时间戳（ISO 8601 +08:00）
@@ -350,7 +425,7 @@ diagnosis_reports
 
 降级档下各 `step` 对象省略 `p50_seconds` / `p95_seconds` 字段，仅保留计数与近 24h 吞吐；> 1000 万行超出本 Feature 范围（留给后续物化视图 Feature）。
 
-四表新增 `business_phase` / `business_step` 两列（migration 0016），由 `src/models/_phase_step_hook.py` ORM `before_insert` 钩子自动派生（规则见 data-model.md § 3.1）；列级 `NOT NULL` 作兜底。
+四表新增 `business_phase` / `business_step` 两列（migration 0016，Feature-022 迁移 0021 在 `business_phase_enum` 中新增 `CONTENT_PREP`），由 `src/models/_phase_step_hook.py` ORM `before_insert` 钩子自动派生（规则见 data-model.md § 3.1）；列级 `NOT NULL` 作兜底。
 
 ### 7.7 CI 守卫（Feature-018 US2）
 
@@ -381,7 +456,8 @@ flowchart TD
   A1 --> A2[preprocess_video]
   A2 --> A3[classify_video]
   A3 --> A35[curate_segments<br/>F-021 清洗门]
-  A35 --> A4[extract_kb 6步DAG]
+  A35 --> A37[content_review<br/>F-022 审核门]
+  A37 --> A4[extract_kb 6步DAG]
   A4 --> Q5{有冲突?}
   Q5 -->|是| A5[人工审阅 kb_conflicts]
   Q5 -->|否| A6[approve_version]
@@ -445,19 +521,23 @@ flowchart TD
 | 数据全量重置（压测/联调） | 调用 `system-init` skill（等价 `/api/v1/admin/reset-task-pipeline`，保留 schema + alembic_version） |
 | Feature-021 清洗规则误伤导致 KB 抽取读到的有效片段过少 | 临时把 `extract_kb` 的"清洗强制前置门"切到 `bypass`（运营级开关，需登记审计），下游退回到读全量分段；同时回滚到上一版 `curation_rubric_version` 并对受影响视频 `force=true` 重跑清洗；事后恢复门控 |
 | Feature-021 清洗结果或人工覆盖数据本身错误 | 删除该视频的 `video_curation_jobs` 行 + `video_curation_segment_results` 子行后重跑清洗；若已重抽过 KB，覆盖后再次走 `POST /extraction-jobs/{id}/rerun` 即可，**不影响 KB / standards / teaching_tips** |
+| **Feature-022 审核积压导致 KB 抽取卡顿 / 审核数据异常需绕过调试** | `PATCH /api/v1/admin/review-gate {enabled: false, operator_id, reason}`，选项 A；30 秒内全局热生效，后续 `POST /tasks/kb-extraction` 跳过审核门（路由层与 DAG 入口同时放行）；**息恢后立即 `enabled=true` 切回严格**（不留遗留豁免）；`task_channel_configs.content_review_gate.last_toggled_at` / `last_toggled_by` 完整留审计跡。进阶选项 B：`KB_EXTRACTION_BYPASS_REVIEW_GATE=true` env （需重启 worker）与渠道级是 OR 关系，仅在需要"全集群强制跳过"时启用 |
+| **Feature-022 重新清洗导致旧审核全部 stale，审核队伍一时无法消化** | 使用上一条「审核门绕过」应急路径让 KB 抽取临时直通；同时运营依据 `GET /api/v1/content-reviews?state=stale` 拼接补审清单，明确 SLA；审核完成后立即切回严格 |
 
 ---
 
 ## 11. 文档交叉索引
 
 - [architecture.md](./architecture.md)：技术架构、分层职责、依赖图
-- [features.md](./features.md)：Feature 清单（001–016 已完成，017 规范化）
+- [features.md](./features.md)：Feature 清单（001–022 全量交付）
 - [api-standardization-guide.md](./api-standardization-guide.md)：API 信封、错误码、路由规约（Feature-017）
 - [environment-setup.md](./environment-setup.md)：环境搭建、依赖、启动命令
 - `specs/014-kb-extraction-pipeline/`：KB 抽取 DAG 设计
 - `specs/015-kb-pipeline-real-algorithms/`：真实算法替换（pose / whisper / LLM）
 - `specs/016-video-preprocessing/`：视频预处理流水线
-- `specs/speckit.constitution.md`：项目章程（v1.4.0）
+- `specs/021-video-content-curation/`：内容清洗 + 5 维加权决策与人工覆盖
+- `specs/022-content-review-workflow/`：**业务流程四阶段化 + 内容准备阶段引入审核门**
+- `specs/speckit.constitution.md`：项目章程（v2.1.0，Feature-022 升级为四阶段）
 
 ---
 
@@ -465,6 +545,6 @@ flowchart TD
 >
 > - 本文档已纳入 `refresh-docs` skill 的刷新清单（与 `architecture.md`、`features.md` 并列为三份核心文档）
 > - **稳态优先**：仅当下列变更发生时才修改正文——阶段/步骤增减、队列/通道种子变化、状态机或 DoD 调整、结构化错误码前缀增减、诊断评分公式调整、单 active / 冲突门控等章程级约束变化；其余情况只刷顶部时间戳
-> - **章节编号稳定**：§ 1 ~ § 11 的编号不得调整，新增内容在对应章节内扩展
+> - **章节编号稳定**：§ 1 ~ § 11 的编号不得调整，新增内容在对应章节内扩展（Feature-022 的三阶段→四阶段升级采用「章节语义升级 + 编号保持」策略：§ 3 由「训练」重命名为「内容准备」，§ 4 合并描述「训练 + 建立标准」，后续章节不错位）
 > - **与 architecture.md 不重复**：本文档只描述"业务为何/何时执行"，技术分层/依赖/路由实现一律交给 `architecture.md`
 > - 执行完整 Feature 后运行 `refresh-docs` skill 自动刷新三份文档

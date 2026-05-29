@@ -81,6 +81,7 @@ def create_celery_app() -> Celery:
             "src.workers.housekeeping_task.cleanup_expired_tasks": {"queue": "default"},
             "src.workers.housekeeping_task.cleanup_intermediate_artifacts": {"queue": "default"},
             "src.workers.housekeeping_task.sweep_orphan_jobs": {"queue": "default"},
+            "src.workers.housekeeping_task.cleanup_pending_backlog": {"queue": "default"},
             "src.workers.preprocessing_task.preprocess_video": {"queue": "preprocessing"},
             "src.workers.athlete_scan_task.scan_athlete_videos": {"queue": "default"},
             "src.workers.athlete_preprocessing_callback.mark_athlete_preprocessed_cb": {"queue": "default"},
@@ -108,6 +109,14 @@ def create_celery_app() -> Celery:
             "sweep-orphan-jobs": {
                 "task": "src.workers.housekeeping_task.sweep_orphan_jobs",
                 "schedule": 300,  # every 5 minutes
+            },
+            # Feature-022 · T033 — review backlog hourly check.
+            # 巡检 coach_video_classifications 中等待时长 > red_line_hours 的行，
+            # 命中即写 ERROR 级结构化日志触发 SRE 告警；不阻塞业务流程。
+            # 沿用 default 队列与现有 housekeeping 共用 worker（concurrency=1）。
+            "cleanup-pending-backlog": {
+                "task": "src.workers.housekeeping_task.cleanup_pending_backlog",
+                "schedule": 3600,  # hourly
             },
         },
     )

@@ -48,12 +48,19 @@ def mock_service_full(monkeypatch):
 
     async def fake_overview(self, session, window_hours: int = 24):
         snap = WorkflowOverviewSnapshot(
-            TRAINING=PhaseSnapshot(
-                phase="TRAINING",
+            CONTENT_PREP=PhaseSnapshot(
+                phase="CONTENT_PREP",
                 steps={
                     "scan_cos_videos": _training_step("scan_cos_videos"),
                     "preprocess_video": _training_step("preprocess_video"),
                     "classify_video": _training_step("classify_video"),
+                    "curate_segments": _training_step("curate_segments"),
+                    "content_review": _training_step("content_review"),
+                },
+            ),
+            TRAINING=PhaseSnapshot(
+                phase="TRAINING",
+                steps={
                     "extract_kb": _training_step("extract_kb"),
                 },
             ),
@@ -118,6 +125,7 @@ def mock_service_degraded(monkeypatch):
 
     async def fake_overview(self, session, window_hours: int = 24):
         snap = WorkflowOverviewSnapshot(
+            CONTENT_PREP=PhaseSnapshot(phase="CONTENT_PREP", steps={}),
             TRAINING=PhaseSnapshot(phase="TRAINING", steps={"extract_kb": _degraded_step("extract_kb")}),
             STANDARDIZATION=PhaseSnapshot(phase="STANDARDIZATION", steps={}),
             INFERENCE=PhaseSnapshot(phase="INFERENCE", steps={}),
@@ -157,8 +165,8 @@ async def test_200_full_envelope(app_with_bw, mock_service_full, override_db_sim
     assert "meta" in body
     # data 三阶段全齐
     data = body["data"]
-    assert set(data.keys()) == {"TRAINING", "STANDARDIZATION", "INFERENCE"}
-    # 完整档必须含 p50/p95
+    assert set(data.keys()) == {"CONTENT_PREP", "TRAINING", "STANDARDIZATION", "INFERENCE"}
+
     training_extract = data["TRAINING"]["steps"]["extract_kb"]
     assert "p50_seconds" in training_extract
     # meta

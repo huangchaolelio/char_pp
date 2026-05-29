@@ -1,13 +1,16 @@
 """Feature-018 T014 — ORM ``before_insert`` hook 单元测试.
 
 覆盖 7 个场景（tasks.md T014）：
-1. analysis_tasks + video_classification + parent_scan_task_id IS NULL ⇒ TRAINING/scan_cos_videos
-2. analysis_tasks + video_classification + parent_scan_task_id NOT NULL ⇒ TRAINING/classify_video
-3. analysis_tasks + video_preprocessing ⇒ TRAINING/preprocess_video
+1. analysis_tasks + video_classification + parent_scan_task_id IS NULL ⇒ CONTENT_PREP/scan_cos_videos
+2. analysis_tasks + video_classification + parent_scan_task_id NOT NULL ⇒ CONTENT_PREP/classify_video
+3. analysis_tasks + video_preprocessing ⇒ CONTENT_PREP/preprocess_video
 4. analysis_tasks + kb_extraction ⇒ TRAINING/extract_kb
 5. analysis_tasks + athlete_diagnosis ⇒ INFERENCE/diagnose_athlete
 6. 显式传入 phase+step 被尊重（不覆盖）
 7. 只传 phase 未传 step ⇒ raises ValueError("PHASE_STEP_UNMAPPED...")
+
+Feature-022 重构后：原属 TRAINING 的内容准备步骤（scan_cos / classify / preprocess /
+curate_segments）全部迁入 CONTENT_PREP；TRAINING 仅保留 extract_kb。
 
 由于实际的 before_insert 钩子在 SQLAlchemy flush 时触发，这里直接调用
 内部函数 ``_assign_phase_step`` 模拟 flush 前的派生动作，无需真实 DB 连接。
@@ -45,28 +48,32 @@ def _make_analysis_task(
 
 
 # ── 场景 1 ─────────────────────────────────────────────────────────────
+# ── 场景 1 ───────────────────────────────────────────────────────────────────
 def test_analysis_task_scan_cos_videos_when_parent_null():
     row = _make_analysis_task(TaskType.video_classification, parent_scan_task_id=None)
     phase, step = _derive_for_analysis_task(row)
-    assert phase == BusinessPhase.TRAINING.value
+    # Feature-022：CONTENT_PREP 承接内容准备步骤
+    assert phase == BusinessPhase.CONTENT_PREP.value
     assert step == "scan_cos_videos"
 
 
-# ── 场景 2 ─────────────────────────────────────────────────────────────
+# ── 场景 2 ───────────────────────────────────────────────────────────────────
 def test_analysis_task_classify_video_when_parent_not_null():
     row = _make_analysis_task(
         TaskType.video_classification, parent_scan_task_id=uuid.uuid4()
     )
     phase, step = _derive_for_analysis_task(row)
-    assert phase == BusinessPhase.TRAINING.value
+    # Feature-022：CONTENT_PREP 承接内容准备步骤
+    assert phase == BusinessPhase.CONTENT_PREP.value
     assert step == "classify_video"
 
 
-# ── 场景 3 / 4 / 5 ─────────────────────────────────────────────────────
+# ── 场景 3 / 4 / 5 ────────────────────────────────────────────────────────────────
 @pytest.mark.parametrize(
     "task_type, expected_phase, expected_step",
     [
-        (TaskType.video_preprocessing, BusinessPhase.TRAINING.value, "preprocess_video"),
+        # Feature-022：video_preprocessing 迁 CONTENT_PREP
+        (TaskType.video_preprocessing, BusinessPhase.CONTENT_PREP.value, "preprocess_video"),
         (TaskType.kb_extraction, BusinessPhase.TRAINING.value, "extract_kb"),
         (TaskType.athlete_diagnosis, BusinessPhase.INFERENCE.value, "diagnose_athlete"),
     ],
@@ -121,7 +128,8 @@ def test_video_preprocessing_job_fixed_defaults():
     row.business_phase = None  # type: ignore[assignment]
     row.business_step = None  # type: ignore[assignment]
     _assign_phase_step(None, None, row)
-    assert row.business_phase == BusinessPhase.TRAINING.value
+    # Feature-022：video_preprocessing_jobs 迁 CONTENT_PREP
+    assert row.business_phase == BusinessPhase.CONTENT_PREP.value
     assert row.business_step == "preprocess_video"
 
 

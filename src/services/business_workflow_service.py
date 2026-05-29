@@ -43,10 +43,18 @@ logger = logging.getLogger(__name__)
 # ── 阶段 → 步骤列表的静态映射（保证响应中每个阶段都展示全部已知步骤，
 # 即使计数为 0 也不会 "消失"；未命中数据的步骤走零计数兜底） ──────────────
 _PHASE_STEPS: dict[str, tuple[str, ...]] = {
-    "TRAINING": (
+    # Feature-022: 中间阶段 CONTENT_PREP 承接原属 TRAINING 的内容准备步骤
+    # content_review 是“虚拟步骤”：并不存在对应的 task_type，它表示“在审核工作台上提交决策”这个
+    # 动作。总览接口仅需展示该阶段包含该步骤以供运营查看该阶段的完整业务全貌，
+    # counts_map 中该步骤始终为零（服务层 _build_phase_snapshot 零计数兌底）
+    "CONTENT_PREP": (
         "scan_cos_videos",
         "preprocess_video",
         "classify_video",
+        "curate_segments",
+        "content_review",
+    ),
+    "TRAINING": (
         "extract_kb",
     ),
     "STANDARDIZATION": (
@@ -68,10 +76,14 @@ _DEGRADATION_THRESHOLD = 1_000_000  # > 100 万 ⇒ 降级（省略 p50 / p95）
 # ── (phase, step, task_type) 三元组矛盾校验矩阵 ──────────────────────────
 # 以 (phase, step) 为键，列出兼容的 task_type 集合；给定显式 task_type 不在集合内 ⇒ 矛盾
 _PHASE_STEP_TASK_TYPE_MATRIX: dict[tuple[str, str], set[str]] = {
-    ("TRAINING", "scan_cos_videos"): {"video_classification"},
-    ("TRAINING", "preprocess_video"): {"video_preprocessing"},
-    ("TRAINING", "classify_video"): {"video_classification"},
-    ("TRAINING", "curate_segments"): {"video_curation"},  # Feature-021
+    # Feature-022 重构：原属 TRAINING 的内容准备步骤全部迁至 CONTENT_PREP
+    ("CONTENT_PREP", "scan_cos_videos"): {"video_classification"},
+    ("CONTENT_PREP", "preprocess_video"): {"video_preprocessing"},
+    ("CONTENT_PREP", "classify_video"): {"video_classification"},
+    ("CONTENT_PREP", "curate_segments"): {"video_curation"},  # Feature-021 迁入 CONTENT_PREP
+    # Feature-022 虚拟步骤：内容审核工作台决策提交不入 analysis_tasks，
+    # 显式 task_type 一律视为冲突（与 STANDARDIZATION 三步同模式）
+    ("CONTENT_PREP", "content_review"): set(),
     ("TRAINING", "extract_kb"): {"kb_extraction"},
     ("STANDARDIZATION", "review_conflicts"): set(),  # 非 analysis_tasks 业务；显式 task_type 一律冲突
     ("STANDARDIZATION", "kb_version_activate"): set(),
@@ -83,11 +95,14 @@ _PHASE_STEP_TASK_TYPE_MATRIX: dict[tuple[str, str], set[str]] = {
 
 # 单独按 phase 维度的允许 task_type 集合（phase 指定但 step 未指定时使用）
 _PHASE_TASK_TYPES: dict[str, set[str]] = {
-    "TRAINING": {
+    # Feature-022
+    "CONTENT_PREP": {
         "video_classification",
         "video_preprocessing",
+        "video_curation",
+    },
+    "TRAINING": {
         "kb_extraction",
-        "video_curation",  # Feature-021
     },
     "STANDARDIZATION": set(),
     "INFERENCE": {
@@ -199,8 +214,11 @@ class WorkflowOverviewService:
         else:
             percentile_map = {}
 
-        # ── 4) 组装三阶段 PhaseSnapshot ──────────────────────────
+        # ── 4) 组装四阶段 PhaseSnapshot（Feature-022）───────────────────────
         snapshot = WorkflowOverviewSnapshot(
+            CONTENT_PREP=self._build_phase_snapshot(
+                "CONTENT_PREP", counts_map, recent_map, percentile_map, degraded
+            ),
             TRAINING=self._build_phase_snapshot(
                 "TRAINING", counts_map, recent_map, percentile_map, degraded
             ),

@@ -112,7 +112,18 @@ class ErrorCode(str, Enum):
     CURATION_LLM_UNAVAILABLE = "CURATION_LLM_UNAVAILABLE"
     CURATION_RUBRIC_MISMATCH = "CURATION_RUBRIC_MISMATCH"
 
-# ── 错误码 → HTTP 状态（单一事实来源） ────────────────────────────────────
+    # ── Feature-022 内容审核工作台（8） ─────────────────
+    # 审核门 3 个 + 决策提交 4 个 + 开关切换 1 个；详见 contracts/error-codes.md
+    CONTENT_NOT_REVIEWED = "CONTENT_NOT_REVIEWED"          # KB 抽取拦截：review_state=pending_review
+    CONTENT_REVIEW_REJECTED = "CONTENT_REVIEW_REJECTED"    # KB 抽取拦截：review_state=rejected
+    CONTENT_REVIEW_STALE = "CONTENT_REVIEW_STALE"          # KB 抽取拦截：review_state=stale
+    REVIEW_VERSION_CONFLICT = "REVIEW_VERSION_CONFLICT"    # EP-3 决策提交：乐观锁冲突
+    REVIEW_NOT_PENDING = "REVIEW_NOT_PENDING"              # EP-3 决策提交：状态机不允许
+    INVALID_REVIEWER_IDENTITY = "INVALID_REVIEWER_IDENTITY"  # EP-3 提交：header vs body 不一致
+    REJECTED_REQUIRES_REASON = "REJECTED_REQUIRES_REASON"  # EP-3 提交：rejected 缺 reason_code
+    REVIEW_GATE_INVALID_STATE = "REVIEW_GATE_INVALID_STATE"  # EP-5b 开关切换：请求体不合法
+
+# ── 错误码 → HTTP 状态（单一事实来源） ───────────────────────────────────
 ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     # 通用
     ErrorCode.VALIDATION_FAILED: HTTPStatus.UNPROCESSABLE_ENTITY,  # 422
@@ -196,6 +207,19 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.CURATION_TIMEOUT: HTTPStatus.INTERNAL_SERVER_ERROR,                    # 500
     ErrorCode.CURATION_LLM_UNAVAILABLE: HTTPStatus.CONFLICT,                         # 409（业务结果，不直接返回客户端）
     ErrorCode.CURATION_RUBRIC_MISMATCH: HTTPStatus.CONFLICT,                         # 409
+
+    # Feature-022（内容审核工作台）
+    # 审核门 3 个都是 409（设计上与 CURATION_REQUIRED 同档位：资源状态不允许推进）
+    # 决策提交 4 个：乐观锁冲突 + 状态机不合法 = 409；body 校验不过 = 400
+    # 开关切换 1 个：请求体不合法 = 400
+    ErrorCode.CONTENT_NOT_REVIEWED: HTTPStatus.CONFLICT,                             # 409
+    ErrorCode.CONTENT_REVIEW_REJECTED: HTTPStatus.CONFLICT,                          # 409
+    ErrorCode.CONTENT_REVIEW_STALE: HTTPStatus.CONFLICT,                             # 409
+    ErrorCode.REVIEW_VERSION_CONFLICT: HTTPStatus.CONFLICT,                          # 409
+    ErrorCode.REVIEW_NOT_PENDING: HTTPStatus.CONFLICT,                               # 409
+    ErrorCode.INVALID_REVIEWER_IDENTITY: HTTPStatus.BAD_REQUEST,                     # 400
+    ErrorCode.REJECTED_REQUIRES_REASON: HTTPStatus.BAD_REQUEST,                      # 400
+    ErrorCode.REVIEW_GATE_INVALID_STATE: HTTPStatus.BAD_REQUEST,                     # 400
 }
 
 
@@ -278,6 +302,16 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.CURATION_TIMEOUT: "清洗任务执行超时已被孤儿回收",
     ErrorCode.CURATION_LLM_UNAVAILABLE: "LLM 不可用，模糊分段已落 uncertain",
     ErrorCode.CURATION_RUBRIC_MISMATCH: "本次提交的规范版本与既有 success 作业不一致；如需新建请使用 force=true",
+
+    # Feature-022（内容审核工作台）
+    ErrorCode.CONTENT_NOT_REVIEWED: "视频尚未完成内容审核，请先在审核工作台提交决策",
+    ErrorCode.CONTENT_REVIEW_REJECTED: "视频内容审核未通过，不能进入训练阶段",
+    ErrorCode.CONTENT_REVIEW_STALE: "视频已被重新清洗，原审核决策已失效，请重新审核",
+    ErrorCode.REVIEW_VERSION_CONFLICT: "审核版本冲突，请刷新后重试",
+    ErrorCode.REVIEW_NOT_PENDING: "当前审核状态不允许提交决策",
+    ErrorCode.INVALID_REVIEWER_IDENTITY: "请求头 X-Reviewer-Id 与请求体 reviewer_id 不一致",
+    ErrorCode.REJECTED_REQUIRES_REASON: "拒绝决策必须提供 reason_code",
+    ErrorCode.REVIEW_GATE_INVALID_STATE: "审核门开关切换请求不合法",
 }
 
 

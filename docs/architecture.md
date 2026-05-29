@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-05-19 · Feature-021 视频内容清洗与有效片段筛选交付
+> 最后更新：2026-05-29 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付（含激进收尾：索引命名对齐 + EP-4 stats tz-aware 兼容）
 ## 目录
 
 - [系统概述](#系统概述)
@@ -56,11 +56,12 @@
 │                                                   │
 │  中间件：Request-ID、性能计时、全局异常处理         │
 │                                                   │
-  路由：/api/v1/（Feature-017 规范化后 + Feature-018 扩展）│
+  路由：/api/v1/（Feature-017 规范化后 + Feature-018 扩展 + Feature-022 审核入口）│
 │    tasks  knowledge-base  classifications  coaches│
 │    standards  teaching-tips  calibration          │
 │    extraction-jobs  task-channels  admin          │
 │    video-preprocessing  business-workflow         │
+│    curation-jobs  content-reviews                 │
 └────────────┬──────────────────┬───────────────────┘
              │ asyncpg           │ Celery send_task
 ┌────────────▼──────┐  ┌────────▼─────────────────┐
@@ -129,6 +130,42 @@ KB 抽取强制门两层对接：
 
 人工覆盖：`PATCH /curation-jobs/{id}/segments/{idx}` 改写 `effective_decision`，视频级摘要事务内重算；`coach_video_classifications.kb_stale_after_override` 提示监控；不级联触发 KB 重抽（运营按需 `POST /extraction-jobs/{id}/rerun`）。
 
+### 内容审核门（Feature 022）
+
+Feature-022 把业务流程**从三阶段升级为四阶段**（`CONTENT_PREP` / `TRAINING` / `STANDARDIZATION` / `INFERENCE`），并在内容准备阶段末端（`curate_segments` 之后）引入**内容审核门**作为该阶段的最终判据：
+
+```
+CONTENT_PREP： scan → preprocess → classify → curate → content_review
+                                                       ↓ approved
+TRAINING：    extract_kb → 冲突审阅 → KB 版本激活
+STANDARDIZATION： build_standards（不变）
+INFERENCE：   diagnose_athlete（不变）
+```
+
+审核门状态机承载在既有 `coach_video_classifications` 行（未另建子粒度表）上，新增 5 列：
+
+| 列 | 语义 |
+|----|------|
+| `review_state VARCHAR(20)` | `pending_review` / `approved` / `rejected` / `stale`，默认 `pending_review` |
+| `cleansing_version INTEGER` | 单调递增的清洗版本计数；curate 路径递进后旧审核结论自动 `stale` |
+| `pending_since TIMESTAMP` | 进入 `pending_review` 时间戳，驱动积压告警 + p95 指标 |
+| `review_version INTEGER` | 决策乐观锁版本号（防并发覆写） |
+| `last_decision_id UUID` | 反向指针 → `content_review_decisions` 表最新决策行 |
+
+审核门两层闸门：
+1. **路由层**：`POST /tasks/kb-extraction` 提交时读 `review_state`，出现三状态仅 409 拒绝（错误码 `CONTENT_NOT_REVIEWED` / `CONTENT_REVIEW_REJECTED` / `CONTENT_REVIEW_STALE`）
+2. **DAG 入口**：`download_video` 步二次校验 — 防止入队后但运行前被运营改为 `rejected`
+
+应急回滚：
+- **渠道级 bypass**：`PATCH /api/v1/admin/review-gate {enabled: false}` 、表面为 `task_channel_configs.content_review_gate.enabled` ；30 秒内全局热生效、切回 `enabled=true` 仅息恢复严格、不留遗留豁免（SC-007）
+- **应用级 bypass**：`KB_EXTRACTION_BYPASS_REVIEW_GATE=true`（需重启）；与渠道级开关是 OR 关系，任一启用即直通
+
+重新清洗对入队 / running KB 任务不级联中止（继续跑完落库）；仅新提交在入口被 `CONTENT_REVIEW_STALE` 拒绝（spec.md 澄清 Q3）。
+
+人工审核走 `POST /api/v1/content-reviews/{cvclf_id}/decisions`（`expected_review_version` 乐观锁）；每次决策在 `content_review_decisions` 表留痕（`reviewer_id` / `decision` / `reason_code` / `note` / `decided_at` / `cleansing_version`）。拒绝条目 DB 行永久保留 + COS 文件不同步删除（澄清 Q5）。
+
+积压告警：housekeeping `cleanup_pending_backlog` beat 每小时一次，扫 `pending_since < now() - settings.review_pending_red_line_hours`（默认 24h），命中即写 ERROR 级结构化日志（`metric=content_review_backlog_alert` + `alert.severity=high`）；不阻塞业务流程。
+
 ---
 
 ## 数据模型
@@ -183,19 +220,19 @@ teaching_tips                       # LLM 提炼的教学建议
 | `Athlete` | `athletes` | **运动员实体（Feature-020），与运动员 COS 目录 1:1 对应；`created_via='athlete_scan'` 标识由扫描自动创建** |
 | `AthleteVideoClassification` | `athlete_video_classifications` | **运动员视频素材清单（Feature-020），与 `coach_video_classifications` 双表物理隔离（零交叉污染）** |
 
-### 业务阶段双列（Feature-018 迁移 0016）
+### 业务阶段双列（Feature-018 迁移 0016，Feature-022 扩展为四阶段）
 
-为支持业务流程总览聚合（`GET /business-workflow/overview`），以下四张业务表统一下沉 `business_phase` + `business_step` 双列：
+为支持业务流程总览聚合（`GET /business-workflow/overview`）以及阶段级可观测性，以下四张业务表统一下沉 `business_phase` + `business_step` 双列：
 
 | 表 | phase 取值 | step 取值 |
 |----|-----------|----------|
-| `analysis_tasks` | `TRAINING` / `INFERENCE`（按 task_type 派生） | `scan_cos_videos` / `preprocess_video` / `classify_video` / `extract_kb` / `diagnose_athlete` |
+| `analysis_tasks` | **`CONTENT_PREP`**（F-022 后 classification / preprocessing / curation）/ `TRAINING`（kb_extraction）/ `INFERENCE`（athlete_*） | `scan_cos_videos` / `preprocess_video` / `classify_video` / `curate_segments` / `content_review` / `extract_kb` / `diagnose_athlete` |
 | `extraction_jobs` | `TRAINING`（固定） | `extract_kb`（固定） |
-| `video_preprocessing_jobs` | `TRAINING`（固定） | `preprocess_video`（固定） |
+| `video_preprocessing_jobs` | **`CONTENT_PREP`**（F-022 后从 TRAINING 重归属） | `preprocess_video`（固定） |
 | `tech_knowledge_bases` | `STANDARDIZATION`（固定） | `kb_version_activate`（固定） |
 
 - **派生单一事实来源**：`src/models/_phase_step_hook.py` 注册 SQLAlchemy `before_insert` 事件 → 新行自动派生两列；未知 `task_type` 或只传入单列 ⇒ `ValueError(PHASE_STEP_UNMAPPED)`（fail-fast）
-- **DB 级兜底**：迁移 0016 将两列设为 `NOT NULL`；PostgreSQL enum type `business_phase_enum`（`TRAINING` / `STANDARDIZATION` / `INFERENCE`）限制取值
+- **DB 级兜底**：迁移 0016 将两列设为 `NOT NULL`；PostgreSQL enum type `business_phase_enum` 限制取值，Feature-022 迁移 0021 扩展取值加入 **`CONTENT_PREP`**（四阶段）
 - **索引**：`analysis_tasks` 上建 `(business_phase, business_step)` 复合索引，`extraction_jobs` 上建 `(business_phase)` 单列索引，加速总览接口聚合
 - **禁止手填**：业务代码 MUST NOT 手动设置 `business_phase` / `business_step`，统一由 ORM 钩子派生
 
@@ -230,7 +267,7 @@ pending → processing → success
 > FastAPI 默认 404 `NOT_FOUND`。
 > 详见 `docs/api-standardization-guide.md` 与 `specs/017-api-standardization/contracts/`。
 
-### 路由模块（Feature-017 后的保留清单 + Feature-020 新增，15 个业务路由）
+### 路由模块（Feature-017 后的保留清单 + Feature-020/021/022 新增，17 个业务路由）
 
 | 前缀 | 文件 | 主要功能 |
 |------|------|---------|
@@ -249,6 +286,9 @@ pending → processing → success
 | `/api/v1/athlete-classifications` | `athlete_classifications.py` | **运动员视频素材扫描/清单（Feature-020 US1）。与 `/classifications` 双表物理隔离** |
 | `/api/v1/tasks/athlete-preprocessing/batch` · `/tasks/athlete-diagnosis/batch` | `athlete_tasks.py` | **运动员批量预处理/诊断入口（Feature-020 US2/US3）** |
 | `/api/v1/diagnosis-reports` | `diagnosis_reports.py` | **诊断报告聚合查询（Feature-020 US5，9 维度过滤 + 排序 + 分页）** |
+| `/api/v1/curation-jobs` | `curation_jobs.py` | **内容清洗作业详情 + 逐分段人工覆盖（Feature-021 US3/US4）** |
+| `/api/v1/content-reviews` | `content_reviews.py` | **内容审核工作台（Feature-022 US3）：列表 / 详情 / 判决提交 / 统计；驱动 `coach_video_classifications` 上的 4 状态审核机** |
+| `/api/v1/admin/review-gate` | `admin.py` | **审核门全局热开关（Feature-022 US4）：GET / PATCH；30s 级熔断、切回严格不留遗留豁免（SC-007）** |
 
 **已下线模块**：`videos.py`（并入 `classifications.py`）、`diagnosis.py`（同步诊断并入 `tasks.py` 异步通道）。下线采用直接物理删除策略（章程 v2.0.0 原则 IV + IX），不保留哨兵路由或台账文件。
 
@@ -287,7 +327,7 @@ pending → processing → success
 
 失败统一抛 `AppException(INVALID_ENUM_VALUE)`，`details` 含 `field` / `value` / `allowed` 三元组。
 
-### 错误码集中化（38 个 ErrorCode 枚举）
+### 错误码集中化（42 个 ErrorCode 枚举）
 
 定义位置：`src/api/errors.py::ErrorCode`，按以下分组：
 
@@ -296,7 +336,7 @@ pending → processing → success
 | 通用 | 6 | `VALIDATION_FAILED` / `NOT_FOUND` / `INTERNAL_ERROR` |
 | 认证 | 2 | `ADMIN_TOKEN_INVALID` |
 | 资源不存在 | 6 | `TASK_NOT_FOUND` / `COACH_NOT_FOUND` / `TIP_NOT_FOUND` |
-| 状态/业务约束 | 18 | `TASK_NOT_READY` / `COACH_INACTIVE` / `KB_VERSION_NOT_DRAFT` |
+| 状态/业务约束 | 22 | `TASK_NOT_READY` / `COACH_INACTIVE` / `KB_VERSION_NOT_DRAFT` / `CURATION_REQUIRED` / **`CONTENT_NOT_REVIEWED`** / **`CONTENT_REVIEW_REJECTED`** / **`CONTENT_REVIEW_STALE`** / **`REVIEW_VERSION_CONFLICT`**（F-022 新增四个）|
 | 容量/队列 | 2 | `CHANNEL_QUEUE_FULL` / `CHANNEL_DISABLED` |
 | 上游依赖 | 4 | `LLM_UPSTREAM_FAILED` / `COS_UPSTREAM_FAILED` |
 
@@ -373,6 +413,7 @@ pending → processing → success
 | `cleanup_expired_tasks` | `housekeeping_task.py` | 周期性清理过期任务（beat 驱动） |
 | `cleanup_intermediate_artifacts` | `housekeeping_task.py` | 清理 KB 提取 / 预处理本地中间结果（每小时 beat） |
 | `sweep_orphan_jobs` | `housekeeping_task.py` | 每 5 分钟 beat 回收卡死的 running/processing 任务（`analysis_tasks` / `video_preprocessing_jobs` / `extraction_jobs` / `pipeline_steps`） |
+| `cleanup_pending_backlog` | `housekeeping_task.py` | **每小时 beat 巡检内容审核积压（Feature-022）：`coach_video_classifications.pending_since < now() - settings.review_pending_red_line_hours`（默认 24h）命中即写 ERROR 级结构化日志触发 SRE 告警；不阻塞业务流程** |
 
 ### 限流与提交保护
 

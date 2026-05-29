@@ -27,6 +27,8 @@ from src.api.routers.business_workflow import router as business_workflow_router
 # Feature-021 — 视频内容清洗
 from src.api.routers.curation_jobs import router as curation_jobs_router
 from src.api.routers.curation_stats import router as curation_stats_router
+# Feature-022 — 内容审核工作台
+from src.api.routers.content_reviews import router as content_reviews_router
 # Import celery_app so it registers as the default Celery app for @shared_task
 from src.workers.celery_app import celery_app as _celery_app  # noqa: F401
 
@@ -127,6 +129,8 @@ def create_app() -> FastAPI:
     app.include_router(curation_jobs_router, prefix="/api/v1")
     # Feature-021 US5 — 聚合统计观测（GET /curation-stats）
     app.include_router(curation_stats_router, prefix="/api/v1")
+    # Feature-022 — 内容审核工作台（5 EP：GET/POST /content-reviews* + GET/PATCH /admin/review-gate）
+    app.include_router(content_reviews_router, prefix="/api/v1")
 
     @app.get("/health")
     async def health():
