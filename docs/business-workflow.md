@@ -1,7 +1,7 @@
 
 # 业务执行流程规范
 
-> 最后更新：2026-05-28
+> 最后更新：2026-05-29
 >
 > 本文档抽象项目的核心业务为**四阶段九步骤**执行模型（Feature-022 从三阶段趋升级），明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆与调度图。
 >
@@ -82,7 +82,7 @@ flowchart LR
 | 2 | **preprocess_video** | 批量提交 `POST /api/v1/tasks type=video_preprocessing` | `preprocessing` | 3 | `coach_video_classifications` 存在 | 标准化 mp4 + N×180s 分片（COS）+ 16k mono WAV | `video_preprocessing_jobs` + `video_preprocessing_segments` |
 | 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `tech_category` 字段落定（21 类之一） | `analysis_tasks(task_type=video_classification)` |
 | 4 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `tech_category` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
-| 5 | **content_review**（Feature-022） | `POST /api/v1/content-reviews/{cvclf_id}/decide` | —（同步人工决策路径） | — | `video_curation_jobs.status=success`；cvclf 本身 `review_state IN ('pending_review', 'stale')` | `coach_video_classifications.review_state` 转为 `approved` / `rejected`；`content_review_decisions` 新增一行决策留痕 | `coach_video_classifications` + `content_review_decisions` |
+| 5 | **content_review**（Feature-022） | `POST /api/v1/content-reviews/{cvclf_id}/decisions` | —（同步人工决策路径） | — | `video_curation_jobs.status=success`；cvclf 本身 `review_state IN ('pending_review', 'stale')` | `coach_video_classifications.review_state` 转为 `approved` / `rejected`；`content_review_decisions` 新增一行决策留痕 | `coach_video_classifications` + `content_review_decisions` |
 
 > **队列复用说明（Feature-020 + Feature-021）**：`default` / `preprocessing` / `diagnosis` 三个队列**同时被 INFERENCE 阶段的运动员侧三步骤复用**（§ 5.1 步骤 8a/8b/8 共用队列）；Feature-021 的 `curate_segments` 步骤同样**复用 `default` 队列**（与 `scan_cos_videos` / `housekeeping` / `cleanup_*` / `sweep_orphan_jobs` 同列），不新增 Celery 队列、不新增 worker。各侧通过 `analysis_tasks.business_phase` 与独立的 `task_type` 枚举值区分任务来源，`task_channel_configs` 容量/并发配置统一生效。
 >
@@ -175,7 +175,7 @@ wave4:  merge_kb
 | `cleansing_version INTEGER` | 单调递增计数；curate 路径递进后旧审核结论自动 `stale`（FR-011） |
 | `pending_since TIMESTAMP` | 进入 `pending_review` 时间戳，驱动积压告警 + p95 指标 |
 | `review_version INTEGER` | 决策乐观锁版本号，防并发覆写 |
-| `last_review_decision_id UUID` | 反向指针 → `content_review_decisions` 表最新决策行 |
+| `last_decision_id UUID` | 反向指针 → `content_review_decisions` 表最新决策行 |
 
 **决策留痕**（新表 `content_review_decisions`）：`reviewer_id` / `decision` / `reason_code` / `note` / `decided_at` / `cleansing_version`；拒绝条目 DB 行**永久保留** + COS 文件不同步删除（澄清 Q5）；审核工作台默认列表过滤 `rejected`，但支持 `?state=rejected` 显式查看。
 

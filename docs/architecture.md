@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-05-28 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付
+> 最后更新：2026-05-29 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付（含激进收尾：索引命名对齐 + EP-4 stats tz-aware 兼容）
 ## 目录
 
 - [系统概述](#系统概述)
@@ -150,7 +150,7 @@ INFERENCE：   diagnose_athlete（不变）
 | `cleansing_version INTEGER` | 单调递增的清洗版本计数；curate 路径递进后旧审核结论自动 `stale` |
 | `pending_since TIMESTAMP` | 进入 `pending_review` 时间戳，驱动积压告警 + p95 指标 |
 | `review_version INTEGER` | 决策乐观锁版本号（防并发覆写） |
-| `last_review_decision_id UUID` | 反向指针 → `content_review_decisions` 表最新决策行 |
+| `last_decision_id UUID` | 反向指针 → `content_review_decisions` 表最新决策行 |
 
 审核门两层闸门：
 1. **路由层**：`POST /tasks/kb-extraction` 提交时读 `review_state`，出现三状态仅 409 拒绝（错误码 `CONTENT_NOT_REVIEWED` / `CONTENT_REVIEW_REJECTED` / `CONTENT_REVIEW_STALE`）
@@ -162,7 +162,7 @@ INFERENCE：   diagnose_athlete（不变）
 
 重新清洗对入队 / running KB 任务不级联中止（继续跑完落库）；仅新提交在入口被 `CONTENT_REVIEW_STALE` 拒绝（spec.md 澄清 Q3）。
 
-人工审核走 `POST /api/v1/content-reviews/{cvclf_id}/decide`（`expected_review_version` 乐观锁）；每次决策在 `content_review_decisions` 表留痕（`reviewer_id` / `decision` / `reason_code` / `note` / `decided_at` / `cleansing_version`）。拒绝条目 DB 行永久保留 + COS 文件不同步删除（澄清 Q5）。
+人工审核走 `POST /api/v1/content-reviews/{cvclf_id}/decisions`（`expected_review_version` 乐观锁）；每次决策在 `content_review_decisions` 表留痕（`reviewer_id` / `decision` / `reason_code` / `note` / `decided_at` / `cleansing_version`）。拒绝条目 DB 行永久保留 + COS 文件不同步删除（澄清 Q5）。
 
 积压告警：housekeeping `cleanup_pending_backlog` beat 每小时一次，扫 `pending_since < now() - settings.review_pending_red_line_hours`（默认 24h），命中即写 ERROR 级结构化日志（`metric=content_review_backlog_alert` + `alert.severity=high`）；不阻塞业务流程。
 

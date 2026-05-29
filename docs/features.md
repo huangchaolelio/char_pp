@@ -1,6 +1,6 @@
 # 产品功能文档
 
-> 最后更新：2026-05-28 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付
+> 最后更新：2026-05-29 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付（含激进收尾：索引命名对齐 + EP-4 stats tz-aware 兼容）
 
 ## 目录
 
@@ -1197,7 +1197,7 @@ CONTENT_PREP（新阶段）：scan_cos_videos → preprocess_video → classify_
 |------|------|------|
 | `GET` | `/api/v1/content-reviews` | 审核工作台列表（按 `state` / `coach_name` / `tech_category` / `decided_after` / `decided_before` 筛选；page_size ≤ 50 时 P95 < 500 ms，page_size = 100 时 P95 < 1s）|
 | `GET` | `/api/v1/content-reviews/{cvclf_id}` | 审核详情（含决策历史 + 当前清洗版本）|
-| `POST` | `/api/v1/content-reviews/{cvclf_id}/decide` | 提交审核决策（`decision` ∈ `approved`/`rejected`，`reason_code` 拒绝必填，`expected_review_version` 乐观锁）|
+| `POST` | `/api/v1/content-reviews/{cvclf_id}/decisions` | 提交审核决策（`decision` ∈ `approved`/`rejected`，`reason_code` 拒绝必填，`expected_review_version` 乐观锁）|
 | `GET` | `/api/v1/content-reviews/stats` | 审核统计（按时间窗：总量 / 通过率 / 平均时延 / 人均吞吐）|
 | `GET` | `/api/v1/admin/review-gate` | 查询审核门当前状态（`enabled` / `last_toggled_at` / `last_toggled_by`）|
 | `PATCH` | `/api/v1/admin/review-gate` | 切换审核门（`enabled=false` 应急绕过；30s 内全局热生效）|
@@ -1218,7 +1218,7 @@ CONTENT_PREP（新阶段）：scan_cos_videos → preprocess_video → classify_
   - `cleansing_version INTEGER` — 单调递增计数（清洗版本号），用于审核失效判定
   - `pending_since TIMESTAMP` — 进入 `pending_review` 时间戳，驱动积压告警 + p95 指标
   - `review_version INTEGER` — 决策乐观锁版本号
-  - `last_review_decision_id UUID` — 反向指针指向 `content_review_decisions.id`（最新决策）
+  - `last_decision_id UUID` — 反向指针指向 `content_review_decisions.id`（最新决策）
 - `coach_video_classifications` 新增 3 个复合索引：
   - `(review_state, decided_at DESC)` — 驱动「待审核列表 / 已审核历史」主路径
   - `(coach_id, review_state)` — 驱动按教练过滤的列表
