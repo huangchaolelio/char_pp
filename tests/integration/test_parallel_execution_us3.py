@@ -103,24 +103,19 @@ async def seeded_kb_task(session_factory):
             )
         ).scalars().all()
         if job_ids:
-            versions = (
-                await session.execute(
-select(ExpertTechPoint.kb_version)
-                    .where(ExpertTechPoint.source_video_id == task_id)
-                    .distinct()
-                )
-            ).scalars().all()
+            # 删除依赖 ExtractionJob 的 ExpertTechPoint
             await session.execute(
                 delete(ExpertTechPoint).where(
                     ExpertTechPoint.source_video_id == task_id
                 )
             )
-            if versions:
-                await session.execute(
-                    delete(TechKnowledgeBase).where(
-                        TechKnowledgeBase.version.in_(list(versions))
-                    )
+            # 删除 TechKnowledgeBase（FK ondelete=RESTRICT 阻止 ExtractionJob 被删，
+            # 必须先于 AnalysisTask 删除）—— 直接通过 extraction_job_id 定位
+            await session.execute(
+                delete(TechKnowledgeBase).where(
+                    TechKnowledgeBase.extraction_job_id.in_(job_ids)
                 )
+            )
         await session.execute(
             delete(AnalysisTask).where(AnalysisTask.id == task_id)
         )

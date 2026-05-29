@@ -31,6 +31,8 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from src.config import get_settings
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.coach_video_classification import CoachVideoClassification
+from src.models.extraction_job import ExtractionJob
+from src.models.tech_knowledge_base import TechKnowledgeBase
 from src.services.task_submission_service import (
     SubmissionInputItem,
     TaskSubmissionService,
@@ -54,9 +56,14 @@ def _fresh_session_factory():
 
 @pytest_asyncio.fixture(autouse=True)
 async def _cleanup():
-    """Clear analysis_tasks and related classification rows around each test."""
+    """Clear analysis_tasks and related classification rows around each test.
+
+    顺序重要：TechKnowledgeBase.extraction_job_id → ExtractionJob.id 是
+    ON DELETE RESTRICT。必须先清 TechKnowledgeBase，才能级联删 AnalysisTask → ExtractionJob。
+    """
     factory, engine = _fresh_session_factory()
     async with factory() as session:
+        await session.execute(delete(TechKnowledgeBase))
         await session.execute(delete(AnalysisTask))
         await session.execute(
             delete(CoachVideoClassification).where(
@@ -68,6 +75,7 @@ async def _cleanup():
     yield
     factory, engine = _fresh_session_factory()
     async with factory() as session:
+        await session.execute(delete(TechKnowledgeBase))
         await session.execute(delete(AnalysisTask))
         await session.execute(
             delete(CoachVideoClassification).where(
