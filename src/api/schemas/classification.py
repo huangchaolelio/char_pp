@@ -1,6 +1,7 @@
 """Pydantic schemas for classification API requests and responses.
 
-Aligned with contracts/api.md (Feature 008).
+Feature-023: 移除 tech_category 字段，新增 category_l1/l2/l3/action 四级字段；
+PATCH 请求体也对应改为四元组（必须命中 tech_actions 字典 56 行之一）。
 """
 
 from __future__ import annotations
@@ -23,7 +24,15 @@ class ScanRequest(BaseModel):
 
 
 class ClassificationPatchRequest(BaseModel):
-    tech_category: str = Field(..., description="新的主技术类别 ID（需为有效枚举值）")
+    """Feature-023: PATCH 请求体改为四级字段 + action.
+
+    四元组必须命中 tech_actions 字典；非法值返回 400 ACTION_DICTIONARY_VIOLATION.
+    """
+
+    category_l1: str = Field(..., description="握拍方式（如 横拍）")
+    category_l2: str = Field(..., description="胶皮类型（如 反胶）")
+    category_l3: str = Field(..., description="手部技术·技术大类（如 正手·进攻）")
+    action: str = Field(..., description="具体动作名（56 行字典之一）")
     tech_tags: Optional[list[str]] = Field(
         None, description="副技术标签，默认保留原值"
     )
@@ -44,12 +53,17 @@ class ScanStatusResponse(BaseModel):
 
 
 class ClassificationItem(BaseModel):
+    """Feature-023: tech_category → category_l1/l2/l3/action（四级 NULLABLE）."""
+
     id: UUID
     coach_name: str
     course_series: str
     cos_object_key: str
     filename: str
-    tech_category: str
+    category_l1: Optional[str] = None
+    category_l2: Optional[str] = None
+    category_l3: Optional[str] = None
+    action: Optional[str] = None
     tech_tags: list[str]
     raw_tech_desc: Optional[str]
     classification_source: str
@@ -63,8 +77,9 @@ class ClassificationItem(BaseModel):
 
 
 class TechBreakdownItem(BaseModel):
-    tech_category: str
-    label: str
+    """Feature-023: tech_category → action 聚合维度."""
+
+    action: str
     count: int
     kb_extracted: int
 
@@ -82,7 +97,10 @@ class ClassificationSummaryResponse(BaseModel):
 
 class ClassificationPatchResponse(BaseModel):
     id: UUID
-    tech_category: str
+    category_l1: Optional[str] = None
+    category_l2: Optional[str] = None
+    category_l3: Optional[str] = None
+    action: str
     tech_tags: list[str]
     classification_source: str
     confidence: float

@@ -72,12 +72,12 @@ async def create_draft_version(
             await session.execute(
                 select(
                     func.coalesce(func.max(TechKnowledgeBase.version), 0) + 1
-                ).where(TechKnowledgeBase.tech_category == tech_category)
+                ).where(TechKnowledgeBase.action == tech_category)
             )
         ).scalar_one()
 
         kb = TechKnowledgeBase(
-            tech_category=tech_category,
+            action=tech_category,  # Feature-023: ORM 字段已 rename 为 action
             version=int(next_v),
             status=KBStatus.draft,
             point_count=point_count,
@@ -171,7 +171,7 @@ async def approve_version(
     conflict_count = (
         await session.execute(
             select(func.count(ExpertTechPoint.id)).where(
-                ExpertTechPoint.kb_tech_category == tech_category,
+                ExpertTechPoint.kb_action == tech_category,
                 ExpertTechPoint.kb_version == version,
                 ExpertTechPoint.conflict_flag.is_(True),
             )
@@ -191,7 +191,7 @@ async def approve_version(
     previous_active = (
         await session.execute(
             select(TechKnowledgeBase).where(
-                TechKnowledgeBase.tech_category == tech_category,
+                TechKnowledgeBase.action == tech_category,
                 TechKnowledgeBase.status == KBStatus.active,
             )
         )
@@ -240,7 +240,7 @@ async def get_active_version(
     """Return the currently active KB for the given tech_category, or None."""
     result = await session.execute(
         select(TechKnowledgeBase).where(
-            TechKnowledgeBase.tech_category == tech_category,
+            TechKnowledgeBase.action == tech_category,
             TechKnowledgeBase.status == KBStatus.active,
         )
     )
@@ -270,7 +270,7 @@ async def list_versions(
     """
     base_where = []
     if tech_category is not None:
-        base_where.append(TechKnowledgeBase.tech_category == tech_category)
+        base_where.append(TechKnowledgeBase.action == tech_category)
     if status is not None:
         base_where.append(TechKnowledgeBase.status == KBStatus(status))
     if extraction_job_id is not None:
@@ -287,7 +287,7 @@ async def list_versions(
     data_stmt = (
         select(TechKnowledgeBase)
         .order_by(
-            TechKnowledgeBase.tech_category.asc(),
+            TechKnowledgeBase.action.asc(),
             TechKnowledgeBase.version.desc(),
         )
         .offset(offset)
@@ -319,7 +319,7 @@ async def get_version_detail(
                 ExpertTechPoint.conflict_flag.is_(True)
             ),
         ).where(
-            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_action == tech_category,
             ExpertTechPoint.kb_version == version,
         )
     )
@@ -328,7 +328,7 @@ async def get_version_detail(
     dims_result = await session.execute(
         select(ExpertTechPoint.dimension)
         .where(
-            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_action == tech_category,
             ExpertTechPoint.kb_version == version,
         )
         .distinct()
@@ -351,7 +351,7 @@ async def get_tech_points(
     """Return all ExpertTechPoints for a given (tech_category, version) KB record."""
     result = await session.execute(
         select(ExpertTechPoint).where(
-            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_action == tech_category,
             ExpertTechPoint.kb_version == version,
         )
     )
@@ -365,6 +365,6 @@ async def list_kbs_for_extraction_job(
     result = await session.execute(
         select(TechKnowledgeBase)
         .where(TechKnowledgeBase.extraction_job_id == extraction_job_id)
-        .order_by(TechKnowledgeBase.tech_category.asc())
+        .order_by(TechKnowledgeBase.action.asc())
     )
     return list(result.scalars().all())

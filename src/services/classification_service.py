@@ -67,10 +67,10 @@ class ClassificationService:
         filename = _filename_from_key(cos_object_key)
         course_series = _course_series_from_key(cos_object_key)
 
-        result: ClassificationResult = self._classifier.classify(filename, course_series)
+        result: ClassificationResult = await self._classifier.classify(filename, course_series)
         logger.info(
-            "classify_single_video: key=%s → category=%s source=%s conf=%.2f",
-            cos_object_key, result.tech_category, result.classification_source,
+            "classify_single_video: key=%s → action=%s source=%s conf=%.2f",
+            cos_object_key, result.action, result.classification_source,
             result.confidence,
         )
 
@@ -84,7 +84,10 @@ class ClassificationService:
         ).scalar_one_or_none()
 
         if existing is not None:
-            existing.tech_category = result.tech_category
+            existing.category_l1 = result.category_l1
+            existing.category_l2 = result.category_l2
+            existing.category_l3 = result.category_l3
+            existing.action = result.action
             existing.tech_tags = result.tech_tags or []
             existing.raw_tech_desc = result.raw_tech_desc
             existing.classification_source = result.classification_source
@@ -101,7 +104,10 @@ class ClassificationService:
                     course_series=course_series or "unknown",
                     cos_object_key=cos_object_key,
                     filename=filename,
-                    tech_category=result.tech_category,
+                    category_l1=result.category_l1,
+                    category_l2=result.category_l2,
+                    category_l3=result.category_l3,
+                    action=result.action,
                     tech_tags=result.tech_tags or [],
                     raw_tech_desc=result.raw_tech_desc,
                     classification_source=result.classification_source,
@@ -114,4 +120,4 @@ class ClassificationService:
             )
 
         await session.commit()
-        return result.tech_category
+        return result.action

@@ -53,10 +53,14 @@ class TeachingTip(Base):
         nullable=True,
     )
 
-    # Feature-019 新列
-    tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
-    kb_tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Feature-023 新列（rename from 原 tech_category / kb_tech_category）
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_action: Mapped[str] = mapped_column(String(64), nullable=False)
     kb_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Feature-023 三级分类字段（与字典外键匹配）
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[TipStatus] = mapped_column(
         Enum(TipStatus, name="tip_status_enum", create_type=False),
         nullable=False,
@@ -93,10 +97,23 @@ class TeachingTip(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["kb_tech_category", "kb_version"],
-            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ["kb_action", "kb_version"],
+            ["tech_knowledge_bases.action", "tech_knowledge_bases.version"],
             ondelete="CASCADE",
             name="fk_teaching_tips_kb",
+        ),
+        # Feature-023 复合外键 → tech_actions 字典
+        ForeignKeyConstraint(
+            ["category_l1", "category_l2", "category_l3", "action"],
+            [
+                "tech_actions.category_l1",
+                "tech_actions.category_l2",
+                "tech_actions.category_l3",
+                "tech_actions.action",
+            ],
+            onupdate="CASCADE",
+            ondelete="RESTRICT",
+            name="fk_tt_action",
         ),
         CheckConstraint(
             "confidence >= 0.0 AND confidence <= 1.0",
@@ -107,8 +124,8 @@ class TeachingTip(Base):
             name="ck_teaching_tip_source_type",
         ),
         Index("ix_teaching_tips_task_id", "task_id"),
-        Index("ix_teaching_tips_tech_category", "tech_category"),
+        Index("ix_teaching_tips_action", "action"),
         Index("ix_teaching_tips_status", "status"),
-        Index("ix_teaching_tips_kb", "kb_tech_category", "kb_version"),
+        Index("ix_teaching_tips_kb", "kb_action", "kb_version"),
         Index("ix_teaching_tips_source_type", "source_type"),
     )

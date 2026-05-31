@@ -192,6 +192,9 @@ async def execute(
             "param_ideal": float(param_ideal),
             "unit": str(getattr(seg, "unit", "") or ""),
             "extraction_confidence": conf,
+            # Feature-023: action_type → action（字典中的具体动作名）
+            "action": job.tech_category,
+            # 保留 action_type 别名一段过渡期，merger 依然读取
             "action_type": job.tech_category,
             "source_type": "audio",
             "raw_text_span": getattr(seg, "source_sentence", None),

@@ -1,6 +1,6 @@
 # 产品功能文档
 
-> 最后更新：2026-05-29 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付（含激进收尾：索引命名对齐 + EP-4 stats tz-aware 兼容）
+> 最后更新：2026-05-31 · Feature-023 技术分类体系重构（V2 字典 56 行 / 全局 `tech_category` → `action` 列名重命名 / 启发式 lower bound 基线已落地）
 
 ## 目录
 
@@ -1272,5 +1272,77 @@ CONTENT_PREP（新阶段）：scan_cos_videos → preprocess_video → classify_
 - **原则 IV**（接口下线物理删除）：本 Feature 0 接口下线，仅新增
 - **原则 IX**（错误码集中化）：4 个新错误码同步 `src/api/errors.py` 三张映射表（`ErrorCode` / `ERROR_STATUS_MAP` / `ERROR_DEFAULT_MESSAGE`）
 - **原则 X**（业务工作流对齐）：`docs/business-workflow.md` § 1 概述 / § 2 阶段全景图（三阶段 → 四阶段）/ § 3 阶段一·内容准备 / § 7.4 错误码表 / § 10 回滚剧本（新增审核门绕过）/ § 11 交叉索引六处同步；`docs/.specify/memory/constitution.md` 措辞修订为四阶段
-- **原则 XI**（测试阶段宽松）：不做存量数据回填脚本；存量按默认 `pending_review` 进入新流程
+- **原则 XI**（测试阶段宽松）：不做存量数据回填脚本；存量按默认 `pending_review`
+ 进入新流程
+
+---
+
+## Feature-023 技术分类体系重构（21 类 → 56 行 V2 字典 / 全局列名重命名）
+
+**状态**：已交付 (2026-05-31)
+**核心问题**：旧 21 类 `TECH_CATEGORIES` 枚举为单一字符串字面量，缺乏层级结构、扩展能力差、字典口径与代码字面量两份事实来源；分类准确率被 21 类的粗粒度桶位拉低（实测 70%），无法满足 SC-002 ≥ 85% 目标。
+**目标**：以严格四级（`grip_style / hand_side / stroke_phase / action`）+ 字典强约束（`tech_actions` 56 行 v2）作为单一事实来源，物理删除旧 21 类枚举与 `tech_category` 列，全局重命名为 `action` / `kb_action`。
+
+### 核心交付（仅口径重建，业务流程零改动）
+
+| 子项 | 说明 |
+|------|------|
+| **数据字典 56 行 V2** | `tech_actions` 表：`(category_l1, category_l2, category_l3, action)` 四级唯一键；本期仅 seed 横拍·反胶子集（44 个 action × 5 个 L3 桶 = 56 行）；直拍位预留 |
+| **全局列名重命名** | 7 张业务表统一：`tech_category` → `action`（多列另增 `category_l1/l2/l3`）；4 张子表 FK 列：`kb_tech_category` → `kb_action`；`tech_knowledge_bases` 复合 PK 重命名为 `(action, version)`；partial unique index `uq_tech_kb_active_per_action` |
+| **TechClassifier V2** | `src/services/tech_classifier.py` 重写：规则层 + LLM 兜底两层，LLM 出参强制落 `tech_actions` 字典 enum 块；`confidence < 0.5` 强制降级 `unclassified`；旧 `TECH_CATEGORIES` 物理删除 |
+| **启发式 lower bound 评估** | T071 阶段一：`scripts/build_heuristic_eval_set.py` 生成 100 条强信号样本 → top-1=65% / L3=79% / L1=99%（lower bound，标签噪声 ~14%；目检估算真实 ≈ 88%）；阶段二待人工标注 |
+| **Feature-021 上位实现** | `docs/feature-021-proposal.md` 顶部加状态注释；021 的 V2 兼容方案被 023 直接物理替换，无需保留 |
+
+### 主要 API 影响（直接物理替换，无兼容层）
+
+| 接口 | 变化 | 说明 |
+|------|------|------|
+| `GET /api/v1/classifications` | `tech_category` 查询参数 → `action` | 统一为字典枚举值，旧字面量入参返回 `INVALID_ENUM_VALUE` |
+| `POST /api/v1/standards/build` | 必填 `action`（旧 `tech_category`）| `tech_standards` 表也已迁移 |
+| `GET /api/v1/knowledge-base/versions/{action}/{version}` | 路径参数重命名 | KB 复合主键改为 `(action, version)` |
+| `GET /api/v1/athlete-classifications` | 复合筛选 `tech_category` → `action` | Feature-020 路由同步迁移 |
+
+> **章程原则 IV（接口下线物理删除）合规**：旧 `tech_category` 路径与查询参数直接物理替换，不保留哨兵或兼容字段；调用旧名一律 422 / 404。
+
+### 数据迁移
+
+- `0022_tech_taxonomy_rebuild`（一次性原子迁移）
+  - Step 1：CREATE `tech_actions` 字典 + seed 56 行（来源：`contracts/tech-actions-seed.csv`）
+  - Step 2-3：DROP 5 张子表外键到 `tech_knowledge_bases`
+  - Step 4-5：`coach_video_classifications` / `video_classifications` DROP 旧 `tech_category` + 索引 + ADD 4 级字段 + 复合 FK + 重建 4 个索引
+  - Step 6：`tech_knowledge_bases` PK 重命名 + 5 列改造 + partial unique index
+  - Step 7-12：`expert_points` / `tech_standards` / `teaching_tips` / `analysis_tasks` / `reference_videos` 子表 `kb_tech_category` → `kb_action` rename + 重建复合 FK
+- 系统未上线，**未保留 downgrade 路径**（章程 v2.0.0 原则 IV）；如需回退须从 `0021` 重新升级
+
+### 验收（Success Criteria）
+
+| ID | 指标 | 状态 |
+|----|------|------|
+| SC-001 | 分类四级口径单一事实来源（`tech_actions` 字典 + ORM 与配置不再出现字面量） | ✅ 达成（`grep` 验证 `TECH_CATEGORIES` / 旧 `tech_category` 字面量在源码中清零，仅在 docs 历史段保留） |
+| SC-002 | top-1 action accuracy ≥ 85%（人工标注集） | 🟡 阶段一启发式 lower bound 65%（标签噪声拉低，估算真实 ≈ 88%）；阶段二人工标注待业务专家排期 |
+| SC-003 | LLM 兜底输出 100% 落字典 | ✅ JSON mode + `enum` 块强约束 + 字典校验，违反一律 fallback `unclassified` |
+| SC-004 | Feature-019 / 020 / 021 / 022 既有测试零回归 | ✅ `pytest tests/` 841 passed / 65 skipped / 0 failed |
+| SC-005 | 字段重命名零 schema 漂移 | ✅ 7 张表 + 4 张子表 + 5 个索引/约束统一重命名，alembic upgrade head 一次成功 |
+
+### 测试覆盖
+
+- **合约 + 集成**：`pytest tests/` 全套 841 PASSED / 65 SKIPPED / 0 FAILED（与 F-013 / F-019 / F-020 / F-021 / F-022 既有测试零回归）
+- **评估**：`specs/023-tech-classification-rebuild/scripts/eval_v2_accuracy.py` + 启发式 100 条评估集（`data/eval/tech_classification_v2_eval.csv`）；详细分析见 [`specs/023-tech-classification-rebuild/eval_results.md`](../specs/023-tech-classification-rebuild/eval_results.md)
+
+### 关键里程碑
+
+- **阶段 1-2 — 字典 + 迁移**（T001-T020）：`tech_actions` seed CSV + 0022 迁移落库
+- **阶段 3-4 — 分类器 V2**（T021-T050）：`TechClassifier` 重写 + 字典强约束 LLM prompt + 51 个单测
+- **阶段 5-6 — API + ORM 重命名**（T051-T070）：7 张业务表列改名 + 5 个路由参数重命名 + Feature-021 兼容方案废止
+- **阶段 7 — 全链路回归**（T074）：`pytest tests/` 全 GREEN 841 PASSED
+- **阶段 8 — 基线评估**（T071 阶段一 + T072 + T073，2026-05-31）：启发式 lower bound 100 条 + `eval_v2_accuracy.py` 跑通 + `docs/benchmarks/tech_classification_v2.md` 落地
+- **待排期**：T071 阶段二（人工标注 ground truth）+ T075（quickstart 真实 Worker 演练）
+
+### 章程合规
+
+- **原则 IV**（接口下线物理删除）：`tech_category` 字段与所有相关 API 路径/查询参数直接物理删除/重命名，不保留哨兵
+- **原则 VIII**（算法精度可观测）：`docs/benchmarks/tech_classification_v2.md` 基线文档 + `eval_v2_accuracy.py` 评估脚本 + `eval_results.md` 错例目检
+- **原则 IX**（错误码集中化）：本 Feature 0 新增错误码（沿用 `INVALID_ENUM_VALUE` / `VALIDATION_FAILED`）
+- **原则 X**（业务工作流对齐）：本次为字段级重命名，业务阶段 / 队列 / 状态机 / 错误码 / 评分公式均无变化，`business-workflow.md` 仅刷新顶部时间戳
+- **原则 XI**（测试阶段宽松）：未上线系统，迁移不保留 downgrade 路径
 

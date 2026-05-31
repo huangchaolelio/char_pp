@@ -15,7 +15,7 @@ paths: src/models/**/*.py, src/db/**/*.py
 | 表名 | 来源 | 维护者 | 说明 |
 |------|------|--------|------|
 | `video_classifications` | Feature-004 | `VideoClassifierService` + refresh API | yaml 规则分类，12 教练 |
-| `coach_video_classifications` | Feature-008 | `CosClassificationScanner` | COS 全量，21 类技术 + `kb_extracted` 字段 |
+| `coach_video_classifications` | Feature-008 / 023 | `CosClassificationScanner` | COS 全量，`action` / `action_id` 四元组（56 行 V2 字典） + `kb_extracted` 字段 |
 
 两表职责不同，**禁止合并**。
 
@@ -28,4 +28,4 @@ paths: src/models/**/*.py, src/db/**/*.py
 
 # 迁移版本
 
-当前最新迁移：`0013_kb_extraction_pipeline`（Feature-014，新增 `extraction_jobs` / `pipeline_steps` / `kb_conflicts` 三表 + `analysis_tasks.extraction_job_id` 列）。新增模型必须创建对应迁移文件后才能上线。
+当前最新迁移：`0022_tech_taxonomy_rebuild`（Feature-023，DROP 旧 `tech_category` 列、CREATE `tech_actions` 字典 + seed 56 行、为 7 张业务表 ADD `category_l1/l2/l3 + action` 四级字段 + 复合 FK、`tech_knowledge_bases` PK 重命名为 `(action, version)`、子表 FK 列 `kb_tech_category` 重命名为 `kb_action`）。新增模型必须创建对应迁移文件后才能上线。

@@ -37,6 +37,9 @@ from src.models.video_preprocessing_segment import VideoPreprocessingSegment
 from src.models.video_curation_job import VideoCurationJob
 from src.models.video_curation_segment_result import VideoCurationSegmentResult
 
+# Feature-023 技术分类体系重构 — 56 行字典表
+from src.models.tech_action import TechAction
+
 # Feature-018 — 所有 ORM 模型加载完毕后注册 before_insert 钩子
 # （自动派生 business_phase / business_step）
 from src.models._phase_step_hook import register_phase_step_hooks as _register_phase_step_hooks
@@ -90,4 +93,6 @@ __all__ = [
     # Feature-021
     "VideoCurationJob",
     "VideoCurationSegmentResult",
+    # Feature-023
+    "TechAction",
 ]

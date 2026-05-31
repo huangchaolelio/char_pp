@@ -85,9 +85,13 @@ class ExpertTechPoint(Base):
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
     )
-    # Feature-019: 原 `knowledge_base_version` 单列 FK → `(kb_tech_category, kb_version)` 复合 FK
-    kb_tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Feature-023: kb_tech_category → kb_action（复合 FK 到 tech_knowledge_bases (action, version)）
+    kb_action: Mapped[str] = mapped_column(String(64), nullable=False)
     kb_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Feature-023: 三级分类字段（与 CoachVideoClassification 一致）
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     action_type: Mapped[ActionType] = mapped_column(
         Enum(ActionType, name="action_type_enum"), nullable=False
     )
@@ -121,11 +125,9 @@ class ExpertTechPoint(Base):
     # JSONB detail when conflict_flag=True: {"visual": {...}, "audio": {...}, "diff_pct": 0.18}
     conflict_detail: Mapped[Optional[dict]] = mapped_column(JSONB, nullable=True)
 
-    # Feature 审计修复（迁移 0015 / 方案 C2）：
-    # 记录提交 KB 提取任务时的 tech_category（来自 extraction_jobs.tech_category），
-    # 与视觉分类器自行判定写入的 action_type 并存。
-    # 用途：当两者不一致时可以对账分析分类器偏差，但不阻断落库。
-    submitted_tech_category: Mapped[Optional[str]] = mapped_column(
+    # Feature 审计修复（迁移 0015 / 方案 C2）：Feature-023 重命名为 submitted_action.
+    # 记录提交 KB 提取任务时的 action，与视觉分类器自行判定写入的 action_type 并存。
+    submitted_action: Mapped[Optional[str]] = mapped_column(
         String(50), nullable=True
     )
 
@@ -149,18 +151,13 @@ class ExpertTechPoint(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["kb_tech_category", "kb_version"],
-            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ["kb_action", "kb_version"],
+            ["tech_knowledge_bases.action", "tech_knowledge_bases.version"],
             ondelete="CASCADE",
             name="fk_expert_tech_points_kb",
         ),
-        UniqueConstraint(
-            "kb_tech_category",
-            "kb_version",
-            "action_type",
-            "dimension",
-            name="uq_expert_point_kb_action_dim",
-        ),
+        # NOTE: uq_expert_point_kb_action_dim 历史上仅在 ORM 元数据声明，DB 中实际不存在
+        # （Feature-019 / Feature-023 均未通过迁移落库该约束）；此处保持与 DB 一致，不再声明
         CheckConstraint(
             "param_min <= param_ideal AND param_ideal <= param_max",
             name="ck_expert_point_param_range",

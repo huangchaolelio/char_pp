@@ -12,7 +12,7 @@ paths: src/api/**/*.py
 - 资源段使用 kebab-case 复数名词；动作型子路径使用 kebab-case 动词（如 `/refresh`、`/approve`、`/scan`）
 - 资源 ID 路径段统一使用 `{resource_id}` 形式（如 `{task_id}`、`{coach_id}`、`{tip_id}`），禁止无命名的 `{id}`
 - 分页参数统一：`page`（从 1 开始，默认 1）+ `page_size`（默认 20，最大 100）；越界返回 400 + `INVALID_PAGE_SIZE`，禁止静默截断；禁止 `limit`/`offset`/`skip`/`take`
-- 枚举型查询参数（如 `tech_category`、`status`、`task_type`）在服务端统一按小写下划线归一化；非法值返回 400 + `INVALID_ENUM_VALUE`，`details` 含合法取值列表
+- 枚举型查询参数（如 `action`、`status`、`task_type`）在服务端统一按小写下划线归一化；非法值返回 400 + `INVALID_ENUM_VALUE`，`details` 含合法取值列表
 
 ## 响应体统一信封（v2.0.0 强制）
 

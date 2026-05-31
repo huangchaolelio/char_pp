@@ -11,7 +11,7 @@
 基于计算机视觉 + 语音识别 + LLM 的乒乓球教学分析平台。核心能力：
 - 教练视频自动分析 → 提取技术要点 → 构建知识库
 - 运动员视频诊断 → 偏差计算 → AI 改进建议
-- COS 全量视频分类管理（1015 个视频，21 类技术）
+- COS 全量视频分类管理（1015 个视频，44 个 action / 56 行 V2 字典）
 
 ---
 
@@ -50,14 +50,14 @@ charhuang_pp_cn/
 │   │   └── orphan_recovery.py        # Worker 启动 sweep 孤儿任务 + 孤儿 pipeline_steps
 │   ├── db/
 │   │   ├── session.py            # async_session_factory
-│   │   └── migrations/           # Alembic 迁移（0001~0013）
+│   │   └── migrations/           # Alembic 迁移（0001~0022）
 │   ├── config/
-│   │   ├── video_classification.yaml  # 12 教练规则 + 21 类技术规则
+│   │   ├── video_classification.yaml  # 12 教练规则 + V2 技术字典接入点
 │   │   └── keywords/tech_hint_keywords.json
 │   └── config.py                 # Pydantic Settings（全局配置入口）
 ├── config/
 │   ├── coach_directory_map.json  # COS 目录名 → 教练姓名静态映射（20 条）
-│   └── tech_classification_rules.json  # 21 类技术关键词规则（顺序敏感）
+│   └── tech_classification_rules.json  # V2 keyword → action 规则（顺序敏感）
 ├── specs/                        # Feature 规范（001~014）
 ├── docs/
 │   ├── architecture.md           # 技术架构文档

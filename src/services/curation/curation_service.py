@@ -177,14 +177,14 @@ async def submit_curation(
             details={"resource_id": str(classification_id)},
         )
 
-    # 1) 必须已分类（tech_category != unclassified）
-    if not row.tech_category or row.tech_category == "unclassified":
+    # 1) 必须已分类（action != unclassified）
+    if not row.action or row.action == "unclassified":
         raise AppException(
             ErrorCode.CLASSIFICATION_REQUIRED,
             message="tech_category must be set before curation (got 'unclassified')",
             details={
                 "coach_video_classification_id": str(classification_id),
-                "current_tech_category": row.tech_category,
+                "current_tech_category": row.action,
             },
         )
 
@@ -578,7 +578,7 @@ async def run_curation_job(db: AsyncSession, job_id: uuid.UUID) -> str:
             )
         ).scalar_one_or_none()
         coach_name = cls_row.coach_name if cls_row else None
-        tech_category = cls_row.tech_category if cls_row else "unclassified"
+        tech_category = cls_row.action if cls_row else "unclassified"
 
         # 6) 逐分段决策
         decisions: list[DecisionResult] = []
@@ -1091,7 +1091,7 @@ async def aggregate_curation_stats(
         group_col = CoachVideoClassification.coach_name
         group_label = "coach_name"
     elif group_by == "tech_category":
-        group_col = CoachVideoClassification.tech_category
+        group_col = CoachVideoClassification.action
         group_label = "tech_category"
     else:  # rubric_version
         group_col = VideoCurationJob.curation_rubric_version
@@ -1119,7 +1119,7 @@ async def aggregate_curation_stats(
         join_stmt = join_stmt.where(CoachVideoClassification.coach_name == coach_name)
     if tech_category:
         join_stmt = join_stmt.where(
-            CoachVideoClassification.tech_category == tech_category
+            CoachVideoClassification.action == tech_category
         )
     if rubric_version:
         join_stmt = join_stmt.where(
@@ -1183,7 +1183,7 @@ async def aggregate_curation_stats(
         )
     if tech_category:
         seg_score_stmt = seg_score_stmt.where(
-            CoachVideoClassification.tech_category == tech_category
+            CoachVideoClassification.action == tech_category
         )
     if rubric_version:
         seg_score_stmt = seg_score_stmt.where(
@@ -1224,7 +1224,7 @@ async def aggregate_curation_stats(
             ov_stmt = ov_stmt.where(CoachVideoClassification.coach_name == coach_name)
         if tech_category:
             ov_stmt = ov_stmt.where(
-                CoachVideoClassification.tech_category == tech_category
+                CoachVideoClassification.action == tech_category
             )
         if rubric_version:
             ov_stmt = ov_stmt.where(

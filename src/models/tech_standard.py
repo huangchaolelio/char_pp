@@ -23,6 +23,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     Integer,
     String,
@@ -52,7 +53,11 @@ class TechStandard(Base):
     __tablename__ = "tech_standards"
 
     id: Mapped[int] = mapped_column(BigInteger, Identity(), primary_key=True)
-    tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Feature-023: tech_category → action，新增 三级字段（与字典外键匹配）
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     version: Mapped[int] = mapped_column(Integer, nullable=False, default=1)
     status: Mapped[StandardStatus] = mapped_column(
         String(16), nullable=False, default=StandardStatus.active
@@ -79,7 +84,20 @@ class TechStandard(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tech_category", "version", name="uq_ts_tech_version"),
+        UniqueConstraint("action", "version", name="uq_ts_action_version"),
+        # Feature-023 复合外键 → tech_actions 字典
+        ForeignKeyConstraint(
+            ["category_l1", "category_l2", "category_l3", "action"],
+            [
+                "tech_actions.category_l1",
+                "tech_actions.category_l2",
+                "tech_actions.category_l3",
+                "tech_actions.action",
+            ],
+            onupdate="CASCADE",
+            ondelete="RESTRICT",
+            name="fk_ts_action",
+        ),
         CheckConstraint("status IN ('active', 'archived')", name="ck_ts_status"),
         CheckConstraint(
             "source_quality IN ('multi_source', 'single_source')",
@@ -89,7 +107,7 @@ class TechStandard(Base):
 
     def __repr__(self) -> str:
         return (
-            f"<TechStandard tech_category={self.tech_category!r} "
+            f"<TechStandard action={self.action!r} "
             f"version={self.version} status={self.status}>"
         )
 

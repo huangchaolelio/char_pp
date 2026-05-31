@@ -81,7 +81,7 @@ def _to_review_item(
     return ContentReviewItem(
         id=cvclf.id,
         coach_name=cvclf.coach_name,
-        tech_category=cvclf.tech_category,
+        tech_category=cvclf.action or "unclassified",  # Feature-023: ORM 字段 tech_category → action; schema 兼容字段名保留
         cos_object_key=cvclf.cos_object_key,
         filename=cvclf.filename,
         review_state=ReviewState(cvclf.review_state),
@@ -173,7 +173,7 @@ async def list_reviews(
         conds.append(CoachVideoClassification.coach_name == filters.coach_name)
     if filters.tech_category:
         conds.append(
-            CoachVideoClassification.tech_category == filters.tech_category
+            CoachVideoClassification.action == filters.tech_category
         )
     if filters.from_:
         conds.append(CoachVideoClassification.created_at >= filters.from_)

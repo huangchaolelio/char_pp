@@ -151,6 +151,29 @@ class CosClassificationScanner:
         """Return bio string for a coach, derived from their COS directory names."""
         return self._coach_bio_map.get(coach_name)
 
+    async def _has_existing_preprocessing(
+        self, session: AsyncSession, cos_object_key: str
+    ) -> bool:
+        """Feature-023 FR-008: 反查 video_preprocessing_jobs，命中 success 记录则复用.
+
+        若 cos_object_key 已有 status='success' 的预处理作业，新建分类记录时
+        直接置 preprocessed=True，避免重复触发预处理。
+        """
+        from src.models.video_preprocessing_job import (
+            PreprocessingJobStatus,
+            VideoPreprocessingJob,
+        )
+
+        existing = (
+            await session.execute(
+                select(VideoPreprocessingJob.id).where(
+                    VideoPreprocessingJob.cos_object_key == cos_object_key,
+                    VideoPreprocessingJob.status == PreprocessingJobStatus.success,
+                )
+            )
+        ).scalar_one_or_none()
+        return existing is not None
+
     async def _upsert_coach(self, session: AsyncSession, coach_name: str) -> None:
         """Insert or update coach in coaches table (match by name).
 
@@ -201,7 +224,7 @@ class CosClassificationScanner:
             coach_name, name_source = self._get_coach_name(course_series)
 
             try:
-                clf = self._classifier.classify(filename, course_series)
+                clf = await self._classifier.classify(filename, course_series)
             except Exception as exc:
                 logger.error("Classification error for %s: %s", cos_key, exc)
                 stats.errors += 1
@@ -228,7 +251,11 @@ class CosClassificationScanner:
                         existing.coach_name = coach_name
                         existing.course_series = course_series
                         existing.filename = filename
-                        existing.tech_category = clf.tech_category
+                        # Feature-023: 4 级字段代替旧 tech_category
+                        existing.category_l1 = clf.category_l1
+                        existing.category_l2 = clf.category_l2
+                        existing.category_l3 = clf.category_l3
+                        existing.action = clf.action
                         existing.tech_tags = clf.tech_tags
                         existing.raw_tech_desc = clf.raw_tech_desc
                         existing.classification_source = clf.classification_source
@@ -241,7 +268,10 @@ class CosClassificationScanner:
                         course_series=course_series,
                         cos_object_key=cos_key,
                         filename=filename,
-                        tech_category=clf.tech_category,
+                        category_l1=clf.category_l1,
+                        category_l2=clf.category_l2,
+                        category_l3=clf.category_l3,
+                        action=clf.action,
                         tech_tags=clf.tech_tags or [],
                         raw_tech_desc=clf.raw_tech_desc,
                         classification_source=clf.classification_source,
@@ -322,7 +352,7 @@ class CosClassificationScanner:
             coach_name, name_source = self._get_coach_name(course_series)
 
             try:
-                clf = self._classifier.classify(filename, course_series)
+                clf = await self._classifier.classify(filename, course_series)
             except Exception as exc:
                 logger.error("Classification error for %s: %s", cos_key, exc)
                 stats.errors += 1
@@ -334,18 +364,29 @@ class CosClassificationScanner:
                     await self._upsert_coach(session, coach_name)
                     seen_coaches.add(coach_name)
 
+                # Feature-023：COS 预处理产物反查复用（spec FR-008 + Clarifications Q3）
+                # 如 cos_object_key 命中已有 video_preprocessing_jobs.success 记录，
+                # 回填 preprocessed=true 以免重复预处理
+                preprocessed_flag = await self._has_existing_preprocessing(
+                    session, cos_key
+                )
+
                 record = CoachVideoClassification(
                     coach_name=coach_name,
                     course_series=course_series,
                     cos_object_key=cos_key,
                     filename=filename,
-                    tech_category=clf.tech_category,
+                    category_l1=clf.category_l1,
+                    category_l2=clf.category_l2,
+                    category_l3=clf.category_l3,
+                    action=clf.action,
                     tech_tags=clf.tech_tags or [],
                     raw_tech_desc=clf.raw_tech_desc,
                     classification_source=clf.classification_source,
                     confidence=clf.confidence,
                     name_source=name_source,
                     kb_extracted=False,
+                    preprocessed=preprocessed_flag,
                 )
                 session.add(record)
                 stats.inserted += 1

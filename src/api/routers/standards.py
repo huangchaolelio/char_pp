@@ -23,7 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.api.errors import AppException, ErrorCode
 from src.api.schemas.envelope import SuccessEnvelope, ok
 from src.db.session import get_db
-from src.models.expert_tech_point import ActionType as EtpActionType
+from src.services.action_dictionary_service import get_action_dictionary_service
 from src.services.tech_standard_builder import (
     get_active_standard,
     list_active_standards,
@@ -34,16 +34,18 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["standards"])
 
-# Set of valid action_type string values for validation
-_VALID_ACTION_TYPES: set[str] = {at.value for at in EtpActionType}
-
 
 # ---------------------------------------------------------------------------
 # Request / Response schemas
 # ---------------------------------------------------------------------------
 
 class BuildRequest(BaseModel):
-    """Feature-019: tech_category 必填，不再支持全量 build。"""
+    """Feature-019/023: tech_category 必填（字典内动作名），不再支持全量 build。
+
+    字段名 "tech_category" 保留是为了合约兑现期兼容；语义上是 tech_actions
+    字典中的 distinct action 名（如 「高吊弧圈球」）。未来可考虑 alias 为
+    `action` 同事同步下线 。
+    """
 
     tech_category: str
 
@@ -52,10 +54,8 @@ class BuildRequest(BaseModel):
     def validate_tech_category(cls, v: str) -> str:
         if not v or not v.strip():
             raise ValueError("tech_category 必填")
-        normalized = v.strip().lower()
-        if normalized not in _VALID_ACTION_TYPES:
-            raise ValueError(f"{v!r} is not a valid tech category")
-        return normalized
+        # Feature-023：不再限制 lowercase（中文 action 名不能 .lower()）
+        return v.strip()
 
 
 class DimensionResponse(BaseModel):
@@ -143,7 +143,7 @@ async def build_standard(
 
     - `tech_category` 必填（缺失 → 422 VALIDATION_FAILED）
     - 数据源限定为该类别当前 active KB
-    - 无 active KB → 409 `NO_ACTIVE_KB_FOR_CATEGORY`
+- 无 active KB → 409 `NO_ACTIVE_KB_FOR_ACTION`
     - 指纹与现 active 标准一致 → 409 `STANDARD_ALREADY_UP_TO_DATE`
     """
     builder = TechStandardBuilder(session)
@@ -190,7 +190,7 @@ async def get_standard(
         )
 
     return ok(StandardResponse(
-        tech_category=standard.tech_category,
+        tech_category=standard.action,
         standard_id=standard.id,
         version=standard.version,
         source_quality=standard.source_quality,
@@ -224,13 +224,15 @@ async def list_standards(
     """
     standards = await list_active_standards(session, source_quality=source_quality)
 
-    existing_categories = {s.tech_category for s in standards}
-    all_action_types = {at.value for at in EtpActionType}
+    existing_categories = {s.action for s in standards}
+    # Feature-023 T054：missing_categories 依据从 EtpActionType 切换为 tech_actions 字典
+    action_dict = get_action_dictionary_service()
+    all_action_types = await action_dict.all_actions()
     missing = sorted(all_action_types - existing_categories)
 
     items = [
         StandardSummaryItem(
-            tech_category=s.tech_category,
+            tech_category=s.action,
             standard_id=s.id,
             version=s.version,
             source_quality=s.source_quality,

@@ -31,7 +31,7 @@ class ReferenceVideo(Base):
         unique=True,
         nullable=False,
     )
-    kb_tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    kb_action: Mapped[str] = mapped_column(String(64), nullable=False)
     kb_version: Mapped[int] = mapped_column(Integer, nullable=False)
     # pending / generating / completed / generation_failed
     generation_status: Mapped[str] = mapped_column(
@@ -70,8 +70,8 @@ class ReferenceVideo(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["kb_tech_category", "kb_version"],
-            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ["kb_action", "kb_version"],
+            ["tech_knowledge_bases.action", "tech_knowledge_bases.version"],
             ondelete="RESTRICT",
             name="fk_reference_videos_kb",
         ),

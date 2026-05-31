@@ -66,10 +66,10 @@ class KbExtractionService:
             raise ValueError(
                 f"no classification row found for cos_object_key={cos_object_key!r}"
             )
-        if not row.tech_category or row.tech_category == "unclassified":
+        if not row.action or row.action == "unclassified":
             raise ValueError(
-                f"video {cos_object_key!r} is not classified (tech_category="
-                f"{row.tech_category!r}); classify before KB extraction"
+                f"video {cos_object_key!r} is not classified (action="
+                f"{row.action!r}); classify before KB extraction"
             )
 
         # Flip the flag — idempotent: re-extraction is a no-op from the DB's
@@ -79,12 +79,12 @@ class KbExtractionService:
         await session.commit()
 
         logger.info(
-            "extract_knowledge: key=%s category=%s audio=%s lang=%s → kb_extracted=True",
-            cos_object_key, row.tech_category, enable_audio_analysis, audio_language,
+            "extract_knowledge: key=%s action=%s audio=%s lang=%s → kb_extracted=True",
+            cos_object_key, row.action, enable_audio_analysis, audio_language,
         )
         return {
             "cos_object_key": cos_object_key,
-            "tech_category": row.tech_category,
+            "action": row.action,
             "kb_extracted": True,
             "enable_audio_analysis": enable_audio_analysis,
             "audio_language": audio_language,

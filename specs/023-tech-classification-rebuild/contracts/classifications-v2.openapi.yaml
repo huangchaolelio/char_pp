@@ -1,0 +1,86 @@
+openapi: 3.1.0
+info:
+  title: Coach Video Classifications V2
+  version: '023'
+  description: |
+    Feature 023 — 技术分类体系重构与知识标准统一。
+    GET /api/v1/classifications 响应改造：移除 tech_category，新增四级分类字段。
+    所有响应统一信封 SuccessEnvelope[T]（章程原则 IX v1.4.0）。
+
+paths:
+  /api/v1/classifications:
+    get:
+      summary: 列出已分类教练视频
+      parameters:
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        - name: action
+          in: query
+          schema: {type: string}
+          description: 按具体动作过滤（必须命中 tech_actions 字典）
+        - name: category_l3
+          in: query
+          schema: {type: string}
+          description: 按手部技术·技术大类过滤（如 `正手·进攻`）
+        - name: kb_extracted
+          in: query
+          schema: {type: boolean}
+        - name: review_state
+          in: query
+          schema: {type: string, enum: [pending, approved, rejected, stale]}
+        # ⚠️ 旧 tech_category 查询参数已物理删除（章程 v2.0.0 接口下线策略）
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ClassificationsListEnvelope'
+        '400':
+          description: 参数越界（如 page_size > 100）→ INVALID_PAGE_SIZE
+        '422':
+          description: 参数校验失败 → VALIDATION_FAILED
+
+components:
+  schemas:
+    ClassificationsListEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success: {type: boolean, enum: [true]}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/ClassificationItem'}
+        meta:
+          type: object
+          properties:
+            page: {type: integer}
+            page_size: {type: integer}
+            total: {type: integer}
+
+    ClassificationItem:
+      type: object
+      required:
+        - cos_object_key
+        - coach_name
+        - confidence
+        - classification_source
+        - kb_extracted
+        - review_state
+      properties:
+        cos_object_key: {type: string, description: COS 对象键（业务幂等键）}
+        coach_name:     {type: string}
+        category_l1:    {type: string, nullable: true, description: 握拍方式（横拍/直拍）}
+        category_l2:    {type: string, nullable: true, description: 胶皮类型（反胶/颗粒胶）}
+        category_l3:    {type: string, nullable: true, description: '手部技术·技术大类（如 `正手·进攻`）'}
+        action:         {type: string, nullable: true, description: 具体动作名称（unclassified 或 tech_actions 字典 56 行之一）}
+        confidence:     {type: number, minimum: 0.0, maximum: 1.0}
+        classification_source: {type: string, enum: [rule, llm, manual]}
+        kb_extracted:   {type: boolean}
+        review_state:   {type: string, enum: [pending, approved, rejected, stale]}
+        # ⚠️ tech_category 字段已物理删除
+        # ⚠️ tech_path / grip_type / rubber_type / hand 等中间产物字段不暴露给 API（在 service 层组装为四级字段）

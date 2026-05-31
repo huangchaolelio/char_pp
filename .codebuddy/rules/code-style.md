@@ -7,7 +7,7 @@ alwaysApply: true
 - 所有函数参数和返回值必须有类型注解，使用 Python 3.10+ union 写法：`X | None`，禁止 `Optional[X]`
 - 异步优先：所有数据库操作使用 `async/await` + `async_session_factory`，禁止同步 session
 - Pydantic v2 语法：Schema 模型使用 `model_config = ConfigDict(...)`，禁止 v1 的 `class Config`
-- 枚举：技术类别使用 `TECH_CATEGORIES` 枚举（定义在 `src/services/tech_classifier.py`），禁止字符串字面量散落代码
+- 枚举：技术分类使用 `tech_actions` 字典（迁移 `0022_tech_taxonomy_rebuild`，56 行 V2），分类器输出必须落在字典内（不在字典内的预测一律降级为 `unclassified`）；禁止在代码中使用字符串字面量代替。旧的 `TECH_CATEGORIES` 21 类枚举已被 Feature-023 物理删除
 - 日志：使用标准 `logging` 模块，禁止 `print`
 - 错误处理：服务层抛 `ValueError` 或自定义异常，路由层统一转 `HTTPException`
 

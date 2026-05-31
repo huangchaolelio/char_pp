@@ -9,7 +9,7 @@
 
 诊断 (US3):
   - 校验素材存在 + `preprocessed=true` → 否则 ATHLETE_VIDEO_NOT_PREPROCESSED
-  - 校验 `tech_category` 的 active standard 存在 → 否则 STANDARD_NOT_AVAILABLE
+- 校验 `action` 的 active standard 存在 → 否则 STANDARD_NOT_AVAILABLE_FOR_ACTION（Feature-023）
   - 创建 `analysis_tasks(task_type=athlete_diagnosis)` + 入队 `diagnose_athlete`，
     payload 传 `classification_id` 走新分支（worker 层分流）
 """
@@ -93,7 +93,7 @@ async def _fetch_classification_row(
 
 async def _has_active_standard(db: AsyncSession, tech_category: str) -> bool:
     stmt = select(TechStandard).where(
-        TechStandard.tech_category == tech_category,
+        TechStandard.action == tech_category,
         TechStandard.status == StandardStatus.active,
     )
     return (await db.execute(stmt)).scalar_one_or_none() is not None
@@ -248,7 +248,7 @@ async def submit_athlete_diagnosis(
     Raises:
         AppException(ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND): 404
         AppException(ATHLETE_VIDEO_NOT_PREPROCESSED): 409
-        AppException(STANDARD_NOT_AVAILABLE): 409
+        AppException(STANDARD_NOT_AVAILABLE_FOR_ACTION): 503
         AppException(CHANNEL_QUEUE_FULL): 503
     """
     row = await _fetch_classification_row(db, classification_id)
@@ -270,7 +270,7 @@ async def submit_athlete_diagnosis(
     tech_category = row.tech_category
     if not await _has_active_standard(db, tech_category):
         raise AppException(
-            ErrorCode.STANDARD_NOT_AVAILABLE,
+            ErrorCode.STANDARD_NOT_AVAILABLE_FOR_ACTION,
             details={
                 "tech_category": tech_category,
                 "hint": "请在 KB 管理页发布对应类别的 published 标准",

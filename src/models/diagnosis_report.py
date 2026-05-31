@@ -17,6 +17,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Identity,
     String,
     Text,
@@ -52,7 +53,11 @@ class DiagnosisReport(Base):
         default=uuid.uuid4,
         server_default=func.gen_random_uuid(),
     )
-    tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Feature-023: tech_category → action，新增 三级分类字段
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     standard_id: Mapped[int] = mapped_column(
         BigInteger,
         ForeignKey("tech_standards.id", ondelete="RESTRICT"),
@@ -91,6 +96,19 @@ class DiagnosisReport(Base):
     )
 
     __table_args__ = (
+        # Feature-023 复合外键 → tech_actions 字典
+        ForeignKeyConstraint(
+            ["category_l1", "category_l2", "category_l3", "action"],
+            [
+                "tech_actions.category_l1",
+                "tech_actions.category_l2",
+                "tech_actions.category_l3",
+                "tech_actions.action",
+            ],
+            onupdate="CASCADE",
+            ondelete="RESTRICT",
+            name="fk_dr_action",
+        ),
         CheckConstraint(
             "source IN ('legacy', 'athlete_pipeline')",
             name="ck_dr_source",

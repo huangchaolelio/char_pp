@@ -22,7 +22,7 @@ ATHLETE_ERROR_TABLE: list[tuple[str, HTTPStatus, str]] = [
     ("ATHLETE_DIRECTORY_MAP_MISSING", HTTPStatus.INTERNAL_SERVER_ERROR, "运动员目录映射配置文件缺失"),
     ("ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND", HTTPStatus.NOT_FOUND, "运动员素材记录不存在"),
     ("ATHLETE_VIDEO_NOT_PREPROCESSED", HTTPStatus.CONFLICT, "运动员视频尚未完成预处理，不能直接诊断"),
-    ("STANDARD_NOT_AVAILABLE", HTTPStatus.CONFLICT, "该技术类别暂无可用的激活版标准"),
+        ("STANDARD_NOT_AVAILABLE_FOR_ACTION", HTTPStatus.SERVICE_UNAVAILABLE, "该动作暂无 active 技术标准"),
     ("ATHLETE_VIDEO_POSE_UNUSABLE", HTTPStatus.UNPROCESSABLE_ENTITY, "运动员视频姿态提取全程无可用关键点"),
 ]
 

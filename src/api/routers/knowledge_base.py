@@ -41,7 +41,7 @@ router = APIRouter(prefix="/knowledge-base", tags=["knowledge-base"])
 def _to_item(kb) -> KbVersionItem:
     """TechKnowledgeBase ORM → KbVersionItem DTO."""
     return KbVersionItem(
-        tech_category=kb.tech_category,
+        tech_category=kb.action,
         version=kb.version,
         status=kb.status.value,
         point_count=kb.point_count,
@@ -130,7 +130,7 @@ async def get_kb_version_detail(
         )
     kb, summary = result
     detail = KbVersionDetail(
-        tech_category=kb.tech_category,
+        tech_category=kb.action,
         version=kb.version,
         status=kb.status.value,
         point_count=kb.point_count,

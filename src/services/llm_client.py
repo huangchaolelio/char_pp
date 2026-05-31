@@ -12,6 +12,13 @@ Venus Proxy request format (OpenAI chat/completions compatible):
 Usage:
   client = LlmClient.from_settings()
   response_text, tokens = client.chat(messages, model, temperature, json_mode=True)
+
+Feature-023 / Path 1' — 限流退避:
+  Venus Proxy 公共服务 RPM=50。为避免全量扫描期间云集中击穿限流导致批量失败，
+  在 _chat_venus / _chat_openai 外层包裹 tenacity 指数退避:
+    · 仅对 HTTP 429 与 5xx 类错误重试（可重试子集 RetryableLlmError）
+    · 最多 5 次；wait = exponential(min=10, max=60) 秒
+    · 代码逻辑错误（账号未配置/请求参数错误等）不重试，fail fast
 """
 
 from __future__ import annotations
@@ -21,12 +28,37 @@ import logging
 from typing import Optional
 
 import requests
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 logger = logging.getLogger(__name__)
 
 
 class LlmError(Exception):
     """Raised when an LLM call fails after all retries."""
+
+
+class RetryableLlmError(LlmError):
+    """Subclass marking transient errors that warrant tenacity retry.
+
+    触发条件：HTTP 429 (Too Many Requests) 或 5xx 上游服务错误。
+    代码逻辑/参数错误仍招 `LlmError` 原型不重试。
+    """
+
+
+# Feature-023 / Path 1' — LLM 访问限流退避装饰器
+# Venus Proxy 公共服务 RPM=50；全量扫描中未被规则命中的少数视频会串行
+# 压入 LLM 兑底路，需退避以平滑冲击。
+_LLM_RETRY_DECORATOR = retry(
+    retry=retry_if_exception_type(RetryableLlmError),
+    stop=stop_after_attempt(5),
+    wait=wait_exponential(multiplier=1, min=10, max=60),
+    reraise=True,
+)
 
 
 class LlmClient:
@@ -113,10 +145,10 @@ class LlmClient:
         else:
             return self._chat_openai(messages, effective_model, temperature, json_mode)
 
-    # ── Venus Proxy backend ────────────────────────────────────────────────────
+    # ── Venus Proxy backend ────────────────────────────────────────────────
 
-    def _chat_venus(
-        self,
+    @_LLM_RETRY_DECORATOR
+    def _chat_venus(        self,
         messages: list[dict],
         model: str,
         temperature: float,
@@ -142,13 +174,28 @@ class LlmClient:
             )
             response.raise_for_status()
         except requests.Timeout as exc:
-            raise LlmError(f"Venus proxy timeout after {self._timeout_s}s: {exc}") from exc
+            # 超时归为可重试（网络抖动）
+            raise RetryableLlmError(
+                f"Venus proxy timeout after {self._timeout_s}s: {exc}"
+            ) from exc
         except requests.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else 0
+            body_snippet = (
+                exc.response.text[:200] if exc.response is not None else ""
+            )
+            # 限流 / 上游 5xx 可重试；其他 4xx 不重试
+            if status == 429 or 500 <= status < 600:
+                raise RetryableLlmError(
+                    f"Venus proxy HTTP {status} (retryable): {body_snippet}"
+                ) from exc
             raise LlmError(
-                f"Venus proxy HTTP error {exc.response.status_code}: {exc.response.text[:200]}"
+                f"Venus proxy HTTP error {status}: {body_snippet}"
             ) from exc
         except requests.RequestException as exc:
-            raise LlmError(f"Venus proxy request error: {exc}") from exc
+            # 连接重置/DNS 临时性问题 → 可重试
+            raise RetryableLlmError(
+                f"Venus proxy request error (retryable): {exc}"
+            ) from exc
 
         try:
             data = response.json()
@@ -160,10 +207,10 @@ class LlmClient:
         tokens = (usage.get("prompt_tokens", 0) or 0) + (usage.get("completion_tokens", 0) or 0)
         return content, tokens
 
-    # ── OpenAI-compatible backend ──────────────────────────────────────────────
+    # ── OpenAI-compatible backend ────────────────────────────────────────────
 
-    def _chat_openai(
-        self,
+    @_LLM_RETRY_DECORATOR
+    def _chat_openai(        self,
         messages: list[dict],
         model: str,
         temperature: float,
@@ -191,8 +238,18 @@ class LlmClient:
                 **extra,
             )
         except openai.APITimeoutError as exc:
-            raise LlmError(f"OpenAI timeout: {exc}") from exc
+            raise RetryableLlmError(f"OpenAI timeout (retryable): {exc}") from exc
+        except openai.RateLimitError as exc:
+            raise RetryableLlmError(
+                f"OpenAI rate limit hit (retryable): {exc}"
+            ) from exc
         except openai.APIError as exc:
+            # APIError 包含 5xx 上游问题；选择以 status_code 判断
+            status = getattr(exc, "status_code", None) or 0
+            if 500 <= status < 600:
+                raise RetryableLlmError(
+                    f"OpenAI upstream {status} (retryable): {exc}"
+                ) from exc
             raise LlmError(f"OpenAI API error: {exc}") from exc
 
         content = resp.choices[0].message.content or ""
