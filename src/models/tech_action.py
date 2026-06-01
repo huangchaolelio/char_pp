@@ -4,7 +4,7 @@
 
 复合主键 (category_l1, category_l2, category_l3, action) 而非单列 action 主键，
 原因：CSV 字典中存在跨手部重名 action（如「高吊弧圈球」既是正手进攻也是反手进攻）。
-distinct action 数 = 34；distinct (l1,l2,l3,action) 数 = 44。
+distinct action 数 = 35；distinct (l1,l2,l3,action) 数 = 56（v2 字典 Path 1' 拓展后）。
 
 Seed 来源: pp_book/pp_tech_classification.csv （TSV 5 列）→ 迁移 0022 内嵌清洗
 （strip U+200B 零宽字符 + 用 `·` 拼接 hand+tech_class）。

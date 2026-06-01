@@ -1281,13 +1281,13 @@ CONTENT_PREP（新阶段）：scan_cos_videos → preprocess_video → classify_
 
 **状态**：已交付 (2026-05-31)
 **核心问题**：旧 21 类 `TECH_CATEGORIES` 枚举为单一字符串字面量，缺乏层级结构、扩展能力差、字典口径与代码字面量两份事实来源；分类准确率被 21 类的粗粒度桶位拉低（实测 70%），无法满足 SC-002 ≥ 85% 目标。
-**目标**：以严格四级（`grip_style / hand_side / stroke_phase / action`）+ 字典强约束（`tech_actions` 56 行 v2）作为单一事实来源，物理删除旧 21 类枚举与 `tech_category` 列，全局重命名为 `action` / `kb_action`。
+**目标**：以严格四级（DB 列名 `category_l1 / category_l2 / category_l3 / action`，业务别名 `grip_style / 胶皮类型 / 手部·技术大类 / action`）+ 字典强约束（`tech_actions` 56 行 v2）作为单一事实来源，物理删除旧 21 类枚举与 `tech_category` 列，全局重命名为 `action` / `kb_action`。
 
 ### 核心交付（仅口径重建，业务流程零改动）
 
 | 子项 | 说明 |
 |------|------|
-| **数据字典 56 行 V2** | `tech_actions` 表：`(category_l1, category_l2, category_l3, action)` 四级唯一键；本期仅 seed 横拍·反胶子集（44 个 action × 5 个 L3 桶 = 56 行）；直拍位预留 |
+| **数据字典 56 行 V2** | `tech_actions` 表：`(category_l1, category_l2, category_l3, action)` 四级复合 PK；本期仅 seed 横拍·反胶子集 — 共 **56 行** = **35 个 distinct action** 分布在 **9 个 L3 桶**（正手/反手 × 进攻/防御/发球/步法 + 通用·教学辅助）；含 21 个跨手部重名 action（如「高吊弧圈球」「平击发球」「挡」既属正手也属反手），故复合 PK 而非单列 `action` PK；直拍位与颗粒胶位均预留 |
 | **全局列名重命名** | 7 张业务表统一：`tech_category` → `action`（多列另增 `category_l1/l2/l3`）；4 张子表 FK 列：`kb_tech_category` → `kb_action`；`tech_knowledge_bases` 复合 PK 重命名为 `(action, version)`；partial unique index `uq_tech_kb_active_per_action` |
 | **TechClassifier V2** | `src/services/tech_classifier.py` 重写：规则层 + LLM 兜底两层，LLM 出参强制落 `tech_actions` 字典 enum 块；`confidence < 0.5` 强制降级 `unclassified`；旧 `TECH_CATEGORIES` 物理删除 |
 | **启发式 lower bound 评估** | T071 阶段一：`scripts/build_heuristic_eval_set.py` 生成 100 条强信号样本 → top-1=65% / L3=79% / L1=99%（lower bound，标签噪声 ~14%；目检估算真实 ≈ 88%）；阶段二待人工标注 |

@@ -8,7 +8,7 @@
 |----|-----|
 | Feature | 023 — tech-classification-rebuild |
 | 模型 | `TechClassifier V2`（`src/services/tech_classifier.py`） |
-| 字典版本 | `tech_actions` 56 行 v2（迁移 `0022_tech_taxonomy_rebuild` + Path 1' 拓展） |
+| 字典版本 | `tech_actions` 56 行 v2（迁移 `0022_tech_taxonomy_rebuild` + Path 1' 拓展）；56 行 = 35 distinct action × 9 L3 桶（含 21 个跨手部重名 action） |
 | 规则文件 | `config/tech_classification_rules.json` |
 | LLM 兜底 | Venus Proxy 优先 → OpenAI fallback；JSON mode + 字典 enum 块强约束 |
 
@@ -16,7 +16,7 @@
 
 - 评估脚本：[scripts/eval_v2_accuracy.py](../../specs/023-tech-classification-rebuild/scripts/eval_v2_accuracy.py)
 - 评估集生成器：[scripts/build_heuristic_eval_set.py](../../specs/023-tech-classification-rebuild/scripts/build_heuristic_eval_set.py)（启发式 lower bound）
-- 评估集：`data/eval/tech_classification_v2_eval.csv`（当前 100 条启发式；阶段二改为人工标注 ≥ 100 条覆盖 44 个 action）
+- 评估集：`data/eval/tech_classification_v2_eval.csv`（当前 100 条启发式；阶段二改为人工标注 ≥ 100 条覆盖 35 个 distinct action / 56 个四元组）
 - 指标：
   - **top-1 action accuracy**：预测 action 与人工标注完全一致的比例（**SC-002 目标 ≥ 85%**）
   - **L3 accuracy**：手部·技术大类粒度一致率
@@ -28,7 +28,7 @@
 > **本节为启发式 lower bound 而非最终基线**。受限于本阶段未完成人工标注（见 §5），
 > 评估集采用「文件名强信号关键词 → expected 标签」的启发式方式生成（脚本：
 > [`scripts/build_heuristic_eval_set.py`](../../specs/023-tech-classification-rebuild/scripts/build_heuristic_eval_set.py)），
-> 100 条样本，覆盖 10 个 action / 5 个 L3 桶。**真实准确率预计高于本表数值**，
+> 100 条样本，覆盖 10 个 action / 5 个高频 L3 桶（字典实际共 9 桶）。**真实准确率预计高于本表数值**，
 > 详见 [`specs/023-tech-classification-rebuild/eval_results.md`](../../specs/023-tech-classification-rebuild/eval_results.md) 的标签噪声分析。
 
 | 指标 | 数值 | 备注 |
@@ -71,7 +71,7 @@
 ## 5. 后续计划
 
 - [x] **T071 阶段一**：启发式 lower bound 评估集 100 条 + 跑通 `eval_v2_accuracy.py`（2026-05-31）
-- [ ] **T071 阶段二**：编制 ≥ 100 条**人工标注**样本（覆盖 44 个 action），消除标签噪声
+- [ ] **T071 阶段二**：编制 ≥ 100 条**人工标注**样本（覆盖 35 个 distinct action / 56 个四元组），消除标签噪声
 - [ ] 阶段二完成后跑 `eval_v2_accuracy.py` → 写回 §3「最终基线」副表
 - [ ] 若阶段二 top-1 < 85%：增补 `tech_classification_rules.json` keyword / 调整 LLM prompt
 - [ ] 周期性重测：每次新增 action 字典条目或 keyword 规则后必须重跑

@@ -169,12 +169,12 @@ class ActionDictionaryService:
     # ────────────────────────────────────────────────────────────────
 
     async def all_actions(self) -> set[str]:
-        """所有 distinct action 名集合（去重后约 34 个）."""
+        """所有 distinct action 名集合（v2 字典 56 行 → 35 个 distinct action）."""
         await self.load_all()
         return set((self._by_action or {}).keys())
 
     async def all_quads(self) -> set[tuple[str, str, str, str]]:
-        """所有四元组集合（44 个）."""
+        """所有四元组集合（v2 字典 56 行）."""
         await self.load_all()
         return set((self._action_index or {}).keys())
 
