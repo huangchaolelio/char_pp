@@ -42,7 +42,7 @@ setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app beat --logl
 
 # Celery 任务
 
-- `classify_video`（`src.workers.classification_task`）：单条教练视频 → tech_category，静态路由到 `classification` 队列
+- `classify_video`（`src.workers.classification_task`）：单条教练视频 → `action`（V2 字典四元组），静态路由到 `classification` 队列
 - `extract_kb`（`src.workers.kb_extraction_task`）：已分类视频 → DAG Orchestrator（6 子步骤并行），静态路由到 `kb_extraction` 队列（Feature-014）
 - `diagnose_athlete`（`src.workers.athlete_diagnosis_task`）：运动员视频 → 偏差+建议，静态路由到 `diagnosis` 队列
 - `scan_cos_videos`（`src.workers.classification_task`）：COS 全量扫描，静态路由到 `default` 队列
@@ -56,7 +56,7 @@ setsid /opt/conda/envs/coaching/bin/celery -A src.workers.celery_app beat --logl
 | 队列 | Worker | 并发 | 默认容量 | 任务来源 |
 |------|--------|------|---------|---------|
 | `classification` | classification_worker | 1 | 5 | `classify_video`（单条分类） |
-| `kb_extraction` | kb_extraction_worker | 2 | 50 | `extract_kb`（需 tech_category 非空） |
+| `kb_extraction` | kb_extraction_worker | 2 | 50 | `extract_kb`（需 `action_id` / `action` 非空） |
 | `diagnosis` | diagnosis_worker | 2 | 20 | `diagnose_athlete` |
 | `default` | default_worker | 1 | — | `scan_cos_videos` + `cleanup_expired_tasks` + `cleanup_intermediate_artifacts` + `sweep_orphan_jobs` |
 | `preprocessing` | preprocessing_worker | 3 | 20 | `preprocess_video`（Feature-016） |

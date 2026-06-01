@@ -160,7 +160,7 @@ async def generate_advice(
     # 调用方签名变动；仅 ORM 列引用修正。
     tips_result = await session.execute(
         select(TeachingTip)
-        .where(TeachingTip.tech_category == action_type)
+        .where(TeachingTip.action == action_type)
         .order_by(
             # human tips first, then by confidence desc
             TeachingTip.source_type.desc(),  # 'human' > 'auto' alphabetically

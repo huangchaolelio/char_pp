@@ -235,7 +235,7 @@ class CosAthleteScanner:
             athlete_name, name_source = self._get_athlete_name(directory)
 
             try:
-                clf = self._classifier.classify(filename, directory)
+            clf = await self._classifier.classify(filename, directory)
             except Exception as exc:
                 logger.error("Classification error for %s: %s", cos_key, exc)
                 stats.errors += 1
@@ -259,7 +259,7 @@ class CosAthleteScanner:
                     existing.athlete_id = athlete_row.id
                     existing.athlete_name = athlete_name
                     existing.name_source = name_source
-                    existing.tech_category = clf.tech_category
+                        existing.tech_category = clf.action
                     existing.classification_source = clf.classification_source
                     existing.classification_confidence = float(clf.confidence)
                     stats.updated += 1
@@ -269,7 +269,7 @@ class CosAthleteScanner:
                         athlete_id=athlete_row.id,
                         athlete_name=athlete_name,
                         name_source=name_source,
-                        tech_category=clf.tech_category,
+                        tech_category=clf.action,
                         classification_source=clf.classification_source,
                         classification_confidence=float(clf.confidence),
                         preprocessed=False,
@@ -336,7 +336,7 @@ class CosAthleteScanner:
             athlete_name, name_source = self._get_athlete_name(directory)
 
             try:
-                clf = self._classifier.classify(filename, directory)
+            clf = await self._classifier.classify(filename, directory)
             except Exception as exc:
                 logger.error("Classification error for %s: %s", cos_key, exc)
                 stats.errors += 1

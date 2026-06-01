@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-05-29 · Feature-022 业务流程四阶段化 + 内容准备阶段引入审核门交付（含激进收尾：索引命名对齐 + EP-4 stats tz-aware 兼容）
+> 最后更新：2026-05-31 · Feature-023 技术分类体系重构（V2 字典 56 行 / `tech_category` → `action` 全局列名重命名 / `kb_tech_category` → `kb_action`，启发式 lower bound 基线已落地）
 ## 目录
 
 - [系统概述](#系统概述)
@@ -210,9 +210,9 @@ teaching_tips                       # LLM 提炼的教学建议
 |------|------|------|
 | `AnalysisTask` | `analysis_tasks` | 视频处理任务，含状态机（pending→processing→success/failed） |
 | `ExpertTechPoint` | `expert_tech_points` | 单帧姿态关键点数据 |
-| `TechKnowledgeBase` | `tech_knowledge_bases` | 知识库版本（Feature-019 重构：**复合主键 `(tech_category, version INTEGER)`**，per-category 独立生命周期；`uq_tech_kb_active_per_category` partial unique index 保证每类别单 active） |
-| `TechStandard` | `tech_standards` | 聚合后的技术标准（中位数+P25/P75；Feature-019 新增 `source_fingerprint CHAR(64)` 列 + `uq_ts_fingerprint_per_category` 局部唯一索引支持 build 幂等） |
-| `CoachVideoClassification` | `coach_video_classifications` | COS 全量视频分类（Feature-008） + 新增 `preprocessed` 字段（Feature-016） |
+| `TechKnowledgeBase` | `tech_knowledge_bases` | 知识库版本（Feature-019 复合主键 per-action 独立生命周期；Feature-023 列名重命名为 `(action, version INTEGER)`，partial unique index `uq_tech_kb_active_per_action` 保证每个 action 单 active） |
+| `TechStandard` | `tech_standards` | 聚合后的技术标准（中位数+P25/P75；Feature-019 新增 `source_fingerprint CHAR(64)` 列；Feature-023 默认唯一约束重命名为 `uq_ts_fingerprint_per_action`，支持 build 幂等） |
+| `CoachVideoClassification` | `coach_video_classifications` | COS 全量视频分类（Feature-008） + 新增 `preprocessed` 字段（Feature-016）；Feature-023 重命名 `tech_category` → `action` + ADD `category_l1/l2/l3` 三级标签 + 到 `tech_actions` 的复合 FK |
 | `VideoPreprocessingJob` | `video_preprocessing_jobs` | 预处理作业（Feature-016），running/success/failed/superseded 四状态 |
 | `VideoPreprocessingSegment` | `video_preprocessing_segments` | 分段 → COS object key 映射（Feature-016），(job_id, segment_index) 唯一 |
 | `Coach` | `coaches` | 教练信息，与 COS 目录 1:1 对应 |
@@ -393,7 +393,7 @@ pending → processing → success
 | 队列 | Worker 并发 | 默认容量 | 任务来源 | 可热更新 |
 |------|-----------|---------|---------|---------|
 | `classification` | 1 | 5 | `classify_video` | ✅ |
-| `kb_extraction` | 2 | 50 | `extract_kb`（需 tech_category 非空） | ✅ |
+| `kb_extraction` | 2 | 50 | `extract_kb`（需 `action` / `action_id` 非空） | ✅ |
 | `diagnosis` | 2 | 20 | `diagnose_athlete`（Feature-020 运动员诊断复用该队列） | ✅ |
 | `preprocessing` | 3 | 20 | `preprocess_video`（Feature-016）+ Feature-020 `preprocess_athlete_video` 复用 | ✅ |
 | `default` | 1 | — | `scan_cos_videos` + `scan_athlete_videos`（Feature-020）+ `cleanup_expired_tasks` + `cleanup_intermediate_artifacts` + `sweep_orphan_jobs` | — |
@@ -420,7 +420,7 @@ pending → processing → success
 - **DB 是容量唯一事实来源**：每次提交前 `pg_advisory_xact_lock(hash(task_type))` 序列化 + `COUNT(*)` 权威计数
 - **幂等提交**：partial unique index `idx_analysis_tasks_idempotency` on `(cos_object_key, task_type)` WHERE status IN ('pending','processing','success')；重复提交返回原 task_id
 - **批量语义**：`POST /tasks/{type}/batch` 单批 ≤100 条；超上限整批 400 `BATCH_TOO_LARGE`；容量不足时前 K 条 `ACCEPTED`、后 M-K 条 `QUEUE_FULL`（部分成功）
-- **KB 提取门槛**：`ClassificationGateService` 校验视频已分类且 `tech_category != 'unclassified'` 才允许入队
+- **KB 提取门槛**：`ClassificationGateService` 校验视频已分类且 `action != 'unclassified'`（Feature-023 重命名后的字段）才允许入队
 - **孤儿任务自动恢复**：`celeryd_after_setup` 信号在 Worker 启动时 sweep `started_at < now - 840s AND status='processing'` 行并标记 `failed`
 
 ### 运维能力

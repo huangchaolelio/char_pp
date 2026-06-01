@@ -72,10 +72,10 @@ async def execute(
     merger = F14KbMerger()
     merged, conflicts = merger.merge(visual_items, audio_items)
 
-    # Feature-019: per-category draft KB（复合键 (tech_category, version)）
-    kb_tech_category, kb_version_int = await _ensure_kb_record(session, job, merged)
+    # Feature-019/023: per-action draft KB（复合键 (action, version)）
+    kb_action, kb_version_int = await _ensure_kb_record(session, job, merged)
     inserted = await _persist_merged_points(
-        session, job, kb_tech_category, kb_version_int, merged
+        session, job, kb_action, kb_version_int, merged
     )
     await _persist_conflicts(session, job, conflicts)
 
@@ -93,8 +93,8 @@ async def execute(
         "inserted_tech_points": inserted,
         "conflict_items": len(conflicts),
         "degraded_mode": degraded,
-        # Feature-019: 回报复合键；保留 kb_version（整数）+ 新增 kb_tech_category
-        "kb_tech_category": kb_tech_category,
+        # Feature-023: 复合键 从 (tech_category, version) 物理重命名为 (action, version)
+        "kb_action": kb_action,
         "kb_version": kb_version_int,
         "kb_extracted_flag_set": True,
     }
@@ -102,7 +102,7 @@ async def execute(
         "merge_kb job=%s: merged=%d inserted=%d conflicts=%d degraded=%s "
         "kb=(%s, %d)",
         job.id, len(merged), inserted, len(conflicts), degraded,
-        kb_tech_category, kb_version_int,
+        kb_action, kb_version_int,
     )
     return {
         "status": PipelineStepStatus.success,
@@ -153,6 +153,64 @@ def _safe_items(output_summary: dict | None) -> list[dict]:
     return cleaned
 
 
+# ── Feature-023 US4: 术语归一化 hook ─────────────────────────────────
+
+# 进程级 normalizer 单例（lazy 构造，避免每次 merge 重新读 mapping）
+_NORMALIZER = None
+
+
+def _get_normalizer():
+    """Lazy 构造 TerminologyNormalizer；LLM 不可用时也能继续走静态映射."""
+    global _NORMALIZER
+    if _NORMALIZER is None:
+        try:
+            from src.services.terminology_normalizer import TerminologyNormalizer
+            _NORMALIZER = TerminologyNormalizer.from_settings()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                "merge_kb: terminology normalizer unavailable: %s", exc
+            )
+            _NORMALIZER = False  # 标记为不可用
+    return _NORMALIZER if _NORMALIZER is not False else None
+
+
+async def _normalize_cues(merged_point) -> dict | None:
+    """对 merged_point 调用术语归一化器，返回 conflict_detail JSONB 元数据.
+
+    Feature-023 US4 设计：在落库前对每条 dimension 进行术语标准化。
+    由于当前 merger 的 dimension 已是规范化字段（如 ``racket_angle``），
+    多数情况下 normalizer 会判定为 unchanged。但保留此 hook 是为了：
+      1. 未来 audio_kb_extract 升级到 LLM 输出自然语言时无需再改 merge_kb
+      2. 满足 spec FR-013/FR-014：原口语保留 + 标准术语写入
+      3. 落 conflict_detail JSONB 记录原口语 / 标准术语 / pending_review
+    """
+    normalizer = _get_normalizer()
+    if normalizer is None:
+        return None
+    dim = getattr(merged_point, "dimension", None)
+    if not dim:
+        return None
+    try:
+        result = await normalizer.normalize(dim)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "merge_kb._normalize_cues failed for dimension=%r: %s", dim, exc
+        )
+        return None
+    if not result.normalized and not result.pending_review:
+        return None  # 无需归一化，省空间
+    return {
+        "terminology": {
+            "original": result.original,
+            "standard": result.standard_term,
+            "body_part": result.body_part,
+            "confidence": result.confidence,
+            "source": result.source,
+            "pending_review": result.pending_review,
+        }
+    }
+
+
 async def _ensure_kb_record(
     session: AsyncSession,
     job: ExtractionJob,
@@ -181,12 +239,12 @@ async def _ensure_kb_record(
         await session.execute(
             select(TechKnowledgeBase).where(
                 TechKnowledgeBase.extraction_job_id == job.id,
-                TechKnowledgeBase.tech_category == tech_category,
+                TechKnowledgeBase.action == tech_category,
             )
         )
     ).scalar_one_or_none()
     if existing is not None:
-        return existing.tech_category, existing.version
+        return existing.action, existing.version
 
     # 审计 merged 中不一致的 action_type
     stray = {m.action_type for m in merged if m.action_type and m.action_type != tech_category}
@@ -197,7 +255,7 @@ async def _ensure_kb_record(
             sorted(stray), tech_category, tech_category,
         )
 
-    # Feature-019: 通过 svc 创建 draft（per-category MAX+1 自增）
+    # Feature-019/023: 通过 svc 创建 draft（per-action MAX+1 自增）
     kb = await knowledge_base_svc.create_draft_version(
         session,
         tech_category=tech_category,
@@ -205,22 +263,22 @@ async def _ensure_kb_record(
         point_count=0,   # point_count 由 _persist_merged_points 后续 UPDATE
         notes=(
             f"F-014 draft KB for extraction_job={job.id} "
-            f"cos_key={job.cos_object_key} tech_category={tech_category}"
+            f"cos_key={job.cos_object_key} action={tech_category}"
         ),
     )
-    return kb.tech_category, kb.version
+    return kb.action, kb.version
 
 
 async def _persist_merged_points(
     session: AsyncSession,
     job: ExtractionJob,
-    kb_tech_category: str,
+    kb_action: str,
     kb_version: int,
     merged: list[MergedPoint],
 ) -> int:
     """INSERT one ExpertTechPoint row per merged item. Returns inserted count.
 
-    Feature-019: expert_tech_points 绑复合 FK (kb_tech_category, kb_version)。
+    Feature-019/023: expert_tech_points 绑复合 FK (kb_action, kb_version).
 
     Silently skips points whose ``action_type`` can't be mapped to the
     ``ActionType`` enum (e.g. the job's tech_category is one of the F-014 21
@@ -242,16 +300,19 @@ async def _persist_merged_points(
             continue
 
         # The CheckConstraint requires param_min <= param_ideal <= param_max.
-        # Clamp softly in case the merger produced out-of-order bounds (edge
-        # case when visual + audio have wildly different ranges but ideal
-        # still falls within 10%).
         p_min = min(m.param_min, m.param_ideal, m.param_max)
         p_max = max(m.param_min, m.param_ideal, m.param_max)
         p_ideal = max(p_min, min(m.param_ideal, p_max))
 
+        # Feature-023 US4 术语归一化 hook：在落库前对 raw_text_span/dimension 调
+        # 用 TerminologyNormalizer，将标准术语/原口语/pending_review 元信息写
+        # 入 conflict_detail JSONB 字段（预留位）。这些元数据不影响 ORM
+        # CheckConstraint，预评阅人工可查看并补丢入表。
+        cue_metadata = await _normalize_cues(m)
+
         session.add(
             ExpertTechPoint(
-                kb_tech_category=kb_tech_category,
+                kb_action=kb_action,
                 kb_version=kb_version,
                 action_type=action_enum,
                 dimension=m.dimension,
@@ -262,20 +323,20 @@ async def _persist_merged_points(
                 extraction_confidence=max(0.0, min(1.0, m.extraction_confidence)),
                 source_video_id=job.analysis_task_id,
                 source_type=m.source_type,
-                conflict_flag=False,  # F-014 conflicts go to kb_conflicts
-                conflict_detail=None,
-                # 迁移 0015 / 方案 C2：保留提交时的 tech_category 以供审计对账。
-                submitted_tech_category=job.tech_category,
+                conflict_flag=False,
+                conflict_detail=cue_metadata,  # Feature-023: 存入 cue_words / pending_review
+                # Feature-023: submitted_tech_category → submitted_action
+                submitted_action=job.tech_category,
             )
         )
         inserted += 1
 
-    # Bump point_count on the KB row (Feature-019 复合键)
+    # Bump point_count on the KB row (Feature-019/023 复合键)
     if inserted:
         await session.execute(
             update(TechKnowledgeBase)
             .where(
-                TechKnowledgeBase.tech_category == kb_tech_category,
+                TechKnowledgeBase.action == kb_action,
                 TechKnowledgeBase.version == kb_version,
             )
             .values(point_count=TechKnowledgeBase.point_count + inserted)

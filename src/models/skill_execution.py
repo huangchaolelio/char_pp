@@ -47,8 +47,8 @@ class SkillExecution(Base):
     )
     # Snapshot of skill config at execution time — used for reproducibility
     skill_config_snapshot: Mapped[dict] = mapped_column(JSONB(), nullable=False)
-    # Feature-019: 复合 FK → (tech_knowledge_bases.tech_category, version)
-    kb_tech_category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Feature-023: kb_tech_category → kb_action（复合 FK 到 tech_knowledge_bases (action, version)）
+    kb_action: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     kb_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
@@ -80,8 +80,8 @@ class SkillExecution(Base):
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["kb_tech_category", "kb_version"],
-            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ["kb_action", "kb_version"],
+            ["tech_knowledge_bases.action", "tech_knowledge_bases.version"],
             ondelete="SET NULL",
             name="fk_skill_executions_kb",
         ),

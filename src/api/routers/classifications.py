@@ -37,7 +37,8 @@ from src.api.schemas.classification import (
 from src.api.schemas.envelope import SuccessEnvelope, ok, page
 from src.db.session import get_db
 from src.models.coach_video_classification import CoachVideoClassification
-from src.services.tech_classifier import TECH_CATEGORIES, get_tech_label
+# Feature-023: TECH_CATEGORIES 物理删除，改用 ActionDictionaryService
+from src.services.action_dictionary_service import get_action_dictionary_service
 from src.workers.celery_app import celery_app
 
 router = APIRouter(tags=["classifications"])
@@ -129,7 +130,8 @@ async def get_scan_status(task_id: str) -> SuccessEnvelope[ScanStatusResponse]:
 )
 async def list_classifications(
     coach_name: Optional[str] = Query(None),
-    tech_category: Optional[str] = Query(None),
+    action: Optional[str] = Query(None, description="按具体动作名过滤（56 行字典之一）"),
+    category_l3: Optional[str] = Query(None, description="按手部技术·技术大类过滤"),
     kb_extracted: Optional[bool] = Query(None),
     classification_source: Optional[str] = Query(None),
     page_num: int = Query(1, ge=1, alias="page"),
@@ -138,10 +140,8 @@ async def list_classifications(
 ) -> SuccessEnvelope[list[ClassificationItem]]:
     """按条件查询分类记录，支持分页。
 
-    Feature-017 阶段 5 T054：统一使用 ``page/page_size`` 查询参数（1-based page、
-    page_size 默认 20 / 最大 100）。原 ``limit/offset`` 参数已彻底下线，调用方
-    需改用 ``page`` 与 ``page_size``；越界由 FastAPI 422 + VALIDATION_FAILED
-    自动拦截。
+    Feature-023：查询参数 ``tech_category`` 物理删除，改用 ``action``（动作名）
+    与 ``category_l3``（技术大类）。
     """
     stmt = select(CoachVideoClassification)
     count_stmt = select(func.count()).select_from(CoachVideoClassification)
@@ -149,9 +149,12 @@ async def list_classifications(
     if coach_name:
         stmt = stmt.where(CoachVideoClassification.coach_name == coach_name)
         count_stmt = count_stmt.where(CoachVideoClassification.coach_name == coach_name)
-    if tech_category:
-        stmt = stmt.where(CoachVideoClassification.tech_category == tech_category)
-        count_stmt = count_stmt.where(CoachVideoClassification.tech_category == tech_category)
+    if action:
+        stmt = stmt.where(CoachVideoClassification.action == action)
+        count_stmt = count_stmt.where(CoachVideoClassification.action == action)
+    if category_l3:
+        stmt = stmt.where(CoachVideoClassification.category_l3 == category_l3)
+        count_stmt = count_stmt.where(CoachVideoClassification.category_l3 == category_l3)
     if kb_extracted is not None:
         stmt = stmt.where(CoachVideoClassification.kb_extracted == kb_extracted)
         count_stmt = count_stmt.where(CoachVideoClassification.kb_extracted == kb_extracted)
@@ -188,22 +191,18 @@ async def get_summary(
     page_size: int = Query(20, ge=1, le=100),
     session: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[list[CoachSummaryItem]]:
-    """按教练 + 技术类别统计视频数量和已提取知识库数量.
-
-    Feature-017 阶段 5 T054：统一 ``page/page_size`` 分页参数（默认 20、最大 100）；
-    本端点返回聚合统计（教练 × 技术类别），记录数通常较少，服务层计算完再切片。
-    """
-    # Group by coach_name, tech_category
+    """按教练 + action 统计视频数量和已提取知识库数量（Feature-023）."""
+    # Group by coach_name, action
     stmt = select(
         CoachVideoClassification.coach_name,
-        CoachVideoClassification.tech_category,
+        CoachVideoClassification.action,
         func.count().label("count"),
         func.sum(
             func.cast(CoachVideoClassification.kb_extracted, type_=None)
         ).label("kb_count"),
     ).group_by(
         CoachVideoClassification.coach_name,
-        CoachVideoClassification.tech_category,
+        CoachVideoClassification.action,
     )
     if coach_name:
         stmt = stmt.where(CoachVideoClassification.coach_name == coach_name)
@@ -212,17 +211,18 @@ async def get_summary(
     result = await session.execute(stmt)
     rows = result.all()
 
-    # Build coach → {tech → {count, kb}} aggregation
+    # Build coach → {action → {count, kb}} aggregation
     coaches_map: dict[str, dict] = {}
     for row in rows:
         cname = row.coach_name
         if cname not in coaches_map:
-            coaches_map[cname] = {"total_videos": 0, "kb_extracted": 0, "techs": {}}
-        tech_entry = coaches_map[cname]["techs"].setdefault(
-            row.tech_category, {"count": 0, "kb_extracted": 0}
+            coaches_map[cname] = {"total_videos": 0, "kb_extracted": 0, "actions": {}}
+        action_key = row.action or "unclassified"
+        action_entry = coaches_map[cname]["actions"].setdefault(
+            action_key, {"count": 0, "kb_extracted": 0}
         )
-        tech_entry["count"] += row.count
-        tech_entry["kb_extracted"] += int(row.kb_count or 0)
+        action_entry["count"] += row.count
+        action_entry["kb_extracted"] += int(row.kb_count or 0)
         coaches_map[cname]["total_videos"] += row.count
         coaches_map[cname]["kb_extracted"] += int(row.kb_count or 0)
 
@@ -230,12 +230,13 @@ async def get_summary(
     for cname, data in coaches_map.items():
         breakdown = [
             TechBreakdownItem(
-                tech_category=tc,
-                label=get_tech_label(tc),
-                count=td["count"],
-                kb_extracted=td["kb_extracted"],
+                action=action_key,
+                count=ad["count"],
+                kb_extracted=ad["kb_extracted"],
             )
-            for tc, td in sorted(data["techs"].items(), key=lambda x: -x[1]["count"])
+            for action_key, ad in sorted(
+                data["actions"].items(), key=lambda x: -x[1]["count"]
+            )
         ]
         coaches.append(
             CoachSummaryItem(
@@ -262,10 +263,25 @@ async def patch_classification(
     body: ClassificationPatchRequest,
     session: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[ClassificationPatchResponse]:
-    """人工修正单条记录的技术分类，source 强制设为 manual，confidence=1.0."""
-    body.tech_category = validate_enum_choice(
-        body.tech_category, field="tech_category", allowed=TECH_CATEGORIES,
-    )
+    """人工修正单条记录的技术分类（Feature-023 四元组）.
+
+    请求体必须提供完整的 (category_l1, category_l2, category_l3, action) 四元组；
+    后端走 ActionDictionaryService.validate 严格校验，不在字典内返回 400
+    ACTION_DICTIONARY_VIOLATION；source 强制设为 manual，confidence=1.0.
+    """
+    action_dict = get_action_dictionary_service()
+    if not await action_dict.validate(
+        body.category_l1, body.category_l2, body.category_l3, body.action
+    ):
+        raise AppException(
+            ErrorCode.ACTION_DICTIONARY_VIOLATION,
+            details={
+                "category_l1": body.category_l1,
+                "category_l2": body.category_l2,
+                "category_l3": body.category_l3,
+                "action": body.action,
+            },
+        )
 
     record = await session.get(CoachVideoClassification, classification_id)
     if record is None:
@@ -278,7 +294,10 @@ async def patch_classification(
             },
         )
 
-    record.tech_category = body.tech_category
+    record.category_l1 = body.category_l1
+    record.category_l2 = body.category_l2
+    record.category_l3 = body.category_l3
+    record.action = body.action
     if body.tech_tags is not None:
         record.tech_tags = body.tech_tags
     record.classification_source = "manual"

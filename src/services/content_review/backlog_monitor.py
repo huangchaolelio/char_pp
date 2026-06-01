@@ -67,7 +67,7 @@ async def check_pending_backlog(session: AsyncSession) -> dict:
         select(
             CoachVideoClassification.id,
             CoachVideoClassification.coach_name,
-            CoachVideoClassification.tech_category,
+            CoachVideoClassification.action,
             CoachVideoClassification.pending_since,
         )
         .where(

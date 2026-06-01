@@ -20,6 +20,7 @@ from sqlalchemy import (
     CheckConstraint,
     Float,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     String,
@@ -47,7 +48,12 @@ class CoachVideoClassification(Base):
     course_series: Mapped[str] = mapped_column(String(255), nullable=False)
     cos_object_key: Mapped[str] = mapped_column(String(1024), nullable=False)
     filename: Mapped[str] = mapped_column(String(255), nullable=False)
-    tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    # Feature-023：严格四级分类字段（取代旧 tech_category）
+    # NULLABLE：unclassified 时四级全为 NULL；复合外键 → tech_actions 字典
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    action: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     tech_tags: Mapped[list[str]] = mapped_column(
         ARRAY(TEXT()), nullable=False, server_default="{}"
     )
@@ -151,10 +157,11 @@ class CoachVideoClassification(Base):
             name="ck_cvclf_review_state",
         ),
         Index("idx_cvclf_coach", "coach_name"),
-        Index("idx_cvclf_tech", "tech_category"),
+        # Feature-023: 叠加按 action 代替旧 tech_category 索引
+        Index("idx_cvclf_action", "action"),
         Index("idx_cvclf_kb", "kb_extracted"),
         Index("idx_cvclf_preprocessed", "preprocessed"),
-        Index("idx_cvclf_coach_tech", "coach_name", "tech_category"),
+        Index("idx_cvclf_coach_action", "coach_name", "action"),
         Index("ix_coach_class_last_curation", "last_curation_job_id"),
         # Feature-022 索引：审核工作台 P95 < 500ms（澄清 Q4 中规模 50–200 条/日）
         # idx_cvclf_review_state_pending_since: 列表默认按"积压最久"排序；
@@ -163,15 +170,28 @@ class CoachVideoClassification(Base):
             "idx_cvclf_review_state_pending_since",
             "review_state", "pending_since",
         ),
-        # idx_cvclf_review_state_tech: 工作台二级筛选（state + tech_category）
+        # idx_cvclf_review_state_action: 工作台二级筛选（state + action）
         Index(
-            "idx_cvclf_review_state_tech",
-            "review_state", "tech_category",
+            "idx_cvclf_review_state_action",
+            "review_state", "action",
         ),
         # idx_cvclf_review_state_coach: 工作台三级筛选（state + coach_name）
         Index(
             "idx_cvclf_review_state_coach",
             "review_state", "coach_name",
+        ),
+        # Feature-023 复合外键 → tech_actions 字典（4 列）
+        ForeignKeyConstraint(
+            ["category_l1", "category_l2", "category_l3", "action"],
+            [
+                "tech_actions.category_l1",
+                "tech_actions.category_l2",
+                "tech_actions.category_l3",
+                "tech_actions.action",
+            ],
+            onupdate="CASCADE",
+            ondelete="RESTRICT",
+            name="fk_cvclf_action",
         ),
         # idx_cvclf_last_decision: 详情接口快速 join 决策表
         Index("idx_cvclf_last_decision", "last_decision_id"),

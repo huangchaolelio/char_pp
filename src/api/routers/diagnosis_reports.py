@@ -29,7 +29,8 @@ from src.api.schemas.envelope import SuccessEnvelope, page as page_envelope
 from src.db.session import get_db
 from src.models.athlete_video_classification import AthleteVideoClassification
 from src.models.diagnosis_report import DiagnosisReport
-from src.services.tech_classifier import TECH_CATEGORIES
+# Feature-023: TECH_CATEGORIES 物理删除；改用 ActionDictionaryService
+from src.services.action_dictionary_service import get_action_dictionary_service
 
 from pydantic import BaseModel
 
@@ -40,7 +41,7 @@ class DiagnosisReportListItem(BaseModel):
     """单份诊断报告的列表视图（不含 dimensions）."""
 
     id: UUID
-    tech_category: str
+    action: str  # Feature-023: tech_category → action
     overall_score: float
     standard_id: int
     standard_version: int
@@ -67,7 +68,7 @@ async def list_diagnosis_reports(
     ),
     athlete_id: Optional[UUID] = Query(None, description="按运动员 UUID 过滤"),
     athlete_name: Optional[str] = Query(None, description="按运动员姓名精确匹配"),
-    tech_category: Optional[str] = Query(None, description="21 类技术之一"),
+    action: Optional[str] = Query(None, description="按具体动作名过滤（56 行字典之一）"),
     cos_object_key: Optional[str] = Query(None, description="素材 COS key 反查"),
     preprocessing_job_id: Optional[UUID] = Query(None, description="预处理 job 反查"),
     source: Optional[str] = Query(
@@ -92,11 +93,14 @@ async def list_diagnosis_reports(
         source = validate_enum_choice(
             source, field="source", allowed=_ALLOWED_SOURCE
         )
-    if tech_category is not None:
-        tech_category = validate_enum_choice(
-            tech_category,
-            field="tech_category",
-            allowed=set(TECH_CATEGORIES),
+    if action is not None:
+        # Feature-023: action 必须命中 tech_actions 字典（不区分手部，用 distinct 动作名集合）
+        action_dict = get_action_dictionary_service()
+        allowed_actions = await action_dict.all_actions()
+        action = validate_enum_choice(
+            action,
+            field="action",
+            allowed=allowed_actions,
         )
 
     # ── Build base statement ────────────────────────────────────────────
@@ -126,8 +130,8 @@ async def list_diagnosis_reports(
             AthleteVideoClassification.athlete_name == athlete_name
         )
 
-    if tech_category is not None:
-        base_stmt = base_stmt.where(DiagnosisReport.tech_category == tech_category)
+    if action is not None:
+        base_stmt = base_stmt.where(DiagnosisReport.action == action)
     if cos_object_key is not None:
         base_stmt = base_stmt.where(DiagnosisReport.cos_object_key == cos_object_key)
     if preprocessing_job_id is not None:
@@ -165,7 +169,7 @@ async def list_diagnosis_reports(
     items = [
         DiagnosisReportListItem(
             id=row.id,
-            tech_category=row.tech_category,
+            action=row.action,
             overall_score=row.overall_score,
             standard_id=row.standard_id,
             standard_version=row.standard_version,

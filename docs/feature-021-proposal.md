@@ -1,5 +1,10 @@
 # Feature-021（建议）：技术分类升级 & KB 提取标准化 方案
 
+> **状态变更（2026-05-31）**：本提案已被 **Feature-023（tech-classification-rebuild）** 上位实现并扩展为零兼容方案。
+> Feature-023 以单一原子迁移 `0022_tech_taxonomy_rebuild` 完成 8 张业务表的 schema 重构、`tech_actions` 字典 seed
+> 与 4 级字段（category_l1/l2/l3/action）落地，并通过 `ActionDictionaryService` + `TechClassifier V2` 实现章程
+> 原则 IX（接口下线 = 物理删除）。后续维护请参考 `specs/023-tech-classification-rebuild/`。
+
 **日期**：2026-05-18  
 **状态**：方案待确认
 

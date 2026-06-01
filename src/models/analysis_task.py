@@ -98,8 +98,8 @@ class AnalysisTask(Base):
         default=TaskStatus.pending,
     )
     rejection_reason: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    # Feature-019: 原 `knowledge_base_version VARCHAR FK` → `(kb_tech_category, kb_version)` 复合 FK
-    kb_tech_category: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    # Feature-023: kb_tech_category → kb_action（复合 FK 到 tech_knowledge_bases (action, version)）
+    kb_action: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     kb_version: Mapped[Optional[int]] = mapped_column(Integer, nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
 
@@ -214,21 +214,21 @@ class AnalysisTask(Base):
     def is_deleted(self) -> bool:
         return self.deleted_at is not None
 
-    # Feature-019 兼容层：老代码可能读 `task.knowledge_base_version` ——用备为合成 id
+    # Feature-019/023 兼容层：老代码可能读 `task.knowledge_base_version` ——用备为合成 id
     @property
     def knowledge_base_version(self) -> str | None:
-        """Feature-019 转接属性：将 (kb_tech_category, kb_version) 复合键拼接成 “tc/ver” 字符串。
+        """将 (kb_action, kb_version) 复合键拼接成 “act/ver” 字符串（向后兼容属性）.
 
         旧消费方仅要求读取 schema 字段，不关心底层存储形式；写入路径 MUST 直接给新列。
         """
-        if self.kb_tech_category is None or self.kb_version is None:
+        if self.kb_action is None or self.kb_version is None:
             return None
-        return f"{self.kb_tech_category}/{self.kb_version}"
+        return f"{self.kb_action}/{self.kb_version}"
 
     __table_args__ = (
         ForeignKeyConstraint(
-            ["kb_tech_category", "kb_version"],
-            ["tech_knowledge_bases.tech_category", "tech_knowledge_bases.version"],
+            ["kb_action", "kb_version"],
+            ["tech_knowledge_bases.action", "tech_knowledge_bases.version"],
             ondelete="SET NULL",
             name="fk_analysis_tasks_kb",
         ),

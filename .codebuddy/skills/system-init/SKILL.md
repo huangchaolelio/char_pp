@@ -32,7 +32,7 @@ context: fork
    /opt/conda/envs/coaching/bin/alembic current | head -5
    ```
 
-3. **表清单一致性校验**：用 `information_schema` 列出 public schema 的表，与 `reset_business_data.sql` 里 TRUNCATE 清单比对；如果数据库实际表多于脚本覆盖的清单，**中止** 并提示用户"检测到未登记的新表 <name>，请先更新 system-init skill 的 SQL 清单"
+3. **表清单一致性校验**：用 `information_schema` 列出 public schema 的表，与 `reset_business_data.sql` 里 TRUNCATE 清单比对；如果数据库实际表多于脚本覆盖的清单，**中止** 并提示用户 "检测到未登记的新表 <name>，请先更新 system-init skill 的 SQL 清单"
    ```bash
    /opt/conda/envs/coaching/bin/python3.11 - <<'PY'
    import asyncio, asyncpg, re, pathlib
@@ -42,7 +42,8 @@ context: fork
        c = await asyncpg.connect('postgresql://postgres:password@localhost:5432/coaching_db')
        rows = await c.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")
        await c.close()
-       actual = {r['tablename'] for r in rows} - {'alembic_version'}
+       # Feature-023：tech_actions 为字典表，TRUNCATE 清单中不出现，需从实际表集中排除后再对比
+       actual = {r['tablename'] for r in rows} - {'alembic_version', 'tech_actions'}
        missing = actual - covered
        if missing:
            raise SystemExit(f'未登记的表: {missing}；请更新 SKILL 的 SQL 清单')
@@ -51,6 +52,18 @@ context: fork
    PY
    ```
 
+4. **`tech_actions` 字典完整性校验（Feature-023）**：确认 56 行 seed 已落库（Path 1' 拓展后），否则中止
+   ```bash
+   /opt/conda/envs/coaching/bin/python3.11 -c "
+import asyncio, asyncpg
+async def m():
+    c = await asyncpg.connect('postgresql://postgres:password@localhost:5432/coaching_db')
+    cnt = await c.fetchval('SELECT count(*) FROM tech_actions')
+    await c.close()
+    assert cnt == 56, f'tech_actions 期望 56 行，实际 {cnt} 行；请检查迁移 0022 是否成功'
+    print(f'tech_actions={cnt} OK')
+asyncio.run(m())"
+   ```
 ## 执行步骤
 
 1. **提醒 + 展示将清理/保留清单**（基于 SQL 内容文案化），等待用户确认
@@ -85,6 +98,7 @@ context: fork
 | 对象 | 类型 | 原因 |
 |------|------|------|
 | `alembic_version` | 表 | 迁移版本追踪，清了会让 alembic 以为是空库 |
+| `tech_actions` | 表（字典） | Feature-023 技术动作字典 56 行 seed（Path 1' 拓展后），与任务通道配置同类；清了会导致业务表 FK 级联失效 |
 | 所有枚举类型（`task_status_enum`、`task_type_enum` 等） | PG TYPE | schema 层对象，TRUNCATE 不涉及 |
 | 所有索引、外键、触发器 | DDL | 仅清数据，不改 DDL |
 | COS 存储桶里的对象 | 远端 | 不在本 skill 职责范围；如需连带清理，另起单独脚本并显式确认 |

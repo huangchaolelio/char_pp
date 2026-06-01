@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import Boolean, Float, String, Text
+from sqlalchemy import Boolean, Float, ForeignKeyConstraint, String, Text
 from sqlalchemy.dialects.postgresql import TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -31,10 +31,11 @@ class VideoClassification(Base):
     # Coach info parsed from COS path
     coach_name: Mapped[str] = mapped_column(String(100), nullable=False)
 
-    # Three-level classification hierarchy
-    tech_category: Mapped[str] = mapped_column(String(50), nullable=False)
-    tech_sub_category: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
-    tech_detail: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
+    # Feature-023：严格四级分类字段（取代旧 tech_category / tech_sub_category / tech_detail）
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    action: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
 
     # tutorial = technique explanation; training = drill / practice plan
     video_type: Mapped[str] = mapped_column(String(20), nullable=False)
@@ -61,4 +62,20 @@ class VideoClassification(Base):
         server_default=text("timezone('Asia/Shanghai', now())"),
         onupdate=text("timezone('Asia/Shanghai', now())"),
         nullable=False,
+    )
+
+    __table_args__ = (
+        # Feature-023 复合外键 → tech_actions 字典（NULLABLE）
+        ForeignKeyConstraint(
+            ["category_l1", "category_l2", "category_l3", "action"],
+            [
+                "tech_actions.category_l1",
+                "tech_actions.category_l2",
+                "tech_actions.category_l3",
+                "tech_actions.action",
+            ],
+            onupdate="CASCADE",
+            ondelete="RESTRICT",
+            name="fk_vclf_action",
+        ),
     )

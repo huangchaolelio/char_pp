@@ -37,7 +37,6 @@ from src.api.errors import AppException, ErrorCode
 from src.models.expert_tech_point import ExpertTechPoint
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.models.tech_standard import SourceQuality, StandardStatus, TechStandard, TechStandardPoint
-from src.services.tech_classifier import TECH_CATEGORIES
 
 logger = logging.getLogger(__name__)
 
@@ -134,7 +133,7 @@ class TechStandardBuilder:
 
         Feature-019 契约改变（spec.md FR-014~FR-019）：
           - 数据源 MUST 限定为 "该 tech_category 当前 active KB 所含 expert_tech_points"
-          - 若该类别无 active KB ⇒ 抛 `NO_ACTIVE_KB_FOR_CATEGORY`（409）
+          - 若该类别无 active KB ⇒ 抛 `NO_ACTIVE_KB_FOR_ACTION`（409；Feature-023 重命名）
           - 指纹幂等：同一 active KB + 相同 points 集合 ⇒ `STANDARD_ALREADY_UP_TO_DATE`（409）
           - 新产出的 TechStandard 直接 status=active（FR-014a，不走 draft）
 
@@ -154,19 +153,19 @@ class TechStandardBuilder:
         # --- Step 1: 查该类别 active KB ---------------------------
         active_kb = (await session.execute(
             select(TechKnowledgeBase).where(
-                TechKnowledgeBase.tech_category == tech_category,
+                TechKnowledgeBase.action == tech_category,
                 TechKnowledgeBase.status == KBStatus.active,
             )
         )).scalar_one_or_none()
         if active_kb is None:
             raise AppException(
-                ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY,
+                ErrorCode.NO_ACTIVE_KB_FOR_ACTION,
                 details={"tech_category": tech_category},
             )
 
         # --- Step 2: 取该 active KB 下的 valid ExpertTechPoints ---
         stmt = select(ExpertTechPoint).where(
-            ExpertTechPoint.kb_tech_category == tech_category,
+            ExpertTechPoint.kb_action == tech_category,
             ExpertTechPoint.kb_version == active_kb.version,
             ExpertTechPoint.extraction_confidence >= 0.7,
             ExpertTechPoint.conflict_flag.is_(False),
@@ -199,7 +198,7 @@ class TechStandardBuilder:
 
         existing_active = (await session.execute(
             select(TechStandard).where(
-                TechStandard.tech_category == tech_category,
+                TechStandard.action == tech_category,
                 TechStandard.status == StandardStatus.active.value,
             )
         )).scalar_one_or_none()
@@ -241,7 +240,7 @@ class TechStandardBuilder:
         # --- Step 5: 计算下一 version + 归档同类别旧 active ---------
         version_stmt = (
             select(TechStandard.version)
-            .where(TechStandard.tech_category == tech_category)
+            .where(TechStandard.action == tech_category)
             .order_by(TechStandard.version.desc())
             .limit(1)
         )
@@ -252,7 +251,7 @@ class TechStandardBuilder:
         archive_stmt = (
             update(TechStandard)
             .where(
-                TechStandard.tech_category == tech_category,
+                TechStandard.action == tech_category,
                 TechStandard.status == StandardStatus.active.value,
             )
             .values(status=StandardStatus.archived.value)
@@ -286,7 +285,7 @@ class TechStandardBuilder:
 
         # --- Step 7: Insert 新 standard（status 直接 active） ------------
         standard = TechStandard(
-            tech_category=tech_category,
+            action=tech_category,  # Feature-023: ORM 字段已 rename 为 action
             version=next_version,
             status=StandardStatus.active.value,
             source_quality=source_quality,
@@ -337,22 +336,28 @@ class TechStandardBuilder:
 
         Returns BatchBuildResult with per-category results and aggregate counts.
         """
-        from src.models.expert_tech_point import ActionType as EtpActionType
+        # Feature-023 T054：聚合维度从 EtpActionType（21 类 + visual rule）切换为
+# tech_actions 字典的 distinct action 集合（56 行 → ≤56 个 distinct action）
+        from src.services.action_dictionary_service import (
+            get_action_dictionary_service,
+        )
 
         results: list[BuildResult] = []
+        action_dict = get_action_dictionary_service()
+        actions = await action_dict.all_actions()
 
-        for action_type in EtpActionType:
+        for action_value in sorted(actions):
             try:
-                result = await self.build_standard(action_type.value)
+                result = await self.build_standard(action_value)
                 results.append(result)
             except Exception as exc:
                 logger.error(
                     "build_standard failed",
-                    extra={"tech_category": action_type.value, "error": str(exc)},
+                    extra={"tech_category": action_value, "error": str(exc)},
                 )
                 results.append(
                     BuildResult(
-                        tech_category=action_type.value,
+                        tech_category=action_value,
                         result="failed",
                         reason=str(exc),
                     )
@@ -381,7 +386,7 @@ async def get_active_standard(
     stmt = (
         select(TechStandard)
         .where(
-            TechStandard.tech_category == tech_category,
+            TechStandard.action == tech_category,
             TechStandard.status == StandardStatus.active.value,
         )
     )

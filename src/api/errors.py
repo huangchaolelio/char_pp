@@ -86,19 +86,24 @@ class ErrorCode(str, Enum):
     PHASE_STEP_UNMAPPED = "PHASE_STEP_UNMAPPED"
     OPTIMIZATION_LEVERS_YAML_INVALID = "OPTIMIZATION_LEVERS_YAML_INVALID"
 
-    # ── Feature-019 KB per-category 生命周期（4） ────────────
+    # ── Feature-019 KB per-action 生命周期（Feature-023 重命名：per-category → per-action） ────────────
     KB_CONFLICT_UNRESOLVED = "KB_CONFLICT_UNRESOLVED"
     KB_EMPTY_POINTS = "KB_EMPTY_POINTS"
-    NO_ACTIVE_KB_FOR_CATEGORY = "NO_ACTIVE_KB_FOR_CATEGORY"
+    NO_ACTIVE_KB_FOR_ACTION = "NO_ACTIVE_KB_FOR_ACTION"  # Feature-023: replaces NO_ACTIVE_KB_FOR_CATEGORY
     STANDARD_ALREADY_UP_TO_DATE = "STANDARD_ALREADY_UP_TO_DATE"
 
-    # ── Feature-020 运动员推理流水线（6） ─────────────
+    # ── Feature-020 运动员推理流水线（5；Feature-023 物理删除 STANDARD_NOT_AVAILABLE） ─────────────
     ATHLETE_ROOT_UNREADABLE = "ATHLETE_ROOT_UNREADABLE"
     ATHLETE_DIRECTORY_MAP_MISSING = "ATHLETE_DIRECTORY_MAP_MISSING"
     ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND = "ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND"
     ATHLETE_VIDEO_NOT_PREPROCESSED = "ATHLETE_VIDEO_NOT_PREPROCESSED"
-    STANDARD_NOT_AVAILABLE = "STANDARD_NOT_AVAILABLE"
     ATHLETE_VIDEO_POSE_UNUSABLE = "ATHLETE_VIDEO_POSE_UNUSABLE"
+
+    # ── Feature-023 技术分类体系重构（4） ─────────────
+    # 见 specs/023-tech-classification-rebuild/contracts/error-codes.md
+    ACTION_NOT_FOUND = "ACTION_NOT_FOUND"                              # 404 — action 不在字典内
+    ACTION_DICTIONARY_VIOLATION = "ACTION_DICTIONARY_VIOLATION"        # 400 — 提交体的 action 字段不在 tech_actions 字典
+    STANDARD_NOT_AVAILABLE_FOR_ACTION = "STANDARD_NOT_AVAILABLE_FOR_ACTION"  # 503 — 该 action 暂无 active 标准（替换旧 STANDARD_NOT_AVAILABLE）
 
     # ── Feature-021 视频内容清洗（7） ─────────────────
     # 清洗强制门 + 业务结果型错误码（其中 LOW_QUALITY_SKIP / CURATION_LLM_UNAVAILABLE
@@ -180,19 +185,23 @@ ERROR_STATUS_MAP: dict[ErrorCode, HTTPStatus] = {
     ErrorCode.PHASE_STEP_UNMAPPED: HTTPStatus.INTERNAL_SERVER_ERROR,     # 500
     ErrorCode.OPTIMIZATION_LEVERS_YAML_INVALID: HTTPStatus.INTERNAL_SERVER_ERROR,  # 500
 
-    # Feature-019（KB per-category 生命周期）
+    # Feature-019（KB per-action 生命周期；Feature-023 重命名）
     ErrorCode.KB_CONFLICT_UNRESOLVED: HTTPStatus.CONFLICT,               # 409
     ErrorCode.KB_EMPTY_POINTS: HTTPStatus.CONFLICT,                      # 409
-    ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY: HTTPStatus.CONFLICT,            # 409
+    ErrorCode.NO_ACTIVE_KB_FOR_ACTION: HTTPStatus.CONFLICT,              # 409 — Feature-023 替换 NO_ACTIVE_KB_FOR_CATEGORY
     ErrorCode.STANDARD_ALREADY_UP_TO_DATE: HTTPStatus.CONFLICT,          # 409
 
-    # Feature-020（运动员推理流水线）
+    # Feature-020（运动员推理流水线；Feature-023 删除 STANDARD_NOT_AVAILABLE）
     ErrorCode.ATHLETE_ROOT_UNREADABLE: HTTPStatus.BAD_GATEWAY,                       # 502
     ErrorCode.ATHLETE_DIRECTORY_MAP_MISSING: HTTPStatus.INTERNAL_SERVER_ERROR,       # 500
     ErrorCode.ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND: HTTPStatus.NOT_FOUND,          # 404
     ErrorCode.ATHLETE_VIDEO_NOT_PREPROCESSED: HTTPStatus.CONFLICT,                   # 409
-    ErrorCode.STANDARD_NOT_AVAILABLE: HTTPStatus.CONFLICT,                           # 409
     ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE: HTTPStatus.UNPROCESSABLE_ENTITY,          # 422
+
+    # Feature-023（技术分类体系重构）
+    ErrorCode.ACTION_NOT_FOUND: HTTPStatus.NOT_FOUND,                                # 404
+    ErrorCode.ACTION_DICTIONARY_VIOLATION: HTTPStatus.BAD_REQUEST,                   # 400
+    ErrorCode.STANDARD_NOT_AVAILABLE_FOR_ACTION: HTTPStatus.SERVICE_UNAVAILABLE,     # 503
 
     # Feature-021（视频内容清洗）
     # LOW_QUALITY_SKIP / CURATION_LLM_UNAVAILABLE 是"业务结果型"标记，不会通过
@@ -280,19 +289,23 @@ ERROR_DEFAULT_MESSAGE: dict[ErrorCode, str] = {
     ErrorCode.PHASE_STEP_UNMAPPED: "业务阶段/步骤派生失败（内部错误）",
     ErrorCode.OPTIMIZATION_LEVERS_YAML_INVALID: "优化杠杆台账配置加载失败",
 
-    # Feature-019（KB per-category 生命周期）
+    # Feature-019（KB per-action 生命周期；Feature-023 重命名）
     ErrorCode.KB_CONFLICT_UNRESOLVED: "知识库存在未解决的冲突点",
     ErrorCode.KB_EMPTY_POINTS: "知识库为空，无法批准",
-    ErrorCode.NO_ACTIVE_KB_FOR_CATEGORY: "该技术类别无已激活的知识库",
+    ErrorCode.NO_ACTIVE_KB_FOR_ACTION: "该动作无已激活的知识库",
     ErrorCode.STANDARD_ALREADY_UP_TO_DATE: "标准已是最新，无需重建",
 
-    # Feature-020（运动员推理流水线）
+    # Feature-020（运动员推理流水线；Feature-023 删除 STANDARD_NOT_AVAILABLE）
     ErrorCode.ATHLETE_ROOT_UNREADABLE: "运动员视频根路径不可读或凭证无效",
     ErrorCode.ATHLETE_DIRECTORY_MAP_MISSING: "运动员目录映射配置文件缺失",
     ErrorCode.ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND: "运动员素材记录不存在",
     ErrorCode.ATHLETE_VIDEO_NOT_PREPROCESSED: "运动员视频尚未完成预处理，不能直接诊断",
-    ErrorCode.STANDARD_NOT_AVAILABLE: "该技术类别暂无可用的激活版标准",
     ErrorCode.ATHLETE_VIDEO_POSE_UNUSABLE: "运动员视频姿态提取全程无可用关键点",
+
+    # Feature-023（技术分类体系重构）
+    ErrorCode.ACTION_NOT_FOUND: "动作不存在",
+    ErrorCode.ACTION_DICTIONARY_VIOLATION: "action 不在字典内",
+    ErrorCode.STANDARD_NOT_AVAILABLE_FOR_ACTION: "该动作暂无 active 技术标准",
 
     # Feature-021（视频内容清洗）
     ErrorCode.CURATION_REQUIRED: "视频尚未完成内容清洗，请先提交清洗任务",

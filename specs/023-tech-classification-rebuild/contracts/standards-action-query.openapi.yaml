@@ -1,0 +1,96 @@
+openapi: 3.1.0
+info:
+  title: Tech Standards — Action Query
+  version: '023'
+  description: |
+    Feature 023 — GET /api/v1/standards 查询参数从 tech_category 切换为 action。
+    旧参数 tech_category 直接物理删除（章程 v2.0.0 接口下线策略）。
+
+paths:
+  /api/v1/standards:
+    get:
+      summary: 查询技术标准
+      parameters:
+        - name: action
+          in: query
+          required: false
+          schema: {type: string}
+          description: |
+          按具体动作过滤（必须命中 tech_actions 字典 56 行之一）。
+            未传时返回全部 active 标准。
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [draft, active, archived]
+            default: active
+        - name: page
+          in: query
+          schema: {type: integer, minimum: 1, default: 1}
+        - name: page_size
+          in: query
+          schema: {type: integer, minimum: 1, maximum: 100, default: 20}
+        # ⚠️ tech_category 查询参数已物理删除（章程 v2.0.0 原则 IX）
+      responses:
+        '200':
+          description: 成功
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StandardsListEnvelope'
+        '404':
+          description: 指定 action 不在字典内
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActionNotFoundEnvelope'
+        '422':
+          description: 参数校验失败（含传入已下线参数 tech_category） → VALIDATION_FAILED
+
+components:
+  schemas:
+    StandardsListEnvelope:
+      type: object
+      required: [success, data, meta]
+      properties:
+        success: {type: boolean, enum: [true]}
+        data:
+          type: array
+          items: {$ref: '#/components/schemas/StandardItem'}
+        meta:
+          type: object
+          properties:
+            page: {type: integer}
+            page_size: {type: integer}
+            total: {type: integer}
+
+    StandardItem:
+      type: object
+      required: [id, action, version, status]
+      properties:
+        id:           {type: integer}
+        action:       {type: string, description: 具体动作名（tech_actions 字典 56 行之一）}
+        category_l1:  {type: string}
+        category_l2:  {type: string}
+        category_l3:  {type: string}
+        version:      {type: integer}
+        status:       {type: string, enum: [draft, active, archived]}
+        data_insufficient: {type: boolean, description: 当 KB 数据不足时为 true（FR-016）}
+        params:       {type: object, description: 标准参数范围（动作特有）}
+        # ⚠️ tech_category 字段已物理删除
+
+    ActionNotFoundEnvelope:
+      type: object
+      required: [success, error]
+      properties:
+        success: {type: boolean, enum: [false]}
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:    {type: string, enum: [ACTION_NOT_FOUND]}
+            message: {type: string}
+            details:
+              type: object
+              properties:
+                action: {type: string}

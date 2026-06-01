@@ -117,8 +117,8 @@ async def list_teaching_tips(
 
     if tech_category is not None:
         tc_norm = tech_category.strip().lower()
-        stmt = stmt.where(TeachingTip.tech_category == tc_norm)
-        count_stmt = count_stmt.where(TeachingTip.tech_category == tc_norm)
+        stmt = stmt.where(TeachingTip.action == tc_norm)
+        count_stmt = count_stmt.where(TeachingTip.action == tc_norm)
     if tech_phase is not None:
         stmt = stmt.where(TeachingTip.tech_phase == tech_phase)
         count_stmt = count_stmt.where(TeachingTip.tech_phase == tech_phase)
@@ -134,11 +134,11 @@ async def list_teaching_tips(
     if kb_tech_category is not None and kb_version is not None:
         ktc = kb_tech_category.strip().lower()
         stmt = stmt.where(
-            TeachingTip.kb_tech_category == ktc,
+            TeachingTip.kb_action == ktc,
             TeachingTip.kb_version == kb_version,
         )
         count_stmt = count_stmt.where(
-            TeachingTip.kb_tech_category == ktc,
+            TeachingTip.kb_action == ktc,
             TeachingTip.kb_version == kb_version,
         )
 
@@ -317,7 +317,7 @@ async def extract_tips(
     )
     await db.commit()
 
-    # Resolve tech_category from task hint (Feature-019: AnalysisTask.kb_tech_category 优先)
+    # Resolve tech_category from task hint (Feature-019: AnalysisTask.kb_action 优先)
     tech_category = _resolve_tech_category(task)
 
     # Run extraction in a background thread to avoid blocking the event loop

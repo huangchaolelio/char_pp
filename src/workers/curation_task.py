@@ -171,7 +171,7 @@ async def _emit_curate_complete_log(session, job_id: UUID, final_status: str) ->
         return
     tech_category = (
         await session.execute(
-            select(CoachVideoClassification.tech_category).where(
+            select(CoachVideoClassification.action).where(
                 CoachVideoClassification.id == job.coach_video_classification_id
             )
         )

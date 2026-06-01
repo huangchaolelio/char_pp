@@ -432,7 +432,7 @@ class DiagnosisService:
                 ) from exc
             except StandardNotFoundError as exc:
                 raise AppException(
-                    ErrorCode.STANDARD_NOT_AVAILABLE,
+                    ErrorCode.STANDARD_NOT_AVAILABLE_FOR_ACTION,
                     details={"tech_category": exc.tech_category},
                 ) from exc
 
@@ -464,7 +464,7 @@ class DiagnosisService:
 
     async def _get_active_standard(self, tech_category: str) -> TechStandard:
         stmt = select(TechStandard).where(
-            TechStandard.tech_category == tech_category,
+            TechStandard.action == tech_category,
             TechStandard.status == StandardStatus.active,
         )
         result = await self._session.execute(stmt)

@@ -43,7 +43,7 @@ async def relink_on_kb_approve(
         result = await session.execute(
             update(TeachingTip)
             .where(
-                TeachingTip.kb_tech_category == tech_category,
+                TeachingTip.kb_action == tech_category,
                 TeachingTip.kb_version == old_version,
                 TeachingTip.source_type == "auto",
                 TeachingTip.status == TipStatus.active,
@@ -57,7 +57,7 @@ async def relink_on_kb_approve(
     result = await session.execute(
         update(TeachingTip)
         .where(
-            TeachingTip.kb_tech_category == tech_category,
+            TeachingTip.kb_action == tech_category,
             TeachingTip.kb_version == new_version,
             TeachingTip.status == TipStatus.draft,
         )
@@ -101,7 +101,7 @@ async def list_tips_by_category(
     result = await session.execute(
         select(TeachingTip)
         .where(
-            TeachingTip.tech_category == tech_category,
+            TeachingTip.action == tech_category,
             TeachingTip.status.in_(statuses),
         )
         .order_by(

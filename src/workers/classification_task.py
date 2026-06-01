@@ -169,19 +169,20 @@ async def _run_classify(task_id: str, cos_object_key: str) -> dict:
         await session.commit()
 
         try:
-            # Delegate to ClassificationService (T036). The service performs
-            # the rule-based keyword match (LLM fallback) and upserts the
+            # Delegate to ClassificationService (Feature-023 V2). The service
+            # performs the rule-based keyword match (LLM fallback against the
+            # 44-row tech_actions dictionary) and upserts the
             # ``coach_video_classifications`` row; returns the assigned
-            # ``tech_category``.
+            # ``action`` (one of 44 dictionary entries or ``unclassified``).
             from src.services.classification_service import (
                 ClassificationService,
             )
 
             svc = ClassificationService()
-            tech_category = await svc.classify_single_video(
+            action = await svc.classify_single_video(
                 session=session, cos_object_key=cos_object_key
             )
-            result_payload: dict = {"tech_category": tech_category}
+            result_payload: dict = {"action": action}
 
             await session.execute(
                 update(AnalysisTask)

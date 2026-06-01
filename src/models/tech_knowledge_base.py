@@ -21,6 +21,7 @@ from sqlalchemy import (
     CheckConstraint,
     Enum,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
     Integer,
     PrimaryKeyConstraint,
@@ -45,10 +46,14 @@ class KBStatus(str, enum.Enum):
 class TechKnowledgeBase(Base):
     __tablename__ = "tech_knowledge_bases"
 
-    # ── 复合主键（Feature-019）─────────────────────────────────────────
-    tech_category: Mapped[str] = mapped_column(String(64), nullable=False)
+    # ── 复合主键（Feature-023：per-action，重命名自 Feature-019、从 tech_category）───────────────
+    action: Mapped[str] = mapped_column(String(64), nullable=False)
     version: Mapped[int] = mapped_column(Integer, nullable=False)
 
+    # Feature-023 三级分类字段（与字典外键匹配）
+    category_l1: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l2: Mapped[Optional[str]] = mapped_column(String(32), nullable=True)
+    category_l3: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     status: Mapped[KBStatus] = mapped_column(
         Enum(KBStatus, name="kb_status_enum", create_type=False),
         nullable=False,
@@ -89,11 +94,23 @@ class TechKnowledgeBase(Base):
     )
 
     __table_args__ = (
-        PrimaryKeyConstraint("tech_category", "version", name="pk_tech_kb_cat_ver"),
+        PrimaryKeyConstraint("action", "version", name="pk_tech_kb_action_ver"),
+        # Feature-023 复合外键 → tech_actions 字典（4 列）
+        ForeignKeyConstraint(
+            ["category_l1", "category_l2", "category_l3", "action"],
+            [
+                "tech_actions.category_l1",
+                "tech_actions.category_l2",
+                "tech_actions.category_l3",
+                "tech_actions.action",
+            ],
+            onupdate="CASCADE",
+            ondelete="RESTRICT",
+            name="fk_tkb_action",
+        ),
         CheckConstraint("version >= 1", name="ck_tech_kb_version_positive"),
         CheckConstraint("point_count >= 0", name="ck_tech_kb_point_count_nn"),
         Index("idx_tech_kb_extraction_job", "extraction_job_id"),
         Index("idx_tech_kb_status", "status"),
-        # partial unique index `uq_tech_kb_active_per_category` 由迁移 0017 直接 `op.execute`
-        # 创建（SQLAlchemy 的 Index 不支持 WHERE 子句的方言中立表达），此处仅声明意图
+        # partial unique index `uq_tech_kb_active_per_action` 由迁移 0022 创建
     )

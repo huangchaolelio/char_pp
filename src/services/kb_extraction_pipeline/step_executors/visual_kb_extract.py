@@ -134,7 +134,8 @@ async def execute(
                     "param_ideal": float(dim.param_ideal),
                     "unit": dim.unit,
                     "extraction_confidence": float(dim.extraction_confidence),
-                    # 显式契约：始终按提交类别落库，禁止分类器自由覆盖。
+                    # Feature-023: 输出含 action 字典名，同时保留 action_type 别名
+                    "action": job.tech_category,
                     "action_type": job.tech_category,
                     "source_type": "visual",
                 })

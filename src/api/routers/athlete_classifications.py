@@ -39,7 +39,8 @@ from src.api.schemas.envelope import SuccessEnvelope, ok, page
 from src.db.session import get_db
 from src.models.analysis_task import AnalysisTask, TaskStatus, TaskType
 from src.models.athlete_video_classification import AthleteVideoClassification
-from src.services.tech_classifier import TECH_CATEGORIES
+# Feature-023: TECH_CATEGORIES 物理删除；改用 ActionDictionaryService
+from src.services.action_dictionary_service import get_action_dictionary_service
 
 router = APIRouter(tags=["athlete-classifications"])
 
@@ -233,8 +234,12 @@ async def list_athlete_classifications(
     """按过滤条件分页查询运动员素材清单."""
     # Enum 参数校验（非法值 → 400 INVALID_ENUM_VALUE）
     if tech_category is not None:
+        # Feature-023: 改用 tech_actions 字典 distinct action 集合（保留 tech_category
+        # 字段名以兼容运动员素材表 schema；查询的是动作名而非旧 21 类 ID）
+        action_dict = get_action_dictionary_service()
+        allowed_actions = await action_dict.all_actions()
         tech_category = validate_enum_choice(
-            tech_category, field="tech_category", allowed=sorted(TECH_CATEGORIES),
+            tech_category, field="tech_category", allowed=sorted(allowed_actions),
         )
     sort_by = validate_enum_choice(
         sort_by, field="sort_by", allowed=["created_at", "updated_at"],

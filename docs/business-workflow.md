@@ -1,10 +1,11 @@
 
 # 业务执行流程规范
 
-> 最后更新：2026-05-29
+> 最后更新：2026-05-31（Feature-023 仅做字段级重命名 `tech_category` → `action`，业务阶段 / 队列 / 状态机 / 错误码均未变动；本文档结构保持不变）
 >
-> 本文档抽象项目的核心业务为**四阶段九步骤**执行模型（Feature-022 从三阶段趋升级），明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆与调度图。
->
+> 本文档抽象项目的核心业务为**四阶段九步骤**执行模型（Feature-022 从三阶段趋升级
+），明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆
+与调度图。>
 > 适用对象：运营 / 开发 / SRE；配合 [architecture.md](./architecture.md)（技术架构）与 [features.md](./features.md)（功能清单）阅读。
 
 ---
@@ -80,7 +81,7 @@ flowchart LR
 |---|------|---------|------------|------|---------|------|-------|
 | 1 | **scan_cos_videos** | `POST /api/v1/classifications/scan` | `default` | 1 | COS 根路径可读（`COS_VIDEO_ALL_COCAH`） | `coach_video_classifications` + `coaches` | `analysis_tasks(task_type=video_classification, submitted_via=batch_scan)` |
 | 2 | **preprocess_video** | 批量提交 `POST /api/v1/tasks type=video_preprocessing` | `preprocessing` | 3 | `coach_video_classifications` 存在 | 标准化 mp4 + N×180s 分片（COS）+ 16k mono WAV | `video_preprocessing_jobs` + `video_preprocessing_segments` |
-| 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `tech_category` 字段落定（21 类之一） | `analysis_tasks(task_type=video_classification)` |
+| 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `action` 字段落定（`tech_actions` 字典 56 行之一）与 `category_l1/l2/l3`【Feature-023】 | `analysis_tasks(task_type=video_classification)` |
 | 4 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `tech_category` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
 | 5 | **content_review**（Feature-022） | `POST /api/v1/content-reviews/{cvclf_id}/decisions` | —（同步人工决策路径） | — | `video_curation_jobs.status=success`；cvclf 本身 `review_state IN ('pending_review', 'stale')` | `coach_video_classifications.review_state` 转为 `approved` / `rejected`；`content_review_decisions` 新增一行决策留痕 | `coach_video_classifications` + `content_review_decisions` |
 
@@ -225,10 +226,9 @@ wave4:  merge_kb
 
 ### 4.2 三条硬约束（章程 / DB 级强制）
 
-1. **单 active 约束（per-tech_category）**：`tech_knowledge_bases` 在**每个 `tech_category` 维度上**任意时刻最多 1 行 `status='active'`（Feature-019）。由 partial unique index `uq_tech_kb_active_per_category ON tech_knowledge_bases (tech_category) WHERE status='active'` 在 DB 层强制；主键为复合键 `(tech_category, version INTEGER)`，每类别独立递增版本。
-2. **冲突不可绕过**：`approve_version(tech_category, version)` 会扫描该 `(tc, ver)` 下 `ExpertTechPoint.conflict_flag`，存在未解决冲突直接抛。Feature-019 新增专属错误码 `KB_CONFLICT_UNRESOLVED` (409)；原 `CONFLICT_UNRESOLVED` 仍保留以兼容老端点。
-3. **版本链可追溯**：`tech_knowledge_bases.extraction_job_id` 被 Feature-019 提升为 NOT NULL，FK 指向 `extraction_jobs.id` → `cos_object_key`，从一条诊断结果可一路回溯到"哪段专家视频、哪个片段、哪一路（visual/audio）贡献了这条规则"。
-
+1. **单 active 约束（per-action）**：`tech_knowledge_bases` 在**每个 `action` 动作维度上**任意时刻最多 1 行 `status='active'`（Feature-019/023）。由 partial unique index `uq_tech_kb_active_per_action ON tech_knowledge_bases (action) WHERE status='active'` 在 DB 层强制；主键为复合键 `(action, version INTEGER)`，每动作独立递增版本。
+2. **冲突不可绕过**：`approve_version(action, version)` 会扫描该 `(action, ver)` 下 `ExpertTechPoint.conflict_flag`，存在未解决冲突直接抛。Feature-019 新增专属错误码 `KB_CONFLICT_UNRESOLVED` (409)；原 `CONFLICT_UNRESOLVED` 仍保留以兼容老端点。
+3. **版本链可追溯**：`tech_knowledge_bases.extraction_job_id` 被 Feature-019 提升为 NOT NULL，FK 指向 `extraction_jobs.id` → `cos_object_key`，从一条诊断结果可一路回溯到“哪段专家视频、哪个片段、哪一路（visual/audio）贡献了这条规则”。
 ### 4.3 状态机
 
 ```
@@ -279,7 +279,7 @@ wave4:  merge_kb
 
 ### 5.4 诊断服务内部 11 步（`diagnosis_service.diagnose()`）
 
-1. 校验 `tech_category` ∈ `TECH_CATEGORIES`
+1. 校验 `action` ∈ `tech_actions` 字典（Feature-023 后字典 56 行 V2，旧 `TECH_CATEGORIES` 已物理删除）
 2. 查询 active `TechStandard`（无 → **`STANDARD_NOT_AVAILABLE`**；禁止降级读 draft、禁止挂起，Feature-020 对齐 Q4 决议）
 3. 本地化视频（运动员侧从 `preprocessing_job.segments` 读取分段 COS key；**禁止回退到原视频 cos_object_key**，Feature-020 FR-007）
 4. 姿态估计 `pose_estimator.estimate_pose()`

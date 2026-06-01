@@ -15,9 +15,10 @@
 
 BEGIN;
 
--- ---------------------------------------------------------------------------
+-- ----------------------------------------------------------------------------
 -- Step 1: 清空所有业务表（CASCADE 会把 FK 依赖的子表一并清掉，顺序无关）
 -- 覆盖 26 张业务/配置表；alembic_version 刻意排除
+-- ✅ Feature-023：tech_actions 为字典表，TRUNCATE 清单中有意排除。
 -- 若新增业务表未列入此处，SKILL.md 里的 "表清单一致性校验" 会阻断执行
 -- ---------------------------------------------------------------------------
 TRUNCATE TABLE
@@ -79,6 +80,7 @@ DECLARE
     cfg_cnt  INTEGER;
     task_cnt INTEGER;
     cvc_cnt  INTEGER;
+    actions_cnt INTEGER;
 BEGIN
     SELECT COUNT(*) INTO cfg_cnt  FROM task_channel_configs;
     SELECT COUNT(*) INTO task_cnt FROM analysis_tasks;
@@ -92,6 +94,17 @@ BEGIN
     END IF;
     IF cvc_cnt <> 0 THEN
         RAISE EXCEPTION 'coach_video_classifications 应为 0 行, 实际 %', cvc_cnt;
+    END IF;
+    -- Feature-023：tech_actions 字典表未被 TRUNCATE（限在已迁移到 0022+ 的环境）
+    -- 迁移 0022 前表不存在；防御性 EXISTS 检查避免为老 schema 里跳过校验
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema='public' AND table_name='tech_actions'
+    ) THEN
+        SELECT COUNT(*) INTO actions_cnt FROM tech_actions;
+        IF actions_cnt <> 56 THEN
+            RAISE EXCEPTION 'tech_actions 字典表期望 56 行, 实际 % 行；检查迁移 0022 是否成功创建+seed（Path 1 拓展后为 56 行）', actions_cnt;
+        END IF;
     END IF;
 END $$;
 
@@ -111,3 +124,18 @@ ORDER BY task_type;
 \echo ''
 \echo '--- alembic_version (保留) ---'
 SELECT version_num FROM alembic_version;
+
+\echo ''
+\echo '--- tech_actions (Feature-023 字典表，期望 56 行；仅迁移 0022+ 后存在) ---'
+DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema='public' AND table_name='tech_actions'
+    ) THEN
+        RAISE NOTICE 'tech_actions count: %',
+            (SELECT COUNT(*) FROM tech_actions);
+    ELSE
+        RAISE NOTICE 'tech_actions table not yet present (pre-0022)';
+    END IF;
+END $$;

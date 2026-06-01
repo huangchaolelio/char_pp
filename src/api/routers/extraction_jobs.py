@@ -139,7 +139,7 @@ async def get_extraction_job(
     output_kbs_orm = await knowledge_base_svc.list_kbs_for_extraction_job(db, job_id)
     output_kbs = [
         OutputKbRef(
-            tech_category=kb.tech_category,
+            tech_category=kb.action,
             version=kb.version,
             status=kb.status.value,
             created_at=kb.created_at,

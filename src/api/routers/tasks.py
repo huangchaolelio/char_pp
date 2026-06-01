@@ -478,7 +478,7 @@ async def get_task_result(
                 )
                 .where(
                     ExpertTechPoint.source_video_id == task_uuid,
-                    ExpertTechPoint.kb_tech_category == task_kb_tc,
+                    ExpertTechPoint.kb_action == task_kb_tc,
                     ExpertTechPoint.kb_version == task_kb_ver,
                 )
             )
