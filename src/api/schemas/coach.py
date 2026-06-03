@@ -57,7 +57,7 @@ class CoachTechPointEntry(BaseModel):
 
 
 class TechPointCalibrationView(BaseModel):
-    action_type: str
+    action: str
     dimension: str
     coaches: list[CoachTechPointEntry]
 
@@ -69,6 +69,6 @@ class CoachTipGroup(BaseModel):
 
 
 class TeachingTipCalibrationView(BaseModel):
-    action_type: str
+    action: str
     tech_phase: str
     coaches: list[CoachTipGroup]

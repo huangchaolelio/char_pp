@@ -6,7 +6,7 @@ from src.models.audio_transcript import AudioQualityFlag, AudioTranscript
 from src.models.coach import Coach
 from src.models.coaching_advice import CoachingAdvice, ReliabilityLevel
 from src.models.deviation_report import DeviationDirection, DeviationReport
-from src.models.expert_tech_point import ActionType, ExpertTechPoint
+from src.models.expert_tech_point import ExpertTechPoint
 from src.models.reference_video import ReferenceVideo
 from src.models.reference_video_segment import ReferenceVideoSegment
 from src.models.skill import Skill
@@ -60,7 +60,6 @@ __all__ = [
     "DeviationReport",
     "DeviationDirection",
     "ExpertTechPoint",
-    "ActionType",
     "ReferenceVideo",
     "ReferenceVideoSegment",
     "Skill",

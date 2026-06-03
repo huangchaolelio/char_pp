@@ -37,7 +37,8 @@ from src.models.diagnosis_report import (
     DiagnosisDimensionResult,
     DiagnosisReport,
 )
-from src.models.expert_tech_point import ActionType
+from src.models.expert_tech_point import ExpertTechPoint  # noqa: F401  (transitive use via reports)
+from src.models.tech_action import TechAction
 from src.models.tech_standard import StandardStatus, TechStandard
 from src.services.diagnosis_llm_advisor import generate_improvement_advice
 from src.services.diagnosis_scorer import (
@@ -133,9 +134,14 @@ class DiagnosisService:
         import time
         start_ms = int(time.monotonic() * 1000)
 
-        # 1. Validate tech_category
-        if tech_category not in {at.value for at in ActionType}:
-            raise ValueError(f"{tech_category!r} is not a valid tech category")
+        # 1. Validate tech_category against tech_actions dictionary (V2, Feature-023)
+        valid = (
+            await self._session.execute(
+                select(TechAction.action).where(TechAction.action == tech_category)
+            )
+        ).scalar_one_or_none()
+        if valid is None:
+            raise ValueError(f"{tech_category!r} is not a valid tech action (not in tech_actions dict)")
 
         # 2. Load active standard
         standard = await self._get_active_standard(tech_category)

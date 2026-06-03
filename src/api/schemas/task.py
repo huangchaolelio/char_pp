@@ -85,7 +85,7 @@ class TaskStatusResponse(BaseModel):
 # ── Expert video result ──────────────────────────────────────────────────────
 
 class ExtractedTechPoint(BaseModel):
-    action_type: str
+    action: str
     dimension: str
     param_min: float
     param_max: float
