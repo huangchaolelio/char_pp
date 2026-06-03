@@ -17,7 +17,7 @@ BEGIN;
 
 -- ----------------------------------------------------------------------------
 -- Step 1: 清空所有业务表（CASCADE 会把 FK 依赖的子表一并清掉，顺序无关）
--- 覆盖 26 张业务/配置表；alembic_version 刻意排除
+-- 覆盖 31 张业务/配置表；alembic_version 刻意排除
 -- ✅ Feature-023：tech_actions 为字典表，TRUNCATE 清单中有意排除。
 -- 若新增业务表未列入此处，SKILL.md 里的 "表清单一致性校验" 会阻断执行
 -- ---------------------------------------------------------------------------
@@ -44,6 +44,10 @@ TRUNCATE TABLE
     -- 视频预处理
     video_preprocessing_jobs,
     video_preprocessing_segments,
+    -- 视频精选 / 内容审核
+    video_curation_jobs,
+    video_curation_segment_results,
+    content_review_decisions,
     -- 参考视频 / 技能执行
     reference_videos,
     reference_video_segments,
@@ -52,8 +56,10 @@ TRUNCATE TABLE
     -- 视频分类（两张并存表，禁止合并）
     video_classifications,
     coach_video_classifications,
-    -- 教练（由 COS 扫描器自动填充）
+    athlete_video_classifications,
+    -- 教练 / 运动员（由各自扫描器自动填充）
     coaches,
+    athletes,
     -- 通道配置（下一段会重新 seed）
     task_channel_configs
 RESTART IDENTITY CASCADE;
