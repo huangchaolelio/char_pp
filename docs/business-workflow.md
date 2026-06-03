@@ -1,7 +1,7 @@
 
 # 业务执行流程规范
 
-> 最后更新：2026-05-31（Feature-023 仅做字段级重命名 `tech_category` → `action`，业务阶段 / 队列 / 状态机 / 错误码均未变动；本文档结构保持不变）
+> 最后更新：2026-06-03（Feature-023 收尾：迁移 0023 + 错误码名同步重命名 `NO_ACTIVE_KB_FOR_CATEGORY → NO_ACTIVE_KB_FOR_ACTION` / `STANDARD_NOT_AVAILABLE → STANDARD_NOT_AVAILABLE_FOR_ACTION`；业务阶段 / 队列 / 状态机 / 评分公式未变，本文档结构保持不变）
 >
 > 本文档抽象项目的核心业务为**四阶段九步骤**执行模型（Feature-022 从三阶段趋升级
 ），明确每一步的触发条件、执行者、产物、状态与可观测指标，并给出可持续优化的杠杆
@@ -82,7 +82,7 @@ flowchart LR
 | 1 | **scan_cos_videos** | `POST /api/v1/classifications/scan` | `default` | 1 | COS 根路径可读（`COS_VIDEO_ALL_COCAH`） | `coach_video_classifications` + `coaches` | `analysis_tasks(task_type=video_classification, submitted_via=batch_scan)` |
 | 2 | **preprocess_video** | 批量提交 `POST /api/v1/tasks type=video_preprocessing` | `preprocessing` | 3 | `coach_video_classifications` 存在 | 标准化 mp4 + N×180s 分片（COS）+ 16k mono WAV | `video_preprocessing_jobs` + `video_preprocessing_segments` |
 | 3 | **classify_video** | 规则或 LLM 兜底 | `classification` | 1 | 分片已上传 | `action` 字段落定（`tech_actions` 字典 56 行之一）与 `category_l1/l2/l3`【Feature-023】 | `analysis_tasks(task_type=video_classification)` |
-| 4 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `tech_category` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
+| 4 | **curate_segments**（Feature-021） | `POST /api/v1/tasks type=video_curation`（单条 / 批量） | `default` | 1 | `action` 已分类、预处理完成（含分段与转录） | 逐分段 `effective_decision / validity_score / rejection_reason` + 视频级摘要（`accepted_duration_ratio` / `low_quality` / `audio_unavailable` / `short_video`）+ `curation_rubric_version` | `video_curation_jobs` + `video_curation_segment_results` + `analysis_tasks(task_type=video_curation)` |
 | 5 | **content_review**（Feature-022） | `POST /api/v1/content-reviews/{cvclf_id}/decisions` | —（同步人工决策路径） | — | `video_curation_jobs.status=success`；cvclf 本身 `review_state IN ('pending_review', 'stale')` | `coach_video_classifications.review_state` 转为 `approved` / `rejected`；`content_review_decisions` 新增一行决策留痕 | `coach_video_classifications` + `content_review_decisions` |
 
 > **队列复用说明（Feature-020 + Feature-021）**：`default` / `preprocessing` / `diagnosis` 三个队列**同时被 INFERENCE 阶段的运动员侧三步骤复用**（§ 5.1 步骤 8a/8b/8 共用队列）；Feature-021 的 `curate_segments` 步骤同样**复用 `default` 队列**（与 `scan_cos_videos` / `housekeeping` / `cleanup_*` / `sweep_orphan_jobs` 同列），不新增 Celery 队列、不新增 worker。各侧通过 `analysis_tasks.business_phase` 与独立的 `task_type` 枚举值区分任务来源，`task_channel_configs` 容量/并发配置统一生效。
@@ -118,7 +118,7 @@ wave4:  merge_kb
 | 视频无音频轨 | `audio_transcription → skipped`；`audio_kb_extract → skipped`；`merge_kb` 仅使用视觉路（`degraded_mode=true`） |
 | 视觉路失败 | 整个 job 失败（视觉是硬依赖） |
 | LLM 未配置 | `audio_kb_extract` fail-fast，错误码 `LLM_UNCONFIGURED:` |
-| 分类器与提交类别不一致 | 不阻断，仅计数 `classifier_disagreements`，按 `job.tech_category` 落库 |
+| 分类器与提交类别不一致 | 不阻断，仅计数 `classifier_disagreements`，按 `job.action` 落库 |
 
 ### 3.4 内容清洗契约（`curate_segments` · Feature-021）
 
@@ -238,7 +238,7 @@ wave4:  merge_kb
    +-- 未解决冲突 / point_count=0 不可 approve
 ```
 
-> **作用域 = 单 tech_category**（Feature-019）：所有状态转换按 `tech_category` 分桶。
+> **作用域 = 单 action**（Feature-019）：所有状态转换按 `action` 分桶。
 > 审批反手拉不影响正手攻球的 active；每类别独立版本链。
 > 同事务内联动 `teaching_tips` 状态迁移：旧 active KB 的 `auto` tips 批量归档，新 KB 的 draft tips 批量激活（`human` 行不参与批量归档，FR-024）。
 
@@ -254,7 +254,7 @@ wave4:  merge_kb
 |---|------|-----|------|------|------|
 | 8a | **scan_athlete_videos**（Feature-020） | `POST /api/v1/athlete-classifications/scan` | `default` | 1 | 读运动员根路径 `COS_VIDEO_ALL_ATHLETE`；写 `athletes` + `athlete_video_classifications` |
 | 8b | **preprocess_athlete_video**（Feature-020） | `POST /api/v1/tasks type=athlete_video_preprocessing` | `preprocessing` | 3 | 读上软 `video_preprocessing_jobs`（按 `cos_object_key` 关联，复用 F-016 管道）；写回 `athlete_video_classifications.preprocessed=true` + `preprocessing_job_id` |
-| 8 | **diagnose_athlete** | `POST /api/v1/tasks type=athlete_diagnosis` | `diagnosis` | 2 | **active** `tech_standards`（单 tech_category 状态机，不可选 draft）；写 `diagnosis_reports` |
+| 8 | **diagnose_athlete** | `POST /api/v1/tasks type=athlete_diagnosis` | `diagnosis` | 2 | **active** `tech_standards`（单 action 状态机，不可选 draft）；写 `diagnosis_reports` |
 | 9 | **生成报告** | 同任务内 | — | — | 写 `diagnosis_reports` + `diagnosis_dimension_results` + `coaching_advice`，同时持久化三要素反查锚点 `cos_object_key / preprocessing_job_id / standard_version`（Feature-020 FR-009） |
 
 **两侧素材清单严格分表**：`coach_video_classifications` （TRAINING 来源，供 KB 抽取消费）vs `athlete_video_classifications`（INFERENCE 来源，供诊断消费）完全隔离，禁止合表。
@@ -280,7 +280,7 @@ wave4:  merge_kb
 ### 5.4 诊断服务内部 11 步（`diagnosis_service.diagnose()`）
 
 1. 校验 `action` ∈ `tech_actions` 字典（Feature-023 后字典 56 行 V2，旧 `TECH_CATEGORIES` 已物理删除）
-2. 查询 active `TechStandard`（无 → **`STANDARD_NOT_AVAILABLE`**；禁止降级读 draft、禁止挂起，Feature-020 对齐 Q4 决议）
+2. 查询 active `TechStandard`（无 → **`STANDARD_NOT_AVAILABLE_FOR_ACTION`**；禁止降级读 draft、禁止挂起，Feature-020 对齐 Q4 决议）
 3. 本地化视频（运动员侧从 `preprocessing_job.segments` 读取分段 COS key；**禁止回退到原视频 cos_object_key**，Feature-020 FR-007）
 4. 姿态估计 `pose_estimator.estimate_pose()`
 5. 维度测量 `tech_extractor`（4 维：肘角 / 挚拍轨迹 / 击球时机 / 重心转移）
@@ -349,7 +349,7 @@ video_preprocessing_segments
   └─ segment_index / start_ms / end_ms / cos_object_key / upload_status
 ```
 
-步骤级指标 tag（指标维度）：`step_name` + `phase` + **`tech_category`**（Feature-019 新增）。其中 `kb_version_activate` / `build_standards` 两步在统计 per-category 成功/失败计数时必须携 `tech_category` tag，以支持按类别级度的定位与曲线切片。
+步骤级指标 tag（指标维度）：`step_name` + `phase` + **`action`**（Feature-019 新增，Feature-023 字段重命名）。其中 `kb_version_activate` / `build_standards` 两步在统计 per-action 成功/失败计数时必须携 `action` tag，以支持按动作粒度的定位与曲线切片。
 
 ### 7.3 诊断级（已有）
 
@@ -386,11 +386,11 @@ diagnosis_reports
 | `LLM_CALL_FAILED:` | LLM 上游调用失败 | 指数退避重试 |
 | `KB_CONFLICT_UNRESOLVED:` | Feature-019 — `(tc, ver)` 下存在 `conflict_flag=true` 的 points，approve 拒绝 | 否（需人工解冲突）|
 | `KB_EMPTY_POINTS:` | Feature-019 — `point_count=0` 的 KB 不可 approve | 否 |
-| `NO_ACTIVE_KB_FOR_CATEGORY:` | Feature-019 — 该 `tech_category` 尚无 active KB（诊断读 / standards build 依赖）| 否（先审批该类别的 draft）|
+| `NO_ACTIVE_KB_FOR_ACTION:` | Feature-019 / Feature-023 重命名 — 该 `action` 尚无 active KB（诊断读 / standards build 依赖）| 否（先审批该 action 的 draft）|
 | `STANDARD_ALREADY_UP_TO_DATE:` | Feature-019 — 构建指纹与同类别 active standard 一致，幂等拒绝 | 否 |
 | `ATHLETE_ROOT_UNREADABLE:` | Feature-020 — 运动员根路径不可读 / 凭证错误 | I/O 重试 |
 | `ATHLETE_VIDEO_NOT_PREPROCESSED:` | Feature-020 — 以运动员素材提交诊断但未完成预处理（禁止静默回退到原视频） | 否（先提交预处理）|
-| `STANDARD_NOT_AVAILABLE:` | Feature-020 — 该 `tech_category` 无 active `tech_standards`，诊断立即 `failed`，`details.tech_category` 必填 | 否（运营到 KB 管理页发布标准） |
+| `STANDARD_NOT_AVAILABLE_FOR_ACTION:` | Feature-020 / Feature-023 重命名 — 该 `action` 无 active `tech_standards`，诊断立即 `failed`，`details.action` 必填 | 否（运营到 KB 管理页发布标准） |
 | `ATHLETE_VIDEO_POSE_UNUSABLE:` | Feature-020 — 运动员视频姿态估计全程无可用关键点，任务失败而非产出 0 分报告 | 否 |
 | `ATHLETE_VIDEO_CLASSIFICATION_NOT_FOUND:` | Feature-020 — 预处理 / 诊断提交时 `athlete_video_classification_id` 不存在 | 否 |
 | `CURATION_REQUIRED:` | Feature-021 — KB 抽取前置门：该视频无 `video_curation_jobs.status=success` 记录，禁止读全量分段，立即拒绝提交 | 否（先跑清洗再重提）|

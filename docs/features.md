@@ -1,6 +1,6 @@
 # 产品功能文档
 
-> 最后更新：2026-05-31 · Feature-023 技术分类体系重构（V2 字典 56 行 / 全局 `tech_category` → `action` 列名重命名 / 启发式 lower bound 基线已落地）
+> 最后更新：2026-06-03 · Feature-023 收尾（迁移 0023）：`expert_tech_points.action_type` V1 PG 枚举物理删除，全表迁至 `action varchar(64)` + 复合 FK 到 `tech_actions`；同步修复 2026-05-31 起隐藏的 `merge_kb` 静默丢物 bug（所有 successful job 的 `inserted_tech_points` 全为 0）。Feature-023 V1→V2 表口径同步至此完全闭环。
 
 ## 目录
 
@@ -1345,4 +1345,22 @@ CONTENT_PREP（新阶段）：scan_cos_videos → preprocess_video → classify_
 - **原则 IX**（错误码集中化）：本 Feature 0 新增错误码（沿用 `INVALID_ENUM_VALUE` / `VALIDATION_FAILED`）
 - **原则 X**（业务工作流对齐）：本次为字段级重命名，业务阶段 / 队列 / 状态机 / 错误码 / 评分公式均无变化，`business-workflow.md` 仅刷新顶部时间戳
 - **原则 XI**（测试阶段宽松）：未上线系统，迁移不保留 downgrade 路径
+
+### 后续修订（迁移 0023 / 2026-06-03）
+
+> Feature-023 主迁移 0022 上线后，端到端实测发现 `expert_tech_points` 表仍持有
+> V1 PG 枚举 `action_type_enum`，与 V2 字典口径不兼容，触发 `merge_kb` 静默丢物
+> bug。本次以独立分支 `tech-debt/etp-action-type-cleanup` 收尾，已合 master。
+
+| 项 | 内容 |
+|----|------|
+| **现象** | `merge_kb.merged_items=4` 但 `inserted_tech_points=0`；`expert_tech_points` 表持续为空 |
+| **根因** | `src/models/expert_tech_point.py` 仍保有 V1 `ActionType` 枚举（10 英文键如 `forehand_loop_high`），`_coerce_action_type` 调 `ActionType('高吊弧圈球')` 抛 `ValueError` → `_persist_merged_points` silently `continue`，所有 merged 全丢 |
+| **影响** | 自 2026-05-31 Feature-023 上线起，**所有** `extraction_jobs.status=success` 作业 `inserted_tech_points=0`；线上 KB 表实际为空 |
+| **修复** | 迁移 `0023_drop_action_type_enum`：DROP `expert_tech_points.action_type` + DROP TYPE `action_type_enum`，ADD `action varchar(64) NOT NULL` + 复合 FK `(category_l1, l2, l3, action) → tech_actions(...)`；`submitted_action` String(50)→String(64)；reversible downgrade 重建 V1 enum + 非空 guard |
+| **代码面** | 12 src 文件：模型 + `merge_kb._coerce_action_type → _resolve_action`（走 `ActionDictionaryService` + 进程级缓存）+ 2 路由 + 2 schemas + 4 services；5 tests：fixture 同步 `p.action='前冲弧圈球'`，pytest --collect-only 1099 tests 零 ImportError |
+| **端到端验证** | 同一视频 `第58节正手起下旋.mp4 / 高吊弧圈球` `force=true` 重跑：`merge_kb merged_items=4 → inserted_tech_points=4`；`SELECT COUNT(*) FROM expert_tech_points WHERE kb_action='高吊弧圈球'` = **4** |
+| **Git** | 3 atomic commits（`03835ac` fix + `eb247de` test + `2749a8c` chore）→ merge `5ae03a8`；pre-push hook（Feature-018 drift + spec-compliance）双绿 |
+| **SC-005 修订** | "字段重命名零 schema 漂移" 在主迁移 0022 时仍有 1 张表（`expert_tech_points`）漏迁，迁移 0023 后才真正闭环 |
+| **SKILL.md 同步** | `system-init` skill 的 `reset_business_data.sql` TRUNCATE 清单补 5 张漏表（`athletes` / `athlete_video_classifications` / `content_review_decisions` / `video_curation_jobs` / `video_curation_segment_results`）+ 修复多表 TRUNCATE 一致性校验 regex |
 

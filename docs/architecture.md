@@ -1,6 +1,6 @@
 # 技术架构文档
 
-> 最后更新：2026-05-31 · Feature-023 技术分类体系重构（V2 字典 56 行 / `tech_category` → `action` 全局列名重命名 / `kb_tech_category` → `kb_action`，启发式 lower bound 基线已落地）
+> 最后更新：2026-06-03 · Feature-023 收尾（迁移 0023）：物理删除 `expert_tech_points.action_type` V1 PG 枚举（10 个英文键） + DROP TYPE `action_type_enum`，ADD `action varchar(64) NOT NULL` + 复合 FK `(category_l1, l2, l3, action) → tech_actions(...)`；`merge_kb._coerce_action_type` 重写为查字典的 `_resolve_action`。修复 2026-05-31 起隐藏的“`merge_kb` 静默丢物” bug（`inserted_tech_points` 全为 0）。Feature-023 “V1→V2 表口径同步”至此闭环，application-level 完全无 V1 字段名或枚举。
 ## 目录
 
 - [系统概述](#系统概述)
@@ -209,7 +209,7 @@ teaching_tips                       # LLM 提炼的教学建议
 | 模型 | 表名 | 用途 |
 |------|------|------|
 | `AnalysisTask` | `analysis_tasks` | 视频处理任务，含状态机（pending→processing→success/failed） |
-| `ExpertTechPoint` | `expert_tech_points` | 单帧姿态关键点数据 |
+| `ExpertTechPoint` | `expert_tech_points` | KB 提取产出的专家技术要点（维度 + 阈值 + 证据，在进口 `merge_kb` 中从视频 / 音频两路合并后写入）；Feature-023 迁移 0023：删 V1 PG 枚举 `action_type` + ADD `action varchar(64)` + 复合 FK `(category_l1, l2, l3, action) → tech_actions(...)`，字典口径与 `tech_knowledge_bases` / `tech_standards` 对齐 |
 | `TechKnowledgeBase` | `tech_knowledge_bases` | 知识库版本（Feature-019 复合主键 per-action 独立生命周期；Feature-023 列名重命名为 `(action, version INTEGER)`，partial unique index `uq_tech_kb_active_per_action` 保证每个 action 单 active） |
 | `TechStandard` | `tech_standards` | 聚合后的技术标准（中位数+P25/P75；Feature-019 新增 `source_fingerprint CHAR(64)` 列；Feature-023 默认唯一约束重命名为 `uq_ts_fingerprint_per_action`，支持 build 幂等） |
 | `CoachVideoClassification` | `coach_video_classifications` | COS 全量视频分类（Feature-008） + 新增 `preprocessed` 字段（Feature-016）；Feature-023 重命名 `tech_category` → `action` + ADD `category_l1/l2/l3` 三级标签 + 到 `tech_actions` 的复合 FK |
@@ -524,7 +524,7 @@ Feature-014 交付了完整 DAG 骨架，但 4 个 step executor 是 scaffold（
 
 ## 视频预处理流水线（Feature 016）
 
-Feature-015 烟测（2026-04-25）暴露两个核心问题：`pose_analysis` 对整段大视频一次性推理触发 OOM-killed；rerun / 多 tech_category 并行提取每次都重新下载 + 转码 + 切分，浪费带宽。Feature-016 在 KB 提取前新增**预处理阶段**。
+Feature-015 烟测（2026-04-25）暴露两个核心问题：`pose_analysis` 对整段大视频一次性推理触发 OOM-killed；rerun / 多 `action`（V1 时期为 `tech_category`）并行提取每次都重新下载 + 转码 + 切分，浪费带宽。Feature-016 在 KB 提取前新增**预处理阶段**。
 
 ### DAG 位置
 

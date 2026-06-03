@@ -18,7 +18,7 @@
 | 资源段 | kebab-case 复数名词 | `/teaching-tips` | `/teachingTips` / `/teaching_tip` |
 | 动作段 | kebab-case 动词 | `/scan` / `/approve` / `/refresh` | `/scanVideos` |
 | ID 段 | `{resource_id}`（下划线 + `_id` 后缀） | `/tasks/{task_id}` | `/tasks/{id}` / `/tasks/{taskId}` |
-| 枚举路径参数 | snake_case 业务名词（如 `{task_type}`、`{version}`、`{tech_category}`） | `/task-channels/{task_type}` | `/task-channels/{type}` |
+| 枚举路径参数 | snake_case 业务名词（如 `{task_type}`、`{version}`、`{action}`） | `/task-channels/{task_type}` | `/task-channels/{type}` |
 
 **自动校验**：运行 `python scripts/lint_api_naming.py`，0 违规即合规。
 
