@@ -19,7 +19,7 @@ import pytest
 def active_kb_fixture():
     """Fixture representing an already-active knowledge base version."""
     from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
-    from src.models.expert_tech_point import ExpertTechPoint, ActionType
+    from src.models.expert_tech_point import ExpertTechPoint
 
     kb = MagicMock(spec=TechKnowledgeBase)
     kb.version = "1.0.0"
@@ -28,7 +28,8 @@ def active_kb_fixture():
     ep = MagicMock(spec=ExpertTechPoint)
     ep.id = uuid.uuid4()
     ep.kb_version = "1.0.0"
-    ep.action_type = ActionType.forehand_topspin
+    # Feature 审计修复（迁移 0023）： action_type 枚举已删除
+    ep.action = "前冲弧圈球"
     ep.dimension = "elbow_angle"
     ep.param_min = 80.0
     ep.param_max = 110.0
