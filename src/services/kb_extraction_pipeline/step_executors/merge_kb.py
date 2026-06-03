@@ -28,8 +28,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.models.coach_video_classification import CoachVideoClassification
-from src.models.expert_tech_point import ActionType, ExpertTechPoint
+from src.models.expert_tech_point import ExpertTechPoint
 from src.models.extraction_job import ExtractionJob
+from src.models.tech_action import TechAction
 from src.models.kb_conflict import KbConflict
 from src.models.pipeline_step import PipelineStep, PipelineStepStatus, StepType
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
@@ -42,10 +43,8 @@ from src.services.kb_extraction_pipeline.merger import (
 
 logger = logging.getLogger(__name__)
 
-
-# Default action type for merged points that don't carry one — we never
-# actually write with this because visual extraction always assigns a type.
-_FALLBACK_ACTION_TYPE = "forehand_general"
+# 进程级缓存：tech_actions 字典 56 行的合法 action 集合（迁移 0023 后 V2 口径）
+_VALID_ACTIONS: set[str] | None = None
 
 
 async def execute(
@@ -279,22 +278,27 @@ async def _persist_merged_points(
     """INSERT one ExpertTechPoint row per merged item. Returns inserted count.
 
     Feature-019/023: expert_tech_points 绑复合 FK (kb_action, kb_version).
+    Feature 审计修复（迁移 0023）: ``action`` 列从 PG enum 改为 varchar(64) +
+    FK→tech_actions(action)；写入前对照 ``tech_actions`` 字典做强校验，不在
+    字典内的 action 一律降级到 job.tech_category（同样要求在字典内），
+    再不行则 skip + warning。
 
-    Silently skips points whose ``action_type`` can't be mapped to the
-    ``ActionType`` enum (e.g. the job's tech_category is one of the F-014 21
-    categories that isn't in the F-002 action enum). We log each skip so
-    operators can see which dimensions got dropped.
+    Silently skips points whose action 既不能落到字典内、上游 job.tech_category
+    也不在字典内。这种情况通常意味着上游分类器或 spec 配置有 bug — 我们记录
+    每一次 skip 让运维可见。
     """
     if not merged:
         return 0
 
+    valid_actions = await _load_valid_actions(session)
+
     inserted = 0
     for m in merged:
-        action_enum = _coerce_action_type(m.action_type, job.tech_category)
-        if action_enum is None:
+        action = _resolve_action(m.action_type, job.tech_category, valid_actions)
+        if action is None:
             logger.info(
-                "merge_kb skip: dimension=%s has no ActionType mapping "
-                "(got action_type=%r, tech_category=%r)",
+                "merge_kb skip: dimension=%s 无法解析合法 action "
+                "(merged.action_type=%r, job.tech_category=%r 均不在 tech_actions 字典内)",
                 m.dimension, m.action_type, job.tech_category,
             )
             continue
@@ -314,7 +318,7 @@ async def _persist_merged_points(
             ExpertTechPoint(
                 kb_action=kb_action,
                 kb_version=kb_version,
-                action_type=action_enum,
+                action=action,
                 dimension=m.dimension,
                 param_min=p_min,
                 param_max=p_max,
@@ -344,22 +348,36 @@ async def _persist_merged_points(
     return inserted
 
 
-def _coerce_action_type(
-    raw: str | None, fallback: str | None
-) -> ActionType | None:
-    """Map a free-form action type string to the ``ActionType`` enum.
+async def _load_valid_actions(session: AsyncSession) -> set[str]:
+    """Load 56-row ``tech_actions`` dictionary into a process-level cache.
 
-    - Direct match on ActionType value → use it.
-    - Otherwise try the job's tech_category.
-    - Otherwise None (caller logs & skips).
+    Cached for the lifetime of the process; the dictionary is small and only
+    ever changes via alembic migrations (rule 项目规则6). Re-loading on every
+    merge would add an unnecessary RT to a hot path.
+    """
+    global _VALID_ACTIONS
+    if _VALID_ACTIONS is None:
+        rows = (await session.execute(select(TechAction.action))).scalars().all()
+        _VALID_ACTIONS = set(rows)
+        logger.debug(
+            "merge_kb: loaded %d valid actions from tech_actions dict",
+            len(_VALID_ACTIONS),
+        )
+    return _VALID_ACTIONS
+
+
+def _resolve_action(
+    raw: str | None, fallback: str | None, valid: set[str]
+) -> str | None:
+    """Pick the first candidate action that exists in the V2 dictionary.
+
+    - merged point 自带 action_type 且在字典 → 用之
+    - 否则 fallback 到 job.tech_category（也必须在字典）
+    - 都不在字典 → None（调用方记录 + skip）
     """
     for candidate in (raw, fallback):
-        if not candidate:
-            continue
-        try:
-            return ActionType(candidate)
-        except ValueError:
-            continue
+        if candidate and candidate in valid:
+            return candidate
     return None
 
 

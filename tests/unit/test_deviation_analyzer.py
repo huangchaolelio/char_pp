@@ -61,7 +61,7 @@ class TestComputeImpact:
 class TestAnalyzeDeviations:
     async def test_creates_deviation_for_each_dimension(self):
         from src.models.athlete_motion_analysis import AthleteMotionAnalysis, AthleteActionType
-        from src.models.expert_tech_point import ExpertTechPoint, ActionType
+        from src.models.expert_tech_point import ExpertTechPoint
 
         session = AsyncMock()
         session.flush = AsyncMock()

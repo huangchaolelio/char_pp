@@ -16,14 +16,15 @@ import pytest
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _make_ep(kb_version: str, action_type_val: str, dimension: str, task_id: uuid.UUID):
+def _make_ep(kb_version: str, action_val: str, dimension: str, task_id: uuid.UUID):
     """Create a mock ExpertTechPoint linked to a given task."""
-    from src.models.expert_tech_point import ExpertTechPoint, ActionType
+    from src.models.expert_tech_point import ExpertTechPoint
 
     ep = MagicMock(spec=ExpertTechPoint)
     ep.id = uuid.uuid4()
     ep.kb_version = kb_version
-    ep.action_type = ActionType(action_type_val)
+    # Feature 审计修复（迁移 0023）： action_type 枚举已删除，传 字典中的 V2 action 字面量即可
+    ep.action = action_val
     ep.dimension = dimension
     ep.param_min = 80.0
     ep.param_max = 110.0
@@ -54,8 +55,8 @@ class TestCoachKBPipeline:
         task_a_id = uuid.uuid4()
         task_b_id = uuid.uuid4()
 
-        ep_a = _make_ep(kb_version, "forehand_topspin", "elbow_angle", task_a_id)
-        ep_b = _make_ep(kb_version, "forehand_topspin", "elbow_angle", task_b_id)
+        ep_a = _make_ep(kb_version, "前冲弧圈球", "elbow_angle", task_a_id)
+        ep_b = _make_ep(kb_version, "前冲弧圈球", "elbow_angle", task_b_id)
 
         # Simulate what _persist_athlete_results does: build stmt with coach_id filter
         _AT = AnalysisTask

@@ -461,9 +461,9 @@ async def get_task_result(
     # ── kb_extraction branch ────────────────────────────────────────────────
     if task.task_type == TaskType.kb_extraction:
         # Feature-019: 旧签名用 task.knowledge_base_version (VARCHAR)；新名用
-        # task.kb_tech_category + task.kb_version (复合键)。此处既有代码
-        # 先打开下面判断：若复合键未填，直接空返回。
-        task_kb_tc = task.kb_tech_category
+        # task.kb_action + task.kb_version (复合键，Feature-023 迁移 0022 重命名)。
+        # 此处既有代码先打开下面判断：若复合键未填，直接空返回。
+        task_kb_tc = task.kb_action
         task_kb_ver = task.kb_version
         if task_kb_tc is None or task_kb_ver is None:
             points = []
@@ -489,7 +489,7 @@ async def get_task_result(
         pending_approval = (kb is not None and kb.status == KBStatus.draft)
         extracted = [
             ExtractedTechPoint(
-                action_type=p.action_type.value,
+                action=p.action,
                 dimension=p.dimension,
                 param_min=p.param_min,
                 param_max=p.param_max,

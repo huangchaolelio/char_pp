@@ -1,10 +1,12 @@
 """Calibration router — multi-coach tech parameter comparison (Feature 006).
 
 Endpoints:
-  GET /calibration/tech-points     → compare tech params across coaches (action_type + dimension required)
-  GET /calibration/teaching-tips   → compare teaching tips across coaches (action_type + tech_phase required)
+  GET /calibration/tech-points     → compare tech params across coaches (action + dimension required)
+  GET /calibration/teaching-tips   → compare teaching tips across coaches (action + tech_phase required)
 
 Feature-017: 响应体统一迁移至 ``SuccessEnvelope``（章程 v1.4.0 原则 IX）。
+Feature 审计修复（迁移 0023）: ExpertTechPoint.action_type → action，与 V2 字典对齐；
+  Query 参数 / 响应字段同步重命名为 ``action``。
 """
 
 from __future__ import annotations
@@ -39,18 +41,18 @@ router = APIRouter(tags=["calibration"])
     response_model=SuccessEnvelope[TechPointCalibrationView],
 )
 async def calibrate_tech_points(
-    action_type: str = Query(..., description="动作类型，如 forehand_topspin"),
+    action: str = Query(..., description="动作（V2 字典 56 行之一），如 前冲弧圈球"),
     dimension: str = Query(..., description="技术维度，如 elbow_angle"),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[TechPointCalibrationView]:
-    """Return multi-coach comparison for a specific action_type + dimension."""
+    """Return multi-coach comparison for a specific action + dimension."""
     # Query: expert_tech_points JOIN analysis_tasks JOIN coaches
     stmt = (
         select(ExpertTechPoint, Coach)
         .join(AnalysisTask, ExpertTechPoint.source_video_id == AnalysisTask.id)
         .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
         .where(
-            ExpertTechPoint.action_type == action_type,
+            ExpertTechPoint.action == action,
             ExpertTechPoint.dimension == dimension,
             AnalysisTask.coach_id.isnot(None),
         )
@@ -95,11 +97,11 @@ async def calibrate_tech_points(
         )
 
     logger.info(
-        "calibration tech-points action_type=%s dimension=%s coaches=%d",
-        action_type, dimension, len(entries),
+        "calibration tech-points action=%s dimension=%s coaches=%d",
+        action, dimension, len(entries),
     )
     return ok(TechPointCalibrationView(
-        action_type=action_type,
+        action=action,
         dimension=dimension,
         coaches=entries,
     ))
@@ -112,7 +114,7 @@ async def calibrate_tech_points(
     response_model=SuccessEnvelope[TeachingTipCalibrationView],
 )
 async def calibrate_teaching_tips(
-    action_type: str = Query(..., description="动作类型，如 forehand_topspin"),
+    action: str = Query(..., description="动作（V2 字典 56 行之一），如 前冲弧圈球"),
     tech_phase: str = Query(..., description="技术阶段，如 contact"),
     db: AsyncSession = Depends(get_db),
 ) -> SuccessEnvelope[TeachingTipCalibrationView]:
@@ -122,7 +124,8 @@ async def calibrate_teaching_tips(
         .join(AnalysisTask, TeachingTip.task_id == AnalysisTask.id)
         .outerjoin(Coach, AnalysisTask.coach_id == Coach.id)
         .where(
-            TeachingTip.action_type == action_type,
+            # Feature-019/023: TeachingTip.action_type 已删，统一用 action
+            TeachingTip.action == action,
             TeachingTip.tech_phase == tech_phase,
             AnalysisTask.coach_id.isnot(None),
         )
@@ -153,11 +156,11 @@ async def calibrate_teaching_tips(
     ]
 
     logger.info(
-        "calibration teaching-tips action_type=%s tech_phase=%s coaches=%d",
-        action_type, tech_phase, len(groups),
+        "calibration teaching-tips action=%s tech_phase=%s coaches=%d",
+        action, tech_phase, len(groups),
     )
     return ok(TeachingTipCalibrationView(
-        action_type=action_type,
+        action=action,
         tech_phase=tech_phase,
         coaches=groups,
     ))

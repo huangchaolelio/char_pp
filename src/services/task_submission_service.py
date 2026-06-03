@@ -281,8 +281,9 @@ class TaskSubmissionService:
                 cos_object_key=item.cos_object_key,
                 submitted_via=submitted_via,
                 coach_id=item.coach_id,
-                # Feature-019: 直接写新复合列，``knowledge_base_version`` 已是只读 property
-                kb_tech_category=kb_tc,
+                # Feature-019/023: 直接写新复合列，``knowledge_base_version`` 已是只读 property；
+                # Feature-023 (迁移 0022) 将 ``kb_tech_category`` 重命名为 ``kb_action``。
+                kb_action=kb_tc,
                 kb_version=kb_ver,
                 created_at=now,
             )

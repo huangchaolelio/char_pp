@@ -40,7 +40,7 @@ class VideoClassification(Base):
     # tutorial = technique explanation; training = drill / practice plan
     video_type: Mapped[str] = mapped_column(String(20), nullable=False)
 
-    # Mapped ActionType enum value, null when no matching enum exists
+    # Mapped V2 action value, null when no matching dictionary entry exists
     # (e.g. serve, footwork, receive categories)
     action_type: Mapped[Optional[str]] = mapped_column(String(50), nullable=True)
 

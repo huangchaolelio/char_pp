@@ -127,10 +127,11 @@ def make_kb(version=KB_VERSION, status="draft"):
 
 
 def make_tech_point(version=KB_VERSION):
-    from src.models.expert_tech_point import ActionType, ExpertTechPoint
+    from src.models.expert_tech_point import ExpertTechPoint
 
     p = MagicMock(spec=ExpertTechPoint)
-    p.action_type = ActionType.forehand_topspin
+    # Feature 审计修复（迁移 0023）： action_type 枚举已删除，action 列为 varchar(64) + FK→tech_actions
+    p.action = "前冲弧圈球"
     p.dimension = "elbow_angle"
     p.param_min = 90.0
     p.param_max = 130.0

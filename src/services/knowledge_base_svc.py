@@ -26,7 +26,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.api.errors import AppException, ErrorCode
-from src.models.expert_tech_point import ActionType, ExpertTechPoint
+from src.models.expert_tech_point import ExpertTechPoint
 from src.models.tech_knowledge_base import KBStatus, TechKnowledgeBase
 from src.utils.time_utils import now_cst
 

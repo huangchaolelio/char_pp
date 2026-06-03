@@ -37,7 +37,9 @@ context: fork
    /opt/conda/envs/coaching/bin/python3.11 - <<'PY'
    import asyncio, asyncpg, re, pathlib
    SQL = pathlib.Path('.codebuddy/skills/system-init/reset_business_data.sql').read_text()
-   covered = set(re.findall(r'TRUNCATE TABLE ([a-z_]+)', SQL))
+   # TRUNCATE TABLE 支持单语句多表写法（a, b, c），抓取整段 TABLE...RESTART/; 后所有标识符
+   m = re.search(r'TRUNCATE TABLE\s+(.*?)RESTART IDENTITY CASCADE', SQL, re.DOTALL)
+   covered = set(re.findall(r'\b([a-z_][a-z0-9_]+)\b', m.group(1))) if m else set()
    async def m():
        c = await asyncpg.connect('postgresql://postgres:password@localhost:5432/coaching_db')
        rows = await c.fetch("SELECT tablename FROM pg_tables WHERE schemaname='public'")

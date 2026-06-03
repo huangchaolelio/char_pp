@@ -31,7 +31,7 @@ def _make_point(
     source_video_id=None,
 ):
     p = MagicMock()
-    p.action_type = action_type
+    p.action = action_type
     p.dimension = dimension
     p.param_ideal = param_ideal
     p.unit = unit
